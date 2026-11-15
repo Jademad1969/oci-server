@@ -1,0 +1,51 @@
+services:
+  # 1. قاعدة بيانات الاختبار (Testing DB) - تُحمّل الجداول تلقائياً من مجلد sql
+  db_test:
+    image: postgres:16-alpine
+    container_name: dic_db_test
+    restart: always
+    environment:
+      POSTGRES_USER: dic_admin
+      POSTGRES_PASSWORD: TestPassword123!
+      POSTGRES_DB: dic_donor_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+
+  # 2. قاعدة البيانات الفعلية (Production DB)
+  db_prod:
+    image: postgres:16-alpine
+    container_name: dic_db_prod
+    restart: always
+    environment:
+      POSTGRES_USER: dic_admin
+      POSTGRES_PASSWORD: ProdPassword123!
+      POSTGRES_DB: dic_donor_prod
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+
+  # 3. تطبيق بيئة الاختبار (Testing Web App on Port 8001)
+  web_test:
+    image: python:3.11-slim
+    container_name: dic_web_test
+    working_dir: /code
+    restart: always
+    environment:
+      APP_ENV: testing
+      DATABASE_URL: postgresql+asyncpg://dic_admin:TestPassword123!@db_test:5432/dic_donor_test
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./:/code
+    command: sh -c "pip install --no-cache-dir -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    depends_on:
+      - db_test
+
+volumes:
+  pgdata_test:
+  pgdata_prod:

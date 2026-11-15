@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام الاستقطاعات الشهرية - جمعية اكتشف الإسلام</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Alpine.js for Instant Reactivity (alongside HTMX in backend) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- Google Fonts: Cairo -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Cairo', sans-serif; }
+        input:focus, select:focus { outline: none; }
+        /* تخصيص شريط التمرير */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col" x-data="donorScreenApp()">
+
+    <!-- 1. الشريط العلوي (Top Navigation & System Info) -->
+    <header class="bg-slate-900 text-white shadow-md border-b border-slate-700 sticky top-0 z-30">
+        <div class="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <div class="bg-emerald-600 text-white font-bold px-3 py-1 rounded-md text-sm tracking-wide">
+                    DIC BAHRAIN
+                </div>
+                <h1 class="font-bold text-base md:text-lg text-slate-100">
+                    نظام الاستقطاعات الشهرية <span class="text-slate-400 text-sm font-normal">| بيانات المستقطعين واستقطاعاتهم</span>
+                </h1>
+                <span class="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs px-2.5 py-0.5 rounded-full">
+                    بيئة الاختبار (Testing Env)
+                </span>
+            </div>
+
+            <!-- روابط التنقل بين شاشات النظام -->
+            <nav class="hidden lg:flex items-center gap-1 text-sm">
+                <a href="#" class="bg-slate-800 text-emerald-400 font-semibold px-3 py-1.5 rounded-md border border-slate-700">بيانات المستقطعين</a>
+                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تدقيق أكواد البنوك</a>
+                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تحميل ومطابقة الكشوف (CSV)</a>
+                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">متابعة المتأخرين</a>
+                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">التقارير والإحصائيات</a>
+                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">المستخدمين والإعدادات</a>
+            </nav>
+
+            <div class="flex items-center gap-4 text-xs md:text-sm">
+                <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700">
+                    <span class="text-slate-400">التاريخ:</span> <span class="font-mono text-slate-200">07-11-2026</span>
+                </div>
+                <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <span class="text-slate-400">USER:</span> <span class="font-bold text-emerald-400">TAREK</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 2. شريط الأدوات والفلاتر والبحث (Toolbar & Filters - Replaces Forms Toolbar) -->
+    <div class="bg-white border-b border-slate-200 shadow-sm sticky top-14 z-20">
+        <div class="max-w-[1600px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+            
+            <!-- الفلاتر الأربعة الأساسية -->
+            <div class="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
+                <button @click="setFilter('ALL')" 
+                        :class="currentFilter === 'ALL' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3.5 py-1 rounded-md text-xs font-bold transition flex items-center gap-1.5">
+                    <span>الكل</span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-slate-500/20" x-text="donors.length"></span>
+                </button>
+                <button @click="setFilter('ACTIVE')" 
+                        :class="currentFilter === 'ACTIVE' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3.5 py-1 rounded-md text-xs font-bold transition flex items-center gap-1.5">
+                    <span>النشطين</span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="donors.filter(d => d.status_no === 1).length"></span>
+                </button>
+                <button @click="setFilter('INACTIVE')" 
+                        :class="currentFilter === 'INACTIVE' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3.5 py-1 rounded-md text-xs font-bold transition flex items-center gap-1.5">
+                    <span>غير النشطين</span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="donors.filter(d => d.status_no === 2).length"></span>
+                </button>
+                <button @click="setFilter('NO_SO')" 
+                        :class="currentFilter === 'NO_SO' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3.5 py-1 rounded-md text-xs font-bold transition flex items-center gap-1.5">
+                    <span>بدون استقطاعات</span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="donors.filter(d => d.items.length === 0).length"></span>
+                </button>
+            </div>
+
+            <!-- البحث الفوري (Instant Search) -->
+            <div class="flex-1 max-w-md relative">
+                <input type="text" x-model="searchQuery" @input="handleSearch()"
+                       placeholder="بحث فوري بكود المتبرع، الاسم، الرقم السكاني CPR، الهاتف، أو كود البنك..."
+                       class="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-lg pl-3 pr-9 py-1.5 text-xs transition">
+                <svg class="w-4 h-4 text-slate-400 absolute right-3 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+            </div>
+
+            <!-- أزرار التنقل بين السجلات وإجراءات الحفظ -->
+            <div class="flex items-center gap-2">
+                <div class="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-xs">
+                    <button @click="firstDonor()" class="px-2.5 py-1 hover:bg-white rounded text-slate-700 font-bold" title="السجل الأول">|<</button>
+                    <button @click="prevDonor()" class="px-2.5 py-1 hover:bg-white rounded text-slate-700 font-bold" title="السابق"><</button>
+                    <span class="px-3 text-slate-600 font-mono text-xs">
+                        <span x-text="filteredDonors.length ? currentIndex + 1 : 0"></span> / <span x-text="filteredDonors.length"></span>
+                    </span>
+                    <button @click="nextDonor()" class="px-2.5 py-1 hover:bg-white rounded text-slate-700 font-bold" title="التالي">></button>
+                    <button @click="lastDonor()" class="px-2.5 py-1 hover:bg-white rounded text-slate-700 font-bold" title="السجل الأخير">>|</button>
+                </div>
+
+                <div class="h-5 w-px bg-slate-300 mx-1"></div>
+
+                <button @click="newDonor()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition">
+                    <span>+ متبرع جديد</span>
+                </button>
+                <button @click="saveDonor()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition">
+                    <span>حفظ التعديلات</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. المحتوى الرئيسي للشاشة (Master-Detail Form) -->
+    <main class="max-w-[1600px] w-full mx-auto px-4 py-3 flex-1 flex flex-col gap-3" x-show="currentDonor">
+
+        <!-- صف علوي يجمع: (1) البيانات الأساسية + (2) تاريخ الإضافة وحالة المتبرع -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
+            
+            <!-- القسم الأول: البيانات الأساسية (9 أعمدة) -->
+            <section class="lg:col-span-9 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+                    <h2 class="text-xs font-bold text-blue-800 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                        البيانات الأساسية للمستقطع
+                    </h2>
+                    <span class="text-[11px] text-slate-400">يتم تجميع الاسم الكامل تلقائياً عند كتابة الأسماء الأربعة</span>
+                </div>
+
+                <!-- السطر الأول: كود المتبرع + الأسماء الـ 4 -->
+                <div class="grid grid-cols-2 sm:grid-cols-6 gap-2.5 mb-2.5">
+                    <div>
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">كود المتبرع</label>
+                        <input type="number" x-model="currentDonor.donor_no" readonly
+                               class="w-full bg-slate-100 border border-slate-300 rounded px-2.5 py-1 text-xs font-bold text-center text-slate-800 font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الاسم الأول</label>
+                        <input type="text" x-model="currentDonor.f_nm" @input="updateFullName()"
+                               class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-semibold">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الاسم الثاني</label>
+                        <input type="text" x-model="currentDonor.s_nm" @input="updateFullName()"
+                               class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-semibold">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الاسم الثالث</label>
+                        <input type="text" x-model="currentDonor.t_nm" @input="updateFullName()"
+                               class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-semibold">
+                    </div>
+                    <div class="col-span-2">
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الاسم الرابع / العائلة</label>
+                        <input type="text" x-model="currentDonor.l_nm" @input="updateFullName()"
+                               class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-semibold">
+                    </div>
+                </div>
+
+                <!-- السطر الثاني: اسم المتبرع الكامل بالعربي والإنجليزي -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2.5">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">اسم المتبرع (عربي)</label>
+                        <input type="text" x-model="currentDonor.donor_name"
+                               class="w-full bg-slate-50 border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-bold text-slate-900">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-rose-700 mb-1">الاسم بالإنجليزية (Donor English Name)</label>
+                        <input type="text" dir="ltr" x-model="currentDonor.donor_ename"
+                               class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-bold text-rose-700 font-mono">
+                    </div>
+                </div>
+
+                <!-- السطر الثالث: السكاني، اللقب، الرعاية، الجنس، لغة المخاطبة، المراسلة -->
+                <div class="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الرقم السكاني (CPR)</label>
+                        <input type="text" maxlength="9" x-model="currentDonor.donor_cpr"
+                               class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-mono text-center font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">اللقب</label>
+                        <select x-model="currentDonor.name_prefix" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option value="1">حضرة الفاضل</option>
+                            <option value="2">حضرة الفاضلة</option>
+                            <option value="3">سعادة الشيخ</option>
+                            <option value="4">الدكتور</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الرعاية</label>
+                        <select x-model="currentDonor.care" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option value="1">حفظه الله</option>
+                            <option value="2">حفظها الله</option>
+                            <option value="3">المحترم</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الجنس</label>
+                        <select x-model="currentDonor.gen_cd" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option value="1">ذكر</option>
+                            <option value="2">أنثى</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">لغة المخاطبة</label>
+                        <select x-model="currentDonor.lang_cd" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option value="1">عربي</option>
+                            <option value="2">إنجليزي</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">يرغب في المراسلة</label>
+                        <select x-model="currentDonor.donor_contact" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option value="1">نعم</option>
+                            <option value="2">لا</option>
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <!-- القسم الجانبي: تاريخ إضافة المتبرع وحالته + ملخص سريع (3 أعمدة) -->
+            <section class="lg:col-span-3 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col justify-between">
+                <div>
+                    <div class="border-b border-slate-100 pb-2 mb-3 flex items-center justify-between">
+                        <h2 class="text-xs font-bold text-blue-800">تاريخ إضافة المتبرع وحالته</h2>
+                        <span class="text-[11px] font-mono text-slate-400" x-text="'بواسطة: ' + currentDonor.user_id"></span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2.5 mb-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-600 mb-1">تاريخ الإضافة</label>
+                            <input type="text" x-model="currentDonor.append_date" readonly
+                                   class="w-full bg-emerald-50 border border-emerald-200 rounded px-2.5 py-1.5 text-xs font-mono text-center font-bold text-emerald-900">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-600 mb-1">حالة المتبرع</label>
+                            <select x-model.number="currentDonor.status_no" @change="checkDonorStatusChange()"
+                                    :class="currentDonor.status_no === 1 ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300'"
+                                    class="w-full border rounded px-2 py-1.5 text-xs font-bold text-center">
+                                <option :value="1">فعال (Active)</option>
+                                <option :value="2">غير فعال (Inactive)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- بطاقات إحصائية فورية للمتبرع الحالي -->
+                <div class="bg-slate-50 rounded-lg p-2.5 border border-slate-200 grid grid-cols-2 gap-2 text-center">
+                    <div class="bg-white p-2 rounded border border-slate-100">
+                        <span class="block text-[10px] text-slate-500">الاستقطاعات الفعالة</span>
+                        <span class="text-sm font-bold text-emerald-600" x-text="currentDonor.items.filter(i => i.status_no === 1).length + ' من ' + currentDonor.items.length"></span>
+                    </div>
+                    <div class="bg-white p-2 rounded border border-slate-100">
+                        <span class="block text-[10px] text-slate-500">إجمالي الشهري الفعال</span>
+                        <span class="text-sm font-bold text-blue-700" x-text="currentDonor.items.filter(i => i.status_no === 1).reduce((s, i) => s + Number(i.monthly_pay), 0) + ' د.ب'"></span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- صف أوسط يجمع: (1) بيانات العنوان والاتصال + (2) بيانات الحساب البنكي الأساسية -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
+            
+            <!-- بيانات العنوان والاتصال (7 أعمدة) -->
+            <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5">
+                <div class="border-b border-slate-100 pb-2 mb-3">
+                    <h2 class="text-xs font-bold text-blue-800 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                        بيانات العنوان وبيانات الاتصال
+                    </h2>
+                </div>
+
+                <!-- السطر الأول للعنوان -->
+                <div class="grid grid-cols-2 sm:grid-cols-6 gap-2.5 mb-2.5">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">شقة</label>
+                        <input type="text" x-model="currentDonor.donor_flat" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs text-center">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">بناية / فيلا</label>
+                        <input type="text" x-model="currentDonor.donor_building" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs text-center">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">طريق / ممر</label>
+                        <input type="text" x-model="currentDonor.donor_road" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs text-center">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">مجمع (Block)</label>
+                        <input type="text" x-model="currentDonor.donor_block" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs text-center font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">المنطقة</label>
+                        <input type="text" x-model="currentDonor.town_name" class="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">ص . ب</label>
+                        <input type="text" x-model="currentDonor.donor_p_box" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs text-center font-mono">
+                    </div>
+                </div>
+
+                <!-- السطر الثاني: الهواتف وحالة العنوان -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">هاتف</label>
+                        <input type="text" x-model="currentDonor.donor_tel1" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-mono text-center">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">نقال (1)</label>
+                        <input type="text" x-model="currentDonor.donor_tel2" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-mono text-center font-bold text-slate-800">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">نقال (2)</label>
+                        <input type="text" x-model="currentDonor.donor_mobile" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-mono text-center font-bold text-slate-800">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">حالة العنوان</label>
+                        <select x-model="currentDonor.address_type" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option value="1">مباشر (منزل)</option>
+                            <option value="2">غير مباشر (ص.ب)</option>
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <!-- بيانات الحساب البنكي الأساسية (5 أعمدة) -->
+            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5">
+                <div class="border-b border-slate-100 pb-2 mb-3">
+                    <h2 class="text-xs font-bold text-blue-800 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                        بيانات الحساب البنكي الأساسية
+                    </h2>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2.5">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">اسم البنك</label>
+                        <select x-model="currentDonor.bank2_cd" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-semibold">
+                            <option value="1">البحرين الإسلامي</option>
+                            <option value="2">بنك السلام (إثمار سابقاً)</option>
+                            <option value="4">البحرين الوطني</option>
+                            <option value="5">البحرين والكويت</option>
+                            <option value="6">الأهلي المتحد</option>
+                            <option value="14">بيت التمويل الكويتي</option>
+                            <option value="19">البركة الإسلامي</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">رقم الحساب</label>
+                        <input type="text" x-model="currentDonor.donor_acc_no" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-mono font-bold text-center">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">نوع الحساب</label>
+                        <select x-model="currentDonor.acc_type_no" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option value="1">توفير</option>
+                            <option value="2">جاري</option>
+                            <option value="3">بدون</option>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">اسم الحساب بالقائمة</label>
+                        <input type="text" dir="ltr" x-model="currentDonor.donor_name_acc" class="w-full border border-slate-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-mono font-semibold">
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- 4. جدول الاستقطاعات التفصيلي (Standing Orders Detail Grid) -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex-1 flex flex-col">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-2.5 mb-3">
+                <div class="flex items-center gap-2">
+                    <h2 class="text-xs font-bold text-blue-800 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-emerald-600"></span>
+                        الاستقطاعات المسجلة للمتبرع (Standing Orders)
+                    </h2>
+                    <span class="bg-slate-100 text-slate-700 text-[11px] font-bold px-2 py-0.5 rounded border border-slate-200"
+                          x-text="currentDonor.items.length + ' استقطاع'"></span>
+                </div>
+
+                <button @click="openAddSoModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition">
+                    <span>+ إضافة استقطاع جديد</span>
+                </button>
+            </div>
+
+            <!-- الجدول مطابق تماماً لأعمدة الشاشة الأصلية مع تحسين بصري -->
+            <div class="overflow-x-auto border border-slate-200 rounded-lg">
+                <table class="w-full text-xs text-right border-collapse">
+                    <thead>
+                        <tr class="bg-slate-800 text-slate-100 border-b border-slate-700">
+                            <th class="py-2 px-2.5 font-semibold text-center w-16">كود SO</th>
+                            <th class="py-2 px-2.5 font-semibold">بند التبرع</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">تاريخ البداية</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">تاريخ الانتهاء</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">المبلغ (د.ب)</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">باستمارة</th>
+                            <th class="py-2 px-2.5 font-semibold">البنك</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">رقم الحساب</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">كود الاستقطاع</th>
+                            <th class="py-2 px-2.5 font-semibold text-center text-emerald-300">كود إثمار البديل</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">الحالة</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">التأخير (أشهر)</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">له متابعة</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">إجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        <template x-for="(item, idx) in currentDonor.items" :key="item.so_id">
+                            <tr :class="selectedSoId === item.so_id ? 'bg-sky-50/90' : 'hover:bg-slate-50'"
+                                @click="selectedSoId = item.so_id"
+                                class="transition cursor-pointer">
+                                <td class="py-2 px-2.5 text-center font-mono font-bold text-slate-600" x-text="item.so_id"></td>
+                                <td class="py-2 px-2.5">
+                                    <select x-model="item.item_desc" class="bg-transparent border border-slate-200 rounded px-2 py-0.5 text-xs font-semibold w-full">
+                                        <option value="صدقة">صدقة</option>
+                                        <option value="زكاة">زكاة</option>
+                                        <option value="دعوة">دعوة</option>
+                                        <option value="مساهمة عامة">مساهمة عامة</option>
+                                    </select>
+                                </td>
+                                <td class="py-2 px-2.5 text-center font-mono font-semibold" x-text="item.donation_start_date"></td>
+                                <td class="py-2 px-2.5 text-center font-mono text-slate-500" x-text="item.donation_expected_edate || '-'"></td>
+                                <td class="py-2 px-2.5 text-center font-mono font-bold text-blue-800 text-sm" x-text="item.monthly_pay"></td>
+                                <td class="py-2 px-2.5 text-center">
+                                    <input type="checkbox" x-model="item.through_form" class="w-3.5 h-3.5 accent-blue-600 rounded cursor-pointer">
+                                </td>
+                                <td class="py-2 px-2.5 font-semibold text-blue-900" x-text="item.bank_desc"></td>
+                                <td class="py-2 px-2.5 text-center font-mono font-semibold" x-text="item.donor_acc_no"></td>
+                                <td class="py-2 px-2.5 text-center font-mono font-bold text-slate-900 bg-slate-100/70" x-text="item.sort_field"></td>
+                                <td class="py-2 px-2.5 text-center font-mono font-bold text-emerald-800" x-text="item.alt_so_code || '0'"></td>
+                                <td class="py-2 px-2.5 text-center">
+                                    <span :class="item.status_no === 1 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-slate-200 text-slate-700 border-slate-300'"
+                                          class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border inline-block min-w-[65px]"
+                                          x-text="item.status_no === 1 ? 'فعال' : 'غير فعال'">
+                                    </span>
+                                </td>
+                                <td class="py-2 px-2.5 text-center font-mono font-bold"
+                                    :class="item.delay_months > 2 ? 'text-rose-600' : 'text-slate-700'"
+                                    x-text="item.delay_months"></td>
+                                <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="item.has_followup"></td>
+                                <td class="py-2 px-2.5 text-center">
+                                    <button @click.stop="toggleSoStatus(item)"
+                                            :class="item.status_no === 1 ? 'text-rose-600 hover:bg-rose-50 border-rose-200' : 'text-emerald-600 hover:bg-emerald-50 border-emerald-200'"
+                                            class="border px-2 py-0.5 rounded text-[11px] font-bold transition"
+                                            x-text="item.status_no === 1 ? 'إيقاف' : 'تفعيل'">
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="currentDonor.items.length === 0">
+                            <td colspan="14" class="py-8 text-center text-slate-400 font-semibold">
+                                لا توجد استقطاعات مسجلة لهذا المتبرع حالياً (مدرج ضمن فلتر: بدون استقطاعات)
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- 5. نافذة إضافة استقطاع جديد (Modal with Retroactive Months Calculation) -->
+    <div x-show="showAddSoModal" style="display: none;" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-5" @click.away="showAddSoModal = false">
+            <div class="flex items-center justify-between border-b pb-3 mb-4">
+                <h3 class="font-bold text-sm text-slate-800">إضافة استقطاع شهري جديد للمتبرع: <span class="text-blue-700" x-text="currentDonor.donor_name"></span></h3>
+                <button @click="showAddSoModal = false" class="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 text-xs mb-4">
+                <div>
+                    <label class="block font-semibold text-slate-600 mb-1">بند التبرع</label>
+                    <select x-model="newSo.item_desc" class="w-full border border-slate-300 rounded px-2.5 py-1.5">
+                        <option value="صدقة">صدقة</option>
+                        <option value="زكاة">زكاة</option>
+                        <option value="دعوة">دعوة</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-600 mb-1">المبلغ الشهري (د.ب)</label>
+                    <input type="number" x-model="newSo.monthly_pay" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono font-bold">
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-600 mb-1">تاريخ بداية الاستقطاع</label>
+                    <input type="date" x-model="newSo.start_date" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono">
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-600 mb-1">البنك</label>
+                    <select x-model="newSo.bank_desc" class="w-full border border-slate-300 rounded px-2.5 py-1.5">
+                        <option value="البحرين الإسلامي">البحرين الإسلامي</option>
+                        <option value="بنك السلام">بنك السلام</option>
+                        <option value="البحرين الوطني">البحرين الوطني</option>
+                        <option value="البحرين والكويت">البحرين والكويت</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-600 mb-1">رقم الحساب</label>
+                    <input type="text" x-model="newSo.donor_acc_no" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono">
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-600 mb-1">كود الاستقطاع بالبنك (Sort Field)</label>
+                    <input type="text" x-model="newSo.sort_field" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono font-bold">
+                </div>
+            </div>
+
+            <!-- تنبيه التوليد بأثر رجعي -->
+            <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 mb-4">
+                <strong>ملاحظة النظام الآلي (Insert_Payments):</strong> عند حفظ هذا الاستقطاع بتاريخ قديم، سيقوم النظام تلقائياً بحساب عدد الأشهر من تاريخ البداية وحتى الشهر الحالي وإنشاء سجلات استحقاق (غير مسددة) لها في جدول الحركات `MONEY_TRANS`.
+            </div>
+
+            <div class="flex justify-end gap-2">
+                <button @click="showAddSoModal = false" class="px-4 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600">إلغاء</button>
+                <button @click="confirmAddSo()" class="px-4 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700">حفظ وتوليد الحركات</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- بيانات وتفاعلات الشاشة المتصلة بـ PostgreSQL -->
+    <script>
+        function donorScreenApp() {
+            return {
+                currentFilter: 'ALL',
+                searchQuery: '',
+                currentIndex: 0,
+                selectedSoId: null,
+                showAddSoModal: false,
+                banks: [],
+                charityItems: [],
+                newSo: { item_no: '1', monthly_pay: 10, start_date: '2026-01-01', bank2_cd: 1, donor_acc_no: '', sort_field: '' },
+                donors: [{ donor_no: 1, donor_name: 'جاري التحميل...', status_no: 1, items: [] }],
+                async init() {
+                    await this.loadFromDatabase();
+                },
+                async loadFromDatabase(keepDonorNo = null) {
+                    const res = await fetch('/api/init-data');
+                    const data = await res.json();
+                    this.banks = data.banks || [];
+                    this.charityItems = data.charity_items || [];
+                    if (data.donors && data.donors.length > 0) {
+                        this.donors = data.donors;
+                    }
+                    if (keepDonorNo) {
+                        const idx = this.filteredDonors.findIndex(d => Number(d.donor_no) === Number(keepDonorNo));
+                        if (idx !== -1) this.currentIndex = idx;
+                    }
+                },
+                get filteredDonors() {
+                    return this.donors.filter(d => {
+                        const matchFilter =
+                            this.currentFilter === 'ALL' ||
+                            (this.currentFilter === 'ACTIVE' && Number(d.status_no) === 1) ||
+                            (this.currentFilter === 'INACTIVE' && Number(d.status_no) === 2) ||
+                            (this.currentFilter === 'NO_SO' && (!d.items || d.items.length === 0));
+                        
+                        const q = this.searchQuery.trim().toLowerCase();
+                        const matchSearch = !q ||
+                            String(d.donor_no).includes(q) ||
+                            (d.donor_name && d.donor_name.toLowerCase().includes(q)) ||
+                            (d.donor_ename && d.donor_ename.toLowerCase().includes(q)) ||
+                            (d.donor_cpr && d.donor_cpr.includes(q)) ||
+                            (d.donor_tel2 && d.donor_tel2.includes(q)) ||
+                            (d.items && d.items.some(i => i.sort_field && i.sort_field.includes(q)));
+                        
+                        return matchFilter && matchSearch;
+                    });
+                },
+                get currentDonor() {
+                    return this.filteredDonors[this.currentIndex] || this.donors[0] || { items: [] };
+                },
+                setFilter(f) { this.currentFilter = f; this.currentIndex = 0; },
+                handleSearch() { this.currentIndex = 0; },
+                firstDonor() { this.currentIndex = 0; },
+                lastDonor() { this.currentIndex = Math.max(0, this.filteredDonors.length - 1); },
+                nextDonor() { if (this.currentIndex < this.filteredDonors.length - 1) this.currentIndex++; },
+                prevDonor() { if (this.currentIndex > 0) this.currentIndex--; },
+                updateFullName() {
+                    const d = this.currentDonor;
+                    d.donor_name = [d.f_nm, d.s_nm, d.t_nm, d.l_nm].filter(Boolean).join(' ');
+                },
+                openAddSoModal() {
+                    this.newSo.donor_acc_no = this.currentDonor.donor_acc_no || '';
+                    this.newSo.bank2_cd = this.currentDonor.bank2_cd || 1;
+                    this.newSo.sort_field = '';
+                    this.showAddSoModal = true;
+                },
+                async confirmAddSo() {
+                    if (!this.newSo.sort_field) {
+                        alert('الرجاء إدخال كود الاستقطاع بالبنك (Sort Field)');
+                        return;
+                    }
+                    const res = await fetch('/api/standing-orders/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            donor_no: Number(this.currentDonor.donor_no),
+                            item_no: '1',
+                            monthly_pay: Number(this.newSo.monthly_pay),
+                            donation_start_date: this.newSo.start_date,
+                            bank2_cd: Number(this.newSo.bank2_cd || 1),
+                            donor_acc_no: this.newSo.donor_acc_no || '',
+                            sort_field: String(this.newSo.sort_field)
+                        })
+                    });
+                    if (res.ok) {
+                        this.showAddSoModal = false;
+                        await this.loadFromDatabase(this.currentDonor.donor_no);
+                        alert('تم حفظ الاستقطاع في قاعدة البيانات وتوليد حركات الأشهر السابقة في جدول MONEY_TRANS بنجاح!');
+                    } else {
+                        const err = await res.text();
+                        alert('خطأ أثناء حفظ الاستقطاع: ' + err);
+                    }
+                },
+                async toggleSoStatus(item) {
+                    let reason = '';
+                    if (Number(item.status_no) === 1) {
+                        reason = prompt('الرجاء إدخال سبب إيقاف هذا الاستقطاع:', 'بناءً على طلب المتبرع / توقف السداد');
+                        if (reason === null) return;
+                    }
+                    const res = await fetch(`/api/standing-orders/${item.so_id}/toggle`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ reason: reason, userid: 'TAREK' })
+                    });
+                    if (res.ok) {
+                        await this.loadFromDatabase(this.currentDonor.donor_no);
+                    }
+                },
+                checkDonorStatusChange() {
+                    if (Number(this.currentDonor.status_no) === 2) {
+                        alert('تنبيه: عند الضغط على حفظ التعديلات سيتم تسجيل حركة إيقاف المتبرع في جدول DEACTIVATE_DONOR_TRANS.');
+                    }
+                },
+                newDonor() {
+                    const nextNo = this.donors.length ? Math.max(...this.donors.map(d => Number(d.donor_no))) + 1 : 1;
+                    this.donors.push({
+                        donor_no: nextNo, f_nm: '', s_nm: '', t_nm: '', l_nm: '',
+                        donor_name: 'متبرع جديد', donor_ename: '', donor_cpr: '',
+                        name_prefix: 1, care: '1', gen_cd: 1, lang_cd: 1, donor_contact: 1,
+                        donor_flat: null, donor_building: '', donor_road: '', donor_block: null, town_name: '', donor_p_box: null,
+                        donor_tel1: '', donor_tel2: '', donor_mobile: '', address_type: 1,
+                        bank2_cd: 1, donor_acc_no: '', acc_type_no: 1, donor_name_acc: '',
+                        append_date: new Date().toISOString().slice(0, 10), status_no: 1, user_id: 'TAREK', items: []
+                    });
+                    this.currentFilter = 'ALL';
+                    this.currentIndex = this.filteredDonors.length - 1;
+                },
+                async saveDonor() {
+                    const d = { ...this.currentDonor };
+                    const res = await fetch('/api/donors/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(d)
+                    });
+                    if (res.ok) {
+                        const result = await res.json();
+                        await this.loadFromDatabase(result.donor_no);
+                        alert('تم حفظ بيانات المستقطع في قاعدة بيانات PostgreSQL بنجاح!');
+                    } else {
+                        const err = await res.text();
+                        alert('خطأ في الحفظ: ' + err);
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

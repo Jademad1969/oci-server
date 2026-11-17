@@ -39,9 +39,9 @@
             <!-- روابط التنقل بين شاشات النظام -->
             <nav class="hidden lg:flex items-center gap-1 text-sm">
                 <a href="#" class="bg-slate-800 text-emerald-400 font-semibold px-3 py-1.5 rounded-md border border-slate-700">بيانات المستقطعين</a>
-                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تدقيق أكواد البنوك</a>
-                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تحميل ومطابقة الكشوف (CSV)</a>
-                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">متابعة المتأخرين</a>
+                <a href="/bank-codes-audit" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تدقيق أكواد البنوك</a>
+                <a href="/bank-reconcile" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تحميل ومطابقة الكشوف (CSV)</a>
+                <a href="/followup" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">متابعة المتأخرين</a>
                 <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">التقارير والإحصائيات</a>
                 <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">المستخدمين والإعدادات</a>
             </nav>
@@ -413,7 +413,9 @@
                             <th class="py-2 px-2.5 font-semibold text-center">كود الاستقطاع</th>
                             <th class="py-2 px-2.5 font-semibold text-center text-emerald-300">كود إثمار البديل</th>
                             <th class="py-2 px-2.5 font-semibold text-center">الحالة</th>
-                            <th class="py-2 px-2.5 font-semibold text-center">التأخير (أشهر)</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">تأخير فعلي</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">تأخير افتراضي</th>
+                            <th class="py-2 px-2.5 font-semibold text-center">ملاحظات السداد</th>
                             <th class="py-2 px-2.5 font-semibold text-center">له متابعة</th>
                             <th class="py-2 px-2.5 font-semibold text-center">إجراءات</th>
                         </tr>
@@ -449,9 +451,15 @@
                                     </span>
                                 </td>
                                 <td class="py-2 px-2.5 text-center font-mono font-bold"
-                                    :class="item.delay_months > 2 ? 'text-rose-600' : 'text-slate-700'"
-                                    x-text="item.delay_months"></td>
-                                <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="item.has_followup"></td>
+                                    :class="item.actual_delay_months > 2 ? 'text-rose-600' : 'text-slate-700'"
+                                    x-text="item.actual_delay_months"></td>
+                                <td class="py-2 px-2.5 text-center font-mono font-bold text-amber-700"
+                                    x-text="item.virtual_delay_months"></td>
+                                <td class="py-2 px-2.5 text-center">
+                                    <span x-show="item.payment_notes" class="bg-rose-100 text-rose-800 border border-rose-300 px-2 py-0.5 rounded text-[10px] font-bold" x-text="item.payment_notes"></span>
+                                    <span x-show="!item.payment_notes" class="text-slate-400 text-[11px]">-</span>
+                                </td>
+                                <td class="py-2 px-2.5 text-center font-mono font-bold" :title="item.last_followup_summary" x-text="item.has_followup"></td>
                                 <td class="py-2 px-2.5 text-center">
                                     <button @click.stop="toggleSoStatus(item)"
                                             :class="item.status_no === 1 ? 'text-rose-600 hover:bg-rose-50 border-rose-200' : 'text-emerald-600 hover:bg-emerald-50 border-emerald-200'"

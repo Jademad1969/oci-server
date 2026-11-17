@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>متابعة الاستقطاعات المتأخرة - DIC</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Cairo', sans-serif; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col" x-data="followupApp()">
+
+    <!-- 1. الشريط العلوي الموحد -->
+    <header class="bg-slate-900 text-white shadow-md border-b border-slate-700 sticky top-0 z-30">
+        <div class="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <div class="bg-emerald-600 text-white font-bold px-3 py-1 rounded-md text-sm tracking-wide">
+                    DIC BAHRAIN
+                </div>
+                <h1 class="font-bold text-base md:text-lg text-slate-100">
+                    نظام الاستقطاعات الشهرية <span class="text-slate-400 text-sm font-normal">| شاشة متابعة الاستقطاعات المتأخرة (Donors & SO Followup)</span>
+                </h1>
+                <span class="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs px-2.5 py-0.5 rounded-full whitespace-nowrap">
+                    بيئة الاختبار (Testing Env)
+                </span>
+            </div>
+
+            <nav class="hidden lg:flex items-center gap-1 text-sm">
+                <a href="/" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">بيانات المستقطعين</a>
+                <a href="/bank-codes-audit" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تدقيق أكواد البنوك</a>
+                <a href="/bank-reconcile" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تحميل ومطابقة الكشوف (CSV)</a>
+                <a href="/followup" class="bg-slate-800 text-emerald-400 font-semibold px-3 py-1.5 rounded-md border border-slate-700">متابعة المتأخرين</a>
+                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">التقارير والإحصائيات</a>
+            </nav>
+
+            <div class="flex items-center gap-4 text-xs md:text-sm">
+                <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <span class="text-slate-400">USER:</span> <span class="font-bold text-emerald-400" x-text="currentUser"></span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 2. شريط الفلترة والتنقل وتصدير إكسل المتابعة -->
+    <div class="bg-white border-b border-slate-200 shadow-sm sticky top-14 z-20">
+        <div class="max-w-[1600px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+            
+            <div class="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-bold">
+                <button @click="setFilter('DELAYED')"
+                        :class="filterMode === 'DELAYED' ? 'bg-rose-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
+                    المتأخرين (&gt; شهرين) (<span x-text="donors.filter(d => d.max_delay > 2).length"></span>)
+                </button>
+                <button @click="setFilter('INACTIVE')"
+                        :class="filterMode === 'INACTIVE' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
+                    غير النشطين (<span x-text="donors.filter(d => Number(d.status_no) === 2).length"></span>)
+                </button>
+                <button @click="setFilter('ALL')"
+                        :class="filterMode === 'ALL' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
+                    كافة المشتركين (<span x-text="donors.length"></span>)
+                </button>
+            </div>
+
+            <div class="flex-1 max-w-md relative">
+                <input type="text" x-model="searchQuery" @input="currentIndex = 0; selectedSoId = null"
+                       placeholder="بحث بكود المتبرع، الاسم، الرقم السكاني، أو رقم الهاتف..."
+                       class="w-full h-9 bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg pr-9 pl-3 text-xs">
+                <svg class="w-4 h-4 text-slate-400 absolute right-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+            </div>
+
+            <div class="flex items-center gap-2.5">
+                <div class="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-xs h-9">
+                    <button @click="currentIndex = 0; selectedSoId = null" class="px-2.5 h-full hover:bg-white rounded font-bold">|&lt;</button>
+                    <button @click="if(currentIndex > 0) { currentIndex--; selectedSoId = null; }" class="px-2.5 h-full hover:bg-white rounded font-bold">&lt;</button>
+                    <span class="px-3 font-mono font-bold text-slate-700 whitespace-nowrap">
+                        <span x-text="filteredDonors.length ? currentIndex + 1 : 0"></span> / <span x-text="filteredDonors.length"></span>
+                    </span>
+                    <button @click="if(currentIndex < filteredDonors.length - 1) { currentIndex++; selectedSoId = null; }" class="px-2.5 h-full hover:bg-white rounded font-bold">&gt;</button>
+                    <button @click="currentIndex = Math.max(0, filteredDonors.length - 1); selectedSoId = null" class="px-2.5 h-full hover:bg-white rounded font-bold">&gt;|</button>
+                </div>
+
+                <a href="/api/followup/export-csv" target="_blank"
+                   class="h-9 bg-emerald-700 hover:bg-emerald-800 text-white px-4 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5 whitespace-nowrap">
+                    <span>تصدير كشف المتابعة (Excel / CSV)</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. المحتوى الرئيسي للشاشة -->
+    <main class="max-w-[1600px] w-full mx-auto px-4 py-3 flex-1 flex flex-col gap-3" x-show="currentDonor && currentDonor.donor_no">
+
+        <!-- القسم الأول: البيانات الأساسية + بيانات الاتصال -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
+            
+            <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+                    <h2 class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                        البيانات الأساسية للمتبرع
+                    </h2>
+                    <span :class="Number(currentDonor.status_no) === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-800 border-rose-300'"
+                          class="px-3 py-0.5 rounded-full text-xs font-extrabold border whitespace-nowrap"
+                          x-text="Number(currentDonor.status_no) === 1 ? 'فعال (Active)' : 'غير فعال (Inactive)'"></span>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-6 gap-2.5 mb-2.5 text-xs">
+                    <div>
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">كود المتبرع</label>
+                        <input type="text" :value="currentDonor.donor_no" readonly class="w-full h-8 bg-slate-100 border border-slate-300 rounded px-2.5 font-mono font-bold text-center text-sm">
+                    </div>
+                    <div class="sm:col-span-3">
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">اسم المتبرع (عربي)</label>
+                        <input type="text" :value="currentDonor.donor_name" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-bold text-slate-900">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الرقم السكاني (CPR)</label>
+                        <input type="text" :value="currentDonor.donor_cpr" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-mono font-bold text-center">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الجنس</label>
+                        <input type="text" :value="Number(currentDonor.gen_cd) === 2 ? 'أنثى' : 'ذكر'" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-bold text-center">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-[11px] font-semibold text-rose-700 mb-1">الاسم بالإنجليزية (Donor English Name)</label>
+                    <input type="text" dir="ltr" :value="currentDonor.donor_ename" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 text-xs font-mono font-bold text-rose-700">
+                </div>
+            </section>
+
+            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col justify-between">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+                    <h2 class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-emerald-600"></span>
+                        بيانات الاتصال والتواصل المباشر
+                    </h2>
+                    <div class="flex items-center gap-1.5 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-200">
+                        <span class="text-[11px] font-bold text-slate-600">عدد الاستقطاعات:</span>
+                        <span class="font-mono font-extrabold text-sm text-blue-800" x-text="currentDonor.items ? currentDonor.items.length : 0"></span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs mb-3">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">هاتف</label>
+                        <input type="text" :value="currentDonor.donor_tel1" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 font-mono font-bold text-center">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">نقال (1)</label>
+                        <input type="text" :value="currentDonor.donor_tel2" readonly class="w-full h-8 bg-emerald-50 border border-emerald-300 rounded px-2 font-mono font-extrabold text-center text-emerald-950">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">نقال (2)</label>
+                        <input type="text" :value="currentDonor.donor_mobile" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 font-mono font-bold text-center">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">ص . ب</label>
+                        <input type="text" :value="currentDonor.donor_p_box || ''" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 font-mono text-center">
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between bg-emerald-50/80 border border-emerald-200 rounded-lg px-3 py-2">
+                    <span class="text-xs font-bold text-emerald-900">تواصل سريع مع المتبرع عبر واتساب:</span>
+                    <button @click="openWhatsApp()"
+                            class="h-8 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5 whitespace-nowrap">
+                        <span>إرسال رسالة واتساب (+973)</span>
+                    </button>
+                </div>
+            </section>
+        </div>
+
+        <!-- القسم الثاني: جدول الاستقطاعات الخاص بالمتبرع (اضغط على أي صف لعرض متابعاته الخاصة بالأسفل) -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-2.5">
+                <h2 class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                    الاستقطاعات المسجلة للمتبرع وحالة تأخيرها
+                </h2>
+                <span class="text-[11px] font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded border border-blue-200">
+                    💡 اضغط على أي سطر استقطاع بالأسفل لعرض متابعاته الخاصة في جدول متابعات الاستقطاع
+                </span>
+            </div>
+
+            <div class="overflow-x-auto border border-slate-200 rounded-lg">
+                <table class="w-full text-xs text-right border-collapse">
+                    <thead class="bg-slate-800 text-white whitespace-nowrap">
+                        <tr>
+                            <th class="py-2.5 px-3 text-center">رقم SO</th>
+                            <th class="py-2.5 px-3 text-center">تاريخ البداية</th>
+                            <th class="py-2.5 px-3 text-center">تاريخ الانتهاء</th>
+                            <th class="py-2.5 px-3 text-center">المبلغ (د.ب)</th>
+                            <th class="py-2.5 px-3">البنك</th>
+                            <th class="py-2.5 px-3 text-center">رقم الحساب</th>
+                            <th class="py-2.5 px-3 text-center">كود الاستقطاع</th>
+                            <th class="py-2.5 px-3 text-center text-emerald-300">كود إثمار البديل</th>
+                            <th class="py-2.5 px-3 text-center">باستمارة</th>
+                            <th class="py-2.5 px-3 text-center min-w-[95px]">الحالة</th>
+                            <th class="py-2.5 px-3 text-center bg-rose-900">تأخير فعلي</th>
+                            <th class="py-2.5 px-3 text-center bg-amber-800">تأخير افتراضي</th>
+                            <th class="py-2.5 px-3 text-center">آخر سداد</th>
+                            <th class="py-2.5 px-3 text-center min-w-[140px]">ملاحظات السداد</th>
+                            <th class="py-2.5 px-3 min-w-[220px]">آخر متابعة للمتبرع</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200 whitespace-nowrap">
+                        <template x-for="(so, sIdx) in currentDonor.items" :key="so.so_id">
+                            <tr @click="selectedSoIndex = sIdx" :class="selectedSoIndex === sIdx ? 'bg-sky-100 ring-2 ring-inset ring-sky-500 font-bold' : 'hover:bg-slate-50'" class="cursor-pointer transition">
+                                <td class="py-2 px-3 text-center font-mono font-extrabold text-blue-900" x-text="so.so_id"></td>
+                                <td class="py-2 px-3 text-center font-mono font-semibold" x-text="so.donation_start_date"></td>
+                                <td class="py-2 px-3 text-center font-mono text-slate-500" x-text="so.donation_expected_edate || '-'"></td>
+                                <td class="py-2 px-3 text-center font-mono font-extrabold text-sm text-blue-900" x-text="so.monthly_pay"></td>
+                                <td class="py-2 px-3 font-bold text-slate-800" x-text="so.bank_desc"></td>
+                                <td class="py-2 px-3 text-center font-mono font-semibold" x-text="so.donor_acc_no"></td>
+                                <td class="py-2 px-3 text-center font-mono font-bold bg-slate-100/70" x-text="so.sort_field"></td>
+                                <td class="py-2 px-3 text-center font-mono font-bold text-emerald-700" x-text="so.alt_so_code || ''"></td>
+                                <td class="py-2 px-3 text-center">
+                                    <input type="checkbox" :checked="so.through_form" disabled class="w-3.5 h-3.5 accent-blue-600">
+                                </td>
+                                <td class="py-2 px-3 text-center">
+                                    <span :class="so.status_no === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-200 text-slate-700 border-slate-300'"
+                                          class="inline-block whitespace-nowrap px-3 py-0.5 rounded-full text-[11px] font-bold border"
+                                          x-text="so.status_no === 1 ? 'فعال' : 'غير فعال'"></span>
+                                </td>
+                                <td class="py-2 px-3 text-center font-mono font-extrabold text-base"
+                                    :class="so.actual_delay_months > 2 ? 'text-rose-600 bg-rose-50' : 'text-slate-800'"
+                                    x-text="so.actual_delay_months"></td>
+                                <td class="py-2 px-3 text-center font-mono font-extrabold text-base text-amber-800 bg-amber-50/60"
+                                    x-text="so.virtual_delay_months"></td>
+                                <td class="py-2 px-3 text-center font-mono font-semibold text-slate-700" x-text="so.last_paid_month || '-'"></td>
+                                <td class="py-2 px-3 text-center">
+                                    <span x-show="so.payment_notes" class="inline-block whitespace-nowrap bg-rose-100 text-rose-800 border border-rose-300 px-2.5 py-0.5 rounded text-[11px] font-bold" x-text="so.payment_notes"></span>
+                                    <span x-show="!so.payment_notes" class="inline-block whitespace-nowrap text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded text-[11px] font-bold">منتظم / له سداد</span>
+                                </td>
+                                <td class="py-2 px-3 text-xs font-bold text-blue-900" x-text="so.last_followup_summary || 'بدون متابعة'"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- القسم الثالث: متابعات المستقطع + متابعات الاستقطاع المحدد -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1">
+            
+            <!-- متابعات المستقطع على مستوى المتبرع -->
+            <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
+                        <h2 class="text-xs font-extrabold text-rose-800 flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-rose-600"></span>
+                            متابعات المستقطع (على مستوى المتبرع - DONOR_FOLLOWUP)
+                        </h2>
+                        <span class="text-[11px] font-bold text-slate-500" x-text="(currentDonor.followups ? currentDonor.followups.length : 0) + ' اتصال مسجل'"></span>
+                    </div>
+
+                    <div class="overflow-auto max-h-[180px] border border-slate-200 rounded-lg mb-3">
+                        <table class="w-full text-xs text-right border-collapse whitespace-nowrap">
+                            <thead class="bg-slate-800 text-white sticky top-0">
+                                <tr>
+                                    <th class="py-2 px-3 text-center">تاريخ التواصل</th>
+                                    <th class="py-2 px-3 text-center">الوقت</th>
+                                    <th class="py-2 px-3 text-center bg-slate-700">اسم الموظف (بواسطة)</th>
+                                    <th class="py-2 px-3 text-center">طريقة التواصل</th>
+                                    <th class="py-2 px-3">نتيجة التواصل</th>
+                                    <th class="py-2 px-3">سبب التأخير / التوقف</th>
+                                    <th class="py-2 px-3">ملاحظات</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-200">
+                                <template x-for="f in currentDonor.followups" :key="f.trans_id">
+                                    <tr @click="selectedSoId = so.so_id" :class="activeSoId == so.so_id ? 'bg-sky-100 font-bold' : 'hover:bg-slate-50'" class="cursor-pointer">
+                                        <td class="py-2 px-3 text-center font-mono font-bold" x-text="f.call_date"></td>
+                                        <td class="py-2 px-3 text-center font-mono" x-text="f.call_time || '-'"></td>
+                                        <td class="py-2 px-3 text-center">
+                                            <span class="inline-block bg-slate-100 text-blue-900 border border-slate-300 px-2.5 py-0.5 rounded font-mono font-bold text-xs"
+                                                  x-text="f.call_by"></span>
+                                        </td>
+                                        <td class="py-2 px-3 text-center">
+                                            <span :class="f.contact_method === 1 ? 'bg-blue-50 text-blue-800 border-blue-200' : (f.contact_method === 2 ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-purple-50 text-purple-800 border-purple-200')"
+                                                  class="inline-block whitespace-nowrap px-2.5 py-0.5 rounded text-[11px] font-bold border"
+                                                  x-text="f.contact_method_nm"></span>
+                                        </td>
+                                        <td class="py-2 px-3 font-bold text-emerald-800" x-text="f.result_nm"></td>
+                                        <td class="py-2 px-3 font-bold text-rose-700" x-text="f.reason_nm"></td>
+                                        <td class="py-2 px-3 text-slate-700" x-text="f.call_result_notes || '-'"></td>
+                                    </tr>
+                                </template>
+                                <tr x-show="!currentDonor.followups || currentDonor.followups.length === 0">
+                                    <td colspan="7" class="py-6 text-center text-slate-400 font-semibold">
+                                        لا توجد اتصالات متابعة مسجلة لهذا المتبرع حتى الآن.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- نموذج تسجيل متابعة جديدة بحقول متساوية الارتفاع تماماً (h-9) وحقل صريح لاسم الموظف -->
+                <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                    <div class="text-xs font-extrabold text-slate-800 mb-2.5 border-b border-slate-200 pb-1.5">
+                        تسجيل متابعة جديدة (سجل تدقيقي ثابت لا يقبل الحذف أو التعديل بعد الحفظ):
+                    </div>
+
+                    <div class="grid grid-cols-2 sm:grid-cols-12 gap-2.5 items-end text-xs mb-2.5">
+                        <div class="sm:col-span-2">
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">اسم الموظف (بواسطة)</label>
+                            <input type="text" :value="currentUser" readonly
+                                   class="w-full h-9 bg-slate-200/80 border border-slate-300 text-blue-900 rounded-lg px-2.5 font-mono font-extrabold text-center cursor-not-allowed">
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">تاريخ التواصل</label>
+                            <input type="date" x-model="newFollow.call_date"
+                                   class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2.5 font-mono font-semibold">
+                        </div>
+                        <div class="sm:col-span-2">
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">الوقت</label>
+                            <input type="text" x-model="newFollow.call_time" placeholder="11:00"
+                                   class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2.5 font-mono font-semibold text-center">
+                        </div>
+                        <div class="sm:col-span-2">
+                            <label class="block text-[11px] font-bold text-blue-800 mb-1">طريقة التواصل</label>
+                            <select x-model.number="newFollow.contact_method"
+                                    class="w-full h-9 bg-white border border-blue-300 focus:border-blue-600 rounded-lg px-2 font-bold text-blue-900">
+                                <option :value="1">اتصال هاتفي</option>
+                                <option :value="2">رسالة (SMS/واتساب)</option>
+                                <option :value="3">بريد إلكتروني</option>
+                            </select>
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block text-[11px] font-bold text-emerald-800 mb-1">نتيجة التواصل</label>
+                            <select x-model.number="newFollow.call_result_cd"
+                                    class="w-full h-9 bg-white border border-emerald-300 focus:border-emerald-600 rounded-lg px-2 font-bold text-emerald-900">
+                                <template x-for="res in followResults" :key="res.result_cd">
+                                    <option :value="res.result_cd" x-text="res.result_nm"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end text-xs">
+                        <div class="sm:col-span-4">
+                            <label class="block text-[11px] font-bold text-rose-800 mb-1">سبب التأخير / التوقف (من جدول الأسباب)</label>
+                            <select x-model.number="newFollow.delay_reason_cd"
+                                    class="w-full h-9 bg-white border border-rose-300 focus:border-rose-600 rounded-lg px-2 font-bold text-rose-900">
+                                <template x-for="dr in delayReasons" :key="dr.reason_cd">
+                                    <option :value="dr.reason_cd" x-text="dr.reason_nm"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="sm:col-span-6">
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">ملاحظات المتابعة</label>
+                            <input type="text" x-model="newFollow.call_result_notes" placeholder="اكتب تفاصيل ما تم مع المتبرع..."
+                                   class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-3">
+                        </div>
+                        <div class="sm:col-span-2">
+                            <button @click="saveFollowup()"
+                                    class="w-full h-9 bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded-lg font-bold whitespace-nowrap shadow-sm transition flex items-center justify-center">
+                                حفظ المتابعة
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- سجل المتابعات الخاصة بالاستقطاع المحدد (بنفس هيكل جدول متابعات المستقطع الشغال) -->
+            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col">
+                <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
+                    <h2 class="text-xs font-extrabold text-blue-900 flex items-center gap-1.5">
+                        <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                        متابعات الاستقطاع المحدد (DONOR_ITEM_FOLLOWUP)
+                    </h2>
+                    <span class="bg-sky-100 text-sky-900 border border-sky-300 px-3 py-0.5 rounded-full text-xs font-mono font-extrabold"
+                          x-text="currentSo && currentSo.so_id ? 'الاستقطاع المحدد: SO #' + currentSo.so_id : 'لا يوجد استقطاع'"></span>
+                </div>
+
+                <div class="overflow-auto max-h-[260px] border border-slate-200 rounded-lg flex-1">
+                    <table class="w-full text-xs text-right border-collapse whitespace-nowrap">
+                        <thead class="bg-slate-700 text-white sticky top-0">
+                            <tr>
+                                <th class="py-2 px-2.5 text-center">رقم SO</th>
+                                <th class="py-2 px-2.5 text-center">تاريخ الاتصال</th>
+                                <th class="py-2 px-2.5 text-center">بواسطة</th>
+                                <th class="py-2 px-2.5">النتيجة</th>
+                                <th class="py-2 px-2.5">سبب التأخير</th>
+                                <th class="py-2 px-2.5 text-center">أشهر التأخير</th>
+                                <th class="py-2 px-2.5 text-center">آخر دفع</th>
+                                <th class="py-2 px-2.5">ملاحظات</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-200">
+                            <template x-for="of in allItemFollowups.filter(f => Number(f.so_id) === Number(activeSoId))" :key="of.trans_id">
+                                <tr class="hover:bg-sky-50/60">
+                                    <td class="py-2 px-2.5 text-center font-mono font-extrabold text-blue-800 bg-slate-50" x-text="of.so_id"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="of.call_date"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono font-bold text-blue-900" x-text="of.call_by"></td>
+                                    <td class="py-2 px-2.5 font-bold text-emerald-800" x-text="of.result_nm"></td>
+                                    <td class="py-2 px-2.5 font-bold text-rose-700" x-text="of.reason_nm"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="of.delayed_months"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono" x-text="of.last_paid_month"></td>
+                                    <td class="py-2 px-2.5 font-semibold text-slate-800" x-text="of.call_result_notes || '-'"></td>
+                                </tr>
+                            </template>
+                            <tr x-show="allItemFollowups.filter(f => Number(f.so_id) === Number(activeSoId)).length === 0">
+                                <td colspan="8" class="py-8 text-center text-slate-400 font-semibold">
+                                    لا توجد سجلات متابعة خاصة بهذا الاستقطاع.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <script>
+        function followupApp() {
+            return {
+                currentUser: 'HASAN',
+                filterMode: 'ALL',
+                searchQuery: '',
+                currentIndex: 0,
+                selectedSoIndex: 0,
+                donors: [],
+                followResults: [],
+                delayReasons: [],
+                newFollow: {
+                    call_date: new Date().toISOString().slice(0, 10),
+                    call_time: new Date().toTimeString().slice(0, 5),
+                    contact_method: 1,
+                    call_result_cd: 1,
+                    delay_reason_cd: 1,
+                    call_result_notes: ''
+                },
+                async init() {
+                    await this.loadFollowupData();
+                },
+                async loadFollowupData(keepDonorNo = null) {
+                    const res = await fetch('/api/followup/data');
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.donors = data.donors || [];
+                        this.followResults = data.follow_results || [];
+                        this.delayReasons = data.delay_reasons || [];
+                        if (keepDonorNo) {
+                            const idx = this.filteredDonors.findIndex(d => Number(d.donor_no) === Number(keepDonorNo));
+                            if (idx !== -1) this.currentIndex = idx;
+                        }
+                    }
+                },
+                get filteredDonors() {
+                    return this.donors.filter(d => {
+                        const matchMode =
+                            this.filterMode === 'ALL' ||
+                            (this.filterMode === 'DELAYED' && d.max_delay > 2) ||
+                            (this.filterMode === 'INACTIVE' && Number(d.status_no) === 2);
+
+                        const q = this.searchQuery.trim().toLowerCase();
+                        const matchSearch = !q ||
+                            String(d.donor_no).includes(q) ||
+                            (d.donor_name && d.donor_name.toLowerCase().includes(q)) ||
+                            (d.donor_ename && d.donor_ename.toLowerCase().includes(q)) ||
+                            (d.donor_cpr && d.donor_cpr.includes(q)) ||
+                            (d.donor_tel2 && d.donor_tel2.includes(q));
+
+                        return matchMode && matchSearch;
+                    });
+                },
+                get currentDonor() {
+                    return this.filteredDonors[this.currentIndex] || this.donors[0] || { items: [], followups: [] };
+                },
+                get currentSo() {
+                    const items = this.currentDonor.items || [];
+                    return items[this.selectedSoIndex] || items[0] || { item_followups: [] };
+                },
+                setFilter(m) {
+                    this.filterMode = m;
+                    this.currentIndex = 0;
+                    this.selectedSoIndex = 0;
+                },
+                async saveFollowup() {
+                    if (!this.currentDonor.donor_no) return;
+                    const res = await fetch('/api/followup/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            donor_no: Number(this.currentDonor.donor_no),
+                            call_date: this.newFollow.call_date,
+                            call_time: this.newFollow.call_time,
+                            contact_method: Number(this.newFollow.contact_method),
+                            call_result_cd: Number(this.newFollow.call_result_cd),
+                            delay_reason_cd: Number(this.newFollow.delay_reason_cd),
+                            call_result_notes: this.newFollow.call_result_notes
+                        })
+                    });
+                    if (res.ok) {
+                        this.newFollow.call_result_notes = '';
+                        await this.loadFollowupData(this.currentDonor.donor_no);
+                        alert('تم حفظ اتصال المتابعة بنجاح!');
+                    } else {
+                        const err = await res.text();
+                        alert('خطأ أثناء حفظ المتابعة: ' + err);
+                    }
+                },
+                openWhatsApp() {
+                    const phone = (this.currentDonor.donor_tel2 || this.currentDonor.donor_mobile || '').replace(/\D/g, '');
+                    if (!phone) {
+                        alert('لا يوجد رقم هاتف نقال مسجل لهذا المتبرع.');
+                        return;
+                    }
+                    const fullPhone = phone.startsWith('973') ? phone : '973' + phone;
+                    const msg = `السلام عليكم ورحمة الله وبركاته، حضرة الفاضل/ة ${this.currentDonor.donor_name} حفظكم الله، نود تذكيركم من جمعية اكتشف الإسلام بالبحرين بخصوص تحديث استقطاعكم الشهري، شاكرين لكم دوام عطائكم.`;
+                    window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+                }
+            }
+        }
+    </script>
+</body>
+</html>

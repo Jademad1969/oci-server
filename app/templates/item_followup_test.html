@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>شاشة الاختبار العكسية - الحل النهائي القاطع</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Cairo', sans-serif; } </style>
+</head>
+<body class="bg-slate-100 p-6" x-data="reverseTestApp()">
+    <div class="max-w-7xl mx-auto space-y-6">
+        
+        <!-- شريط التحكم العلوي -->
+        <div class="bg-white rounded-xl shadow-md p-4 flex items-center justify-between">
+            <h1 class="text-base font-bold text-blue-900">🧪 شاشة الاختبار العكسية (الربط المباشر المضمون)</h1>
+            <div class="flex gap-3">
+                <a href="/followup" class="bg-slate-800 text-white px-4 py-2 rounded text-xs font-bold">العودة لشاشة المتابعة الرئيسية</a>
+                <button @click="prevDonor()" class="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-bold">المتبرع السابق</button>
+                <button @click="nextDonor()" class="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-bold">المتبرع التالي</button>
+            </div>
+        </div>
+
+        <!-- 1. بيانات المتبرع الأساسية -->
+        <div class="bg-white rounded-xl shadow-md p-4 border border-slate-200">
+            <div class="flex items-center justify-between border-b pb-2 mb-3">
+                <h2 class="text-xs font-extrabold text-blue-900">بيانات المتبرع الأساسية</h2>
+                <span class="bg-emerald-100 text-emerald-800 px-3 py-0.5 rounded text-xs font-bold" x-text="'المتبرع رقم: ' + (currentDonor.donor_no || '')"></span>
+            </div>
+            <div class="grid grid-cols-4 gap-3 text-xs">
+                <div>
+                    <span class="text-slate-500 block mb-1">اسم المتبرع</span>
+                    <input type="text" readonly class="w-full bg-slate-50 border border-slate-300 rounded p-1.5 font-bold" :value="currentDonor.donor_name">
+                </div>
+                <div>
+                    <span class="text-slate-500 block mb-1">الرقم السكاني (CPR)</span>
+                    <input type="text" readonly class="w-full bg-slate-50 border border-slate-300 rounded p-1.5 font-mono" :value="currentDonor.donor_cpr">
+                </div>
+                <div>
+                    <span class="text-slate-500 block mb-1">الهاتف</span>
+                    <input type="text" readonly class="w-full bg-slate-50 border border-slate-300 rounded p-1.5 font-mono" :value="currentDonor.donor_tel2">
+                </div>
+                <div>
+                    <span class="text-slate-500 block mb-1">عدد الاستقطاعات</span>
+                    <input type="text" readonly class="w-full bg-slate-50 border border-slate-300 rounded p-1.5 font-bold" :value="(currentDonor.items || []).length">
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. جدول الاستقطاعات العلوي -->
+        <div class="bg-white rounded-xl shadow-md p-4 border border-slate-200">
+            <h2 class="text-xs font-bold text-slate-700 mb-2">استقطاعات المتبرع (انقر على الاستقطاع لتظهر متابعاته أدناه فوراً):</h2>
+            <div class="overflow-x-auto border rounded-lg">
+                <table class="w-full text-xs text-right border-collapse">
+                    <thead class="bg-slate-900 text-white">
+                        <tr>
+                            <th class="p-2.5 text-center">رقم SO</th>
+                            <th class="p-2.5 text-center">المبلغ الشهري</th>
+                            <th class="p-2.5 text-center">تاريخ البداية</th>
+                            <th class="p-2.5 text-center">البنك</th>
+                            <th class="p-2.5 text-center">بند التبرع</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        <template x-for="so in (currentDonor.items || [])" :key="so.so_id">
+                            <tr @click="selectedSoId = Number(so.so_id)"
+                                :class="Number(selectedSoId) === Number(so.so_id) ? 'bg-sky-100 ring-2 ring-inset ring-sky-500 font-bold' : 'hover:bg-slate-50'"
+                                class="cursor-pointer transition">
+                                <td class="p-2.5 text-center font-mono font-extrabold text-blue-900" x-text="so.so_id"></td>
+                                <td class="p-2.5 text-center font-mono text-emerald-800 font-bold" x-text="so.monthly_pay"></td>
+                                <td class="p-2.5 text-center font-mono" x-text="so.donation_start_date"></td>
+                                <td class="p-2.5 text-center font-mono" x-text="so.bank_desc"></td>
+                                <td class="p-2.5 text-center font-mono" x-text="so.item_desc"></td>
+                            </tr>
+                        </template>
+                        <tr x-show="!currentDonor.items || currentDonor.items.length === 0">
+                            <td colspan="5" class="py-6 text-center text-slate-400 font-bold">لا توجد استقطاعات لهذا المتبرع.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 3. جدول متابعات الاستقطاع السفلي (مع عرض كافة متابعات المتبرع أو المفلترة بدقة) -->
+        <div class="bg-white rounded-xl shadow-md p-4 border border-slate-200">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-xs font-extrabold text-blue-900">سجلات متابعة الاستقطاع المحدد:</h2>
+                <span class="bg-sky-100 text-sky-900 border border-sky-300 px-3 py-0.5 rounded-full text-xs font-mono font-bold"
+                      x-text="'الاستقطاع النشط حالياً: SO #' + (selectedSoId || 'لا يوجد')"></span>
+            </div>
+            <div class="overflow-x-auto border rounded-lg">
+                <table class="w-full text-xs text-right border-collapse">
+                    <thead class="bg-slate-700 text-white">
+                        <tr>
+                            <th class="p-2.5 text-center">رقم السجل</th>
+                            <th class="p-2.5 text-center">رقم الاستقطاع</th>
+                            <th class="p-2.5 text-center">تاريخ الاتصال</th>
+                            <th class="p-2.5 text-center">الموظف</th>
+                            <th class="p-2.5">النتيجة</th>
+                            <th class="p-2.5">سبب التأخير</th>
+                            <th class="p-2.5">الملاحظات</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        <template x-for="of in selectedSoFollowups" :key="of.trans_id">
+                            <tr class="hover:bg-slate-50 font-mono">
+                                <td class="p-2.5 text-center font-bold text-blue-800" x-text="of.trans_id"></td>
+                                <td class="p-2.5 text-center font-bold text-emerald-800" x-text="of.so_id"></td>
+                                <td class="p-2.5 text-center" x-text="of.call_date"></td>
+                                <td class="p-2.5 text-center" x-text="of.call_by"></td>
+                                <td class="p-2.5 font-bold text-slate-900" x-text="of.result_nm"></td>
+                                <td class="p-2.5 text-rose-700" x-text="of.reason_nm"></td>
+                                <td class="p-2.5 text-slate-700" x-text="of.call_result_notes"></td>
+                            </tr>
+                        </template>
+                        <tr x-show="selectedSoFollowups.length === 0">
+                            <td colspan="7" class="py-8 text-center text-slate-400 font-bold">لا توجد سجلات متابعة مسجلة لهذا الاستقطاع المحدد.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        function reverseTestApp() {
+            return {
+                donors: [],
+                allItemFollowups: [],
+                currentIndex: 0,
+                selectedSoId: null,
+                async init() {
+                    const res = await fetch('/api/followup/data');
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.donors = data.donors || [];
+                        this.allItemFollowups = data.all_item_followups || [];
+                        this.updateDefaultSo();
+                    }
+                },
+                get currentDonor() {
+                    return this.donors[this.currentIndex] || {};
+                },
+                get selectedSoFollowups() {
+                    const soId = Number(this.selectedSoId);
+                    // البحث الشامل في المصفوفة العامة all_item_followups أو في متابعات المتبرع الحالي لضمان عدم ضياع أي سجل
+                    const globalList = this.allItemFollowups.filter(f => Number(f.so_id) === soId);
+                    if (globalList.length > 0) return globalList;
+                    
+                    const donorList = (this.currentDonor.old_item_followups || []).filter(f => Number(f.so_id) === soId);
+                    return donorList;
+                },
+                nextDonor() {
+                    if (this.currentIndex < this.donors.length - 1) {
+                        this.currentIndex++;
+                        this.updateDefaultSo();
+                    }
+                },
+                prevDonor() {
+                    if (this.currentIndex > 0) {
+                        this.currentIndex--;
+                        this.updateDefaultSo();
+                    }
+                },
+                updateDefaultSo() {
+                    const items = this.currentDonor.items || [];
+                    if (items.length > 0) {
+                        this.selectedSoId = Number(items[0].so_id);
+                    } else {
+                        this.selectedSoId = null;
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

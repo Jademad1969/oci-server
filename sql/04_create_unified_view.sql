@@ -1,0 +1,109 @@
+CREATE OR REPLACE VIEW vw_standing_orders_summary AS
+SELECT 
+    i.so_id,
+    i.donor_no,
+    d.donor_name,
+    d.donor_ename,
+    d.donor_cpr,
+    d.status_no AS donor_status_no,
+    d.donor_tel1,
+    d.donor_tel2,
+    d.donor_mobile,
+    i.item_no,
+    i.item_no2,
+    c.item_desc,
+    i.donation_start_date,
+    i.donation_expected_edate,
+    i.monthly_pay,
+    i.bank2_cd,
+    b.bank_desc,
+    b.bank_e_desc,
+    i.donor_acc_no,
+    i.sort_field,
+    i.alt_so_code,
+    i.through_form,
+    i.status_no,
+    i.deactive_date,
+    
+    -- 1. تاريخ آخر شهر تم تسديده فعلياً (حالة الحركة = 1 في جدول الحركات)
+    lp.last_paid_month,
+    COALESCE(lp.paid_count, 0) AS paid_installments_count,
+    COALESCE(lp.unpaid_count, 0) AS unpaid_installments_count,
+
+    -- 2. أشهر التأخير الفعلي (يتوقف عند تاريخ إلغاء التنشيط للاستقطاعات غير الفعالة)
+    GREATEST(0, (
+        EXTRACT(YEAR FROM AGE(
+            DATE_TRUNC('month', CASE WHEN i.status_no = 2 AND i.deactive_date IS NOT NULL THEN i.deactive_date ELSE CURRENT_DATE END),
+            DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))
+        )) * 12 +
+        EXTRACT(MONTH FROM AGE(
+            DATE_TRUNC('month', CASE WHEN i.status_no = 2 AND i.deactive_date IS NOT NULL THEN i.deactive_date ELSE CURRENT_DATE END),
+            DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))
+        ))
+    )::int) AS actual_delay_months,
+
+    -- 3. أشهر التأخير الافتراضي / التراكمي (بناءً على التاريخ الحالي دائماً)
+    GREATEST(0, (
+        EXTRACT(YEAR FROM AGE(DATE_TRUNC('month', CURRENT_DATE), DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date)))) * 12 +
+        EXTRACT(MONTH FROM AGE(DATE_TRUNC('month', CURRENT_DATE), DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))))
+    )::int) AS virtual_delay_months,
+
+    -- 4. ملاحظة حالة السداد (تظهر تلقائياً للاستقطاعات التي لم تسدد أي شهر)
+    CASE 
+        WHEN lp.last_paid_month IS NULL THEN 'لم يتم سداد أي شهر'
+        ELSE ''
+    END AS payment_notes,
+
+    -- 5. إجمالي استقطاعات المتبرع وعدد الفعال منها في نفس الصف
+    COALESCE(dc.total_so_count, 0) AS donor_total_so_count,
+    COALESCE(dc.active_so_count, 0) AS donor_active_so_count,
+
+    -- 6. بيانات آخر متابعة للمتبرع (التاريخ، المتصل، النتيجة، والملاحظات)
+    lf.last_call_date,
+    lf.last_call_by,
+    COALESCE(lf.last_result_nm, 'بدون متابعة') AS last_followup_result,
+    COALESCE(lf.last_call_notes, '') AS last_followup_notes,
+    CASE 
+        WHEN lf.last_call_date IS NOT NULL THEN 
+            TO_CHAR(lf.last_call_date, 'YYYY-MM-DD') || ' - ' || COALESCE(lf.last_result_nm, '') || 
+            CASE WHEN lf.last_call_notes IS NOT NULL AND lf.last_call_notes <> '' THEN ' (' || lf.last_call_notes || ')' ELSE '' END
+        ELSE 'بدون متابعة'
+    END AS last_followup_summary,
+    COALESCE(lf.total_followups_count, 0) AS has_followup
+
+FROM donor_item i
+JOIN donor_master d ON i.donor_no = d.donor_no
+LEFT JOIN lkp_banks b ON i.bank2_cd = b.bank_cd
+LEFT JOIN lkp_charity_items c ON i.item_no = c.item_cd
+-- تجميع حركات السداد لكل استقطاع
+LEFT JOIN (
+    SELECT 
+        so_id,
+        MAX(month_year) FILTER (WHERE status_no = 1) AS last_paid_month,
+        COUNT(*) FILTER (WHERE status_no = 1) AS paid_count,
+        COUNT(*) FILTER (WHERE status_no = 2) AS unpaid_count
+    FROM money_trans
+    GROUP BY so_id
+) lp ON i.so_id = lp.so_id
+-- تجميع عدد الاستقطاعات الكلي والفعال لكل متبرع
+LEFT JOIN (
+    SELECT 
+        donor_no,
+        COUNT(*) AS total_so_count,
+        COUNT(*) FILTER (WHERE status_no = 1) AS active_so_count
+    FROM donor_item
+    GROUP BY donor_no
+) dc ON i.donor_no = dc.donor_no
+-- جلب آخر متابعة تمت مع المتبرع
+LEFT JOIN (
+    SELECT DISTINCT ON (f.donor_no)
+        f.donor_no,
+        f.call_date AS last_call_date,
+        f.call_by AS last_call_by,
+        r.result_nm AS last_result_nm,
+        f.call_result_notes AS last_call_notes,
+        COUNT(*) OVER (PARTITION BY f.donor_no) AS total_followups_count
+    FROM donor_followup f
+    LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
+    ORDER BY f.donor_no, f.call_date DESC, f.trans_id DESC
+) lf ON i.donor_no = lf.donor_no;

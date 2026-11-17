@@ -71,7 +71,7 @@
             </div>
 
             <div class="flex-1 max-w-md relative">
-                <input type="text" x-model="searchQuery" @input="currentIndex = 0; selectedSoIndex = 0"
+                <input type="text" x-model="searchQuery" @input="currentIndex = 0; selectedSoIndex = 0; resetFollowForms()"
                        placeholder="بحث بكود المتبرع، الاسم، الرقم السكاني، أو رقم الهاتف..."
                        class="w-full h-9 bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg pr-9 pl-3 text-xs">
                 <svg class="w-4 h-4 text-slate-400 absolute right-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -81,13 +81,13 @@
 
             <div class="flex items-center gap-2.5">
                 <div class="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-xs h-9">
-                    <button @click="currentIndex = 0; selectedSoIndex = 0" class="px-2.5 h-full hover:bg-white rounded font-bold">|&lt;</button>
-                    <button @click="if(currentIndex > 0) { currentIndex--; selectedSoIndex = 0; }" class="px-2.5 h-full hover:bg-white rounded font-bold">&lt;</button>
+                    <button @click="currentIndex = 0; selectedSoIndex = 0; resetFollowForms()" class="px-2.5 h-full hover:bg-white rounded font-bold">|&lt;</button>
+                    <button @click="if(currentIndex > 0) { currentIndex--; selectedSoIndex = 0; resetFollowForms(); }" class="px-2.5 h-full hover:bg-white rounded font-bold">&lt;</button>
                     <span class="px-3 font-mono font-bold text-slate-700 whitespace-nowrap">
                         <span x-text="filteredDonors.length ? currentIndex + 1 : 0"></span> / <span x-text="filteredDonors.length"></span>
                     </span>
-                    <button @click="if(currentIndex < filteredDonors.length - 1) { currentIndex++; selectedSoIndex = 0; }" class="px-2.5 h-full hover:bg-white rounded font-bold">&gt;</button>
-                    <button @click="currentIndex = Math.max(0, filteredDonors.length - 1); selectedSoIndex = 0" class="px-2.5 h-full hover:bg-white rounded font-bold">&gt;|</button>
+                    <button @click="if(currentIndex < filteredDonors.length - 1) { currentIndex++; selectedSoIndex = 0; resetFollowForms(); }" class="px-2.5 h-full hover:bg-white rounded font-bold">&gt;</button>
+                    <button @click="currentIndex = Math.max(0, filteredDonors.length - 1); selectedSoIndex = 0; resetFollowForms()" class="px-2.5 h-full hover:bg-white rounded font-bold">&gt;|</button>
                 </div>
 
                 <a href="/api/followup/export-csv" target="_blank"
@@ -101,78 +101,109 @@
     <!-- 3. المحتوى الرئيسي للشاشة -->
     <main class="max-w-[1600px] w-full mx-auto px-4 py-3 flex-1 flex flex-col gap-3" x-show="currentDonor && currentDonor.donor_no">
 
-        <!-- القسم الأول: البيانات الأساسية + بيانات الاتصال -->
+        <!-- القسم الأول: البيانات الأساسية والعنوان + بيانات الاتصال القابلة للتحديث -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
-            
+
             <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5">
-                <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5">
                     <h2 class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
                         <span class="w-2 h-2 rounded-full bg-blue-600"></span>
-                        البيانات الأساسية للمتبرع
+                        البيانات الأساسية وعنوان المتبرع (قابلة للتعديل)
                     </h2>
-                    <span :class="Number(currentDonor.status_no) === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-800 border-rose-300'"
-                          class="px-3 py-0.5 rounded-full text-xs font-extrabold border whitespace-nowrap"
-                          x-text="Number(currentDonor.status_no) === 1 ? 'فعال (Active)' : 'غير فعال (Inactive)'"></span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-[11px] font-semibold text-slate-500">عدد الاستقطاعات: <strong class="font-mono text-blue-800" x-text="currentDonor.items ? currentDonor.items.length : 0"></strong></span>
+                        <span :class="Number(currentDonor.status_no) === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-800 border-rose-300'"
+                              class="px-3 py-0.5 rounded-full text-xs font-extrabold border whitespace-nowrap"
+                              x-text="Number(currentDonor.status_no) === 1 ? 'فعال (Active)' : 'غير فعال (Inactive)'"></span>
+                    </div>
                 </div>
 
-                <div class="grid grid-cols-2 sm:grid-cols-6 gap-2.5 mb-2.5 text-xs">
-                    <div>
+                <div class="grid grid-cols-2 sm:grid-cols-12 gap-2 mb-2.5 text-xs">
+                    <div class="sm:col-span-2">
                         <label class="block text-[11px] font-bold text-rose-700 mb-1">كود المتبرع</label>
-                        <input type="text" :value="currentDonor.donor_no" readonly class="w-full h-8 bg-slate-100 border border-slate-300 rounded px-2.5 font-mono font-bold text-center text-sm">
+                        <input type="text" :value="currentDonor.donor_no" readonly class="w-full h-8 bg-slate-100 border border-slate-300 rounded px-2 font-mono font-bold text-center text-sm">
                     </div>
-                    <div class="sm:col-span-3">
+                    <div class="sm:col-span-4">
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">اسم المتبرع (عربي)</label>
                         <input type="text" :value="currentDonor.donor_name" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-bold text-slate-900">
                     </div>
-                    <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الرقم السكاني (CPR)</label>
-                        <input type="text" :value="currentDonor.donor_cpr" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-mono font-bold text-center">
+                    <div class="sm:col-span-4">
+                        <label class="block text-[11px] font-semibold text-rose-700 mb-1">الاسم بالإنجليزية</label>
+                        <input type="text" dir="ltr" :value="currentDonor.donor_ename" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 text-xs font-mono font-bold text-rose-700">
                     </div>
-                    <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الجنس</label>
-                        <input type="text" :value="Number(currentDonor.gen_cd) === 2 ? 'أنثى' : 'ذكر'" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-bold text-center">
+                    <div class="sm:col-span-2">
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الرقم السكاني (CPR)</label>
+                        <input type="text" :value="currentDonor.donor_cpr" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 font-mono font-bold text-center">
                     </div>
                 </div>
 
-                <div>
-                    <label class="block text-[11px] font-semibold text-rose-700 mb-1">الاسم بالإنجليزية (Donor English Name)</label>
-                    <input type="text" dir="ltr" :value="currentDonor.donor_ename" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 text-xs font-mono font-bold text-rose-700">
+                <!-- صف بيانات العنوان التفصيلية (شقة / مبنى / طريق / مجمع / المنطقة) -->
+                <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 grid grid-cols-2 sm:grid-cols-12 gap-2 text-xs">
+                    <div class="sm:col-span-2">
+                        <label class="block text-[11px] font-bold text-blue-900 mb-1">نوع العنوان</label>
+                        <select x-model.number="currentDonor.address_type" class="w-full h-8 bg-white border border-blue-300 focus:border-blue-600 rounded px-1.5 font-bold text-slate-800">
+                            <option :value="1">منزل</option>
+                            <option :value="2">عمل</option>
+                            <option :value="3">ص.ب</option>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-1">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">شقة</label>
+                        <input type="text" x-model="currentDonor.donor_flat" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-1 font-mono font-bold text-center">
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">مبنى</label>
+                        <input type="text" x-model="currentDonor.donor_building" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">طريق</label>
+                        <input type="text" x-model="currentDonor.donor_road" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">مجمع (Block)</label>
+                        <input type="text" x-model="currentDonor.donor_block" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
+                    </div>
+                    <div class="sm:col-span-3">
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">المنطقة / المدينة</label>
+                        <input type="text" :value="(townsMap && townsMap[currentDonor.donor_block]) ? townsMap[currentDonor.donor_block] : (currentDonor.town_name || '-')" readonly class="w-full h-8 bg-slate-100 border border-slate-300 rounded px-2 font-bold text-blue-900 text-center">
+                    </div>
                 </div>
             </section>
 
             <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col justify-between">
-                <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5">
                     <h2 class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
                         <span class="w-2 h-2 rounded-full bg-emerald-600"></span>
-                        بيانات الاتصال والتواصل المباشر
+                        أرقام التواصل وصندوق البريد (قابلة للتعديل والحفظ)
                     </h2>
-                    <div class="flex items-center gap-1.5 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-200">
-                        <span class="text-[11px] font-bold text-slate-600">عدد الاستقطاعات:</span>
-                        <span class="font-mono font-extrabold text-sm text-blue-800" x-text="currentDonor.items ? currentDonor.items.length : 0"></span>
-                    </div>
+                    <span class="text-[11px] font-semibold text-slate-500" x-text="'الجنس: ' + (Number(currentDonor.gen_cd) === 2 ? 'أنثى' : 'ذكر')"></span>
                 </div>
 
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs mb-3">
                     <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">هاتف</label>
-                        <input type="text" :value="currentDonor.donor_tel1" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 font-mono font-bold text-center">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">هاتف</label>
+                        <input type="text" x-model="currentDonor.donor_tel1" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">نقال (1)</label>
-                        <input type="text" :value="currentDonor.donor_tel2" readonly class="w-full h-8 bg-emerald-50 border border-emerald-300 rounded px-2 font-mono font-extrabold text-center text-emerald-950">
+                        <label class="block text-[11px] font-bold text-emerald-800 mb-1">نقال (1)</label>
+                        <input type="text" x-model="currentDonor.donor_tel2" class="w-full h-8 bg-emerald-50/60 border border-emerald-400 focus:border-emerald-600 rounded px-2 font-mono font-extrabold text-center text-emerald-950">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">نقال (2)</label>
-                        <input type="text" :value="currentDonor.donor_mobile" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 font-mono font-bold text-center">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">نقال (2)</label>
+                        <input type="text" x-model="currentDonor.donor_mobile" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">ص . ب</label>
-                        <input type="text" :value="currentDonor.donor_p_box || ''" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 font-mono text-center">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">ص . ب (P.O.Box)</label>
+                        <input type="text" x-model="currentDonor.donor_p_box" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                 </div>
 
-                <div class="flex items-center justify-between bg-emerald-50/80 border border-emerald-200 rounded-lg px-3 py-2">
-                    <span class="text-xs font-bold text-emerald-900">تواصل سريع مع المتبرع عبر واتساب:</span>
+                <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <button @click="saveDonorContact()"
+                            class="h-8 bg-blue-700 hover:bg-blue-800 text-white px-4 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5 whitespace-nowrap">
+                        <span>💾 حفظ تعديلات العنوان والتواصل</span>
+                    </button>
+
                     <button @click="openWhatsApp()"
                             class="h-8 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5 whitespace-nowrap">
                         <span>إرسال رسالة واتساب (+973)</span>
@@ -216,7 +247,7 @@
                     </thead>
                     <tbody class="divide-y divide-slate-200 whitespace-nowrap">
                         <template x-for="(so, sIdx) in currentDonor.items" :key="so.so_id">
-                            <tr @click="selectedSoIndex = sIdx" :class="selectedSoIndex === sIdx ? 'bg-sky-100 ring-2 ring-inset ring-sky-500 font-bold' : 'hover:bg-slate-50'" class="cursor-pointer transition">
+                            <tr @click="selectedSoIndex = sIdx; resetFollowForms()" :class="selectedSoIndex === sIdx ? 'bg-sky-100 ring-2 ring-inset ring-sky-500 font-bold' : 'hover:bg-slate-50'" class="cursor-pointer transition">
                                 <td class="py-2 px-3 text-center font-mono font-extrabold text-blue-900" x-text="so.so_id"></td>
                                 <td class="py-2 px-3 text-center font-mono font-semibold" x-text="so.donation_start_date"></td>
                                 <td class="py-2 px-3 text-center font-mono text-slate-500" x-text="so.donation_expected_edate || '-'"></td>
@@ -342,6 +373,7 @@
                             <label class="block text-[11px] font-bold text-emerald-800 mb-1">نتيجة التواصل</label>
                             <select x-model.number="newFollow.call_result_cd"
                                     class="w-full h-9 bg-white border border-emerald-300 focus:border-emerald-600 rounded-lg px-2 font-bold text-emerald-900">
+                                <option value="">-- اختر النتيجة --</option>
                                 <template x-for="res in followResults" :key="res.result_cd">
                                     <option :value="res.result_cd" x-text="res.result_nm"></option>
                                 </template>
@@ -354,6 +386,7 @@
                             <label class="block text-[11px] font-bold text-rose-800 mb-1">سبب التأخير / التوقف (من جدول الأسباب)</label>
                             <select x-model.number="newFollow.delay_reason_cd"
                                     class="w-full h-9 bg-white border border-rose-300 focus:border-rose-600 rounded-lg px-2 font-bold text-rose-900">
+                                <option value="">-- اختر السبب --</option>
                                 <template x-for="dr in delayReasons" :key="dr.reason_cd">
                                     <option :value="dr.reason_cd" x-text="dr.reason_nm"></option>
                                 </template>
@@ -385,7 +418,7 @@
                           x-text="currentSo && currentSo.so_id ? 'الاستقطاع المحدد: SO #' + currentSo.so_id : 'لا يوجد استقطاع'"></span>
                 </div>
 
-                <div class="overflow-auto max-h-[260px] border border-slate-200 rounded-lg flex-1">
+                <div class="overflow-auto max-h-[180px] border border-slate-200 rounded-lg mb-3 flex-1">
                     <table class="w-full text-xs text-right border-collapse whitespace-nowrap">
                         <thead class="bg-slate-700 text-white sticky top-0">
                             <tr>
@@ -400,25 +433,80 @@
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-200">
-                            <template x-for="of in (currentSo.item_followups || [])" :key="of.trans_id">
+                            <template x-for="fItem in currentSoFollowups" :key="fItem.trans_id">
                                 <tr class="hover:bg-sky-50/60">
-                                    <td class="py-2 px-2.5 text-center font-mono font-extrabold text-blue-800 bg-slate-50" x-text="of.so_id"></td>
-                                    <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="of.call_date"></td>
-                                    <td class="py-2 px-2.5 text-center font-mono font-bold text-blue-900" x-text="of.call_by"></td>
-                                    <td class="py-2 px-2.5 font-bold text-emerald-800" x-text="of.result_nm"></td>
-                                    <td class="py-2 px-2.5 font-bold text-rose-700" x-text="of.reason_nm"></td>
-                                    <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="of.delayed_months"></td>
-                                    <td class="py-2 px-2.5 text-center font-mono" x-text="of.last_paid_month"></td>
-                                    <td class="py-2 px-2.5 font-semibold text-slate-800" x-text="of.call_result_notes || '-'"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono font-extrabold text-blue-800 bg-slate-50" x-text="fItem.so_id"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="fItem.call_date"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono font-bold text-blue-900" x-text="fItem.call_by"></td>
+                                    <td class="py-2 px-2.5 font-bold text-emerald-800" x-text="fItem.result_nm"></td>
+                                    <td class="py-2 px-2.5 font-bold text-rose-700" x-text="fItem.reason_nm"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="fItem.delayed_months"></td>
+                                    <td class="py-2 px-2.5 text-center font-mono" x-text="fItem.last_paid_month"></td>
+                                    <td class="py-2 px-2.5 font-semibold text-slate-800" x-text="fItem.call_result_notes || '-'"></td>
                                 </tr>
                             </template>
-                            <tr x-show="!currentSo.item_followups || currentSo.item_followups.length === 0">
+                            <tr x-show="currentSoFollowups.length === 0">
                                 <td colspan="8" class="py-8 text-center text-slate-400 font-semibold">
                                     لا توجد سجلات متابعة خاصة بهذا الاستقطاع.
                                 </td>
                             </tr>
                         </tbody>
                     </table>
+                </div>
+
+                <!-- نموذج تسجيل متابعة جديدة للاستقطاع المحدد -->
+                <div class="bg-sky-50/70 p-3.5 rounded-xl border border-sky-200" x-show="currentSo && currentSo.so_id">
+                    <div class="flex items-center justify-between text-xs font-extrabold text-blue-900 mb-2.5 border-b border-sky-200 pb-1.5">
+                        <span>تسجيل متابعة للاستقطاع المحدد (<span class="font-mono text-rose-700" x-text="'SO #' + (currentSo ? currentSo.so_id : '')"></span>):</span>
+                        <span class="text-[11px] font-mono bg-white px-2 py-0.5 rounded border border-sky-200 text-slate-600" x-text="'بواسطة: ' + currentUser"></span>
+                    </div>
+
+                    <div class="grid grid-cols-2 sm:grid-cols-12 gap-2 items-end text-xs mb-2">
+                        <div class="sm:col-span-4">
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">تاريخ الاتصال</label>
+                            <input type="date" x-model="newItemFollow.call_date"
+                                   class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2 font-mono font-semibold">
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">الوقت</label>
+                            <input type="text" x-model="newItemFollow.call_time" placeholder="11:00"
+                                   class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2 font-mono font-semibold text-center">
+                        </div>
+                        <div class="sm:col-span-5">
+                            <label class="block text-[11px] font-bold text-emerald-800 mb-1">نتيجة المتابعة</label>
+                            <select x-model.number="newItemFollow.call_result_cd"
+                                    class="w-full h-9 bg-white border border-emerald-300 focus:border-emerald-600 rounded-lg px-2 font-bold text-emerald-900">
+                                <option value="">-- اختر النتيجة --</option>
+                                <template x-for="res in followResults" :key="res.result_cd">
+                                    <option :value="res.result_cd" x-text="res.result_nm"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end text-xs">
+                        <div class="sm:col-span-5">
+                            <label class="block text-[11px] font-bold text-rose-800 mb-1">سبب التأخير</label>
+                            <select x-model.number="newItemFollow.delay_reason_cd"
+                                    class="w-full h-9 bg-white border border-rose-300 focus:border-rose-600 rounded-lg px-2 font-bold text-rose-900">
+                                <option value="">-- اختر السبب --</option>
+                                <template x-for="dr in delayReasons" :key="dr.reason_cd">
+                                    <option :value="dr.reason_cd" x-text="dr.reason_nm"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="sm:col-span-5">
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">ملاحظات الاستقطاع</label>
+                            <input type="text" x-model="newItemFollow.call_result_notes" placeholder="ملاحظات خاصة بهذا الاستقطاع..."
+                                   class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2.5">
+                        </div>
+                        <div class="sm:col-span-2">
+                            <button @click="saveItemFollowup()"
+                                    class="w-full h-9 bg-blue-700 hover:bg-blue-800 text-white px-3 rounded-lg font-bold whitespace-nowrap shadow-sm transition flex items-center justify-center">
+                                حفظ
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -434,15 +522,41 @@
                 currentIndex: 0,
                 selectedSoIndex: 0,
                 donors: [],
+                allItemFollowups: [],
                 followResults: [],
                 delayReasons: [],
+                townsMap: {},
                 newFollow: {
-                    call_date: new Date().toISOString().slice(0, 10),
-                    call_time: new Date().toTimeString().slice(0, 5),
+                    call_date: '',
+                    call_time: '',
                     contact_method: 1,
-                    call_result_cd: 1,
-                    delay_reason_cd: 1,
+                    call_result_cd: '',
+                    delay_reason_cd: '',
                     call_result_notes: ''
+                },
+                newItemFollow: {
+                    call_date: '',
+                    call_time: '',
+                    call_result_cd: '',
+                    delay_reason_cd: '',
+                    call_result_notes: ''
+                },
+                resetFollowForms() {
+                    this.newFollow = {
+                        call_date: '',
+                        call_time: '',
+                        contact_method: 1,
+                        call_result_cd: '',
+                        delay_reason_cd: '',
+                        call_result_notes: ''
+                    };
+                    this.newItemFollow = {
+                        call_date: '',
+                        call_time: '',
+                        call_result_cd: '',
+                        delay_reason_cd: '',
+                        call_result_notes: ''
+                    };
                 },
                 async init() {
                     await this.loadFollowupData();
@@ -452,8 +566,10 @@
                     if (res.ok) {
                         const data = await res.json();
                         this.donors = data.donors || [];
+                        this.allItemFollowups = data.all_item_followups || [];
                         this.followResults = data.follow_results || [];
                         this.delayReasons = data.delay_reasons || [];
+                        this.townsMap = data.towns_map || {};
                         if (keepDonorNo) {
                             const idx = this.filteredDonors.findIndex(d => Number(d.donor_no) === Number(keepDonorNo));
                             if (idx !== -1) this.currentIndex = idx;
@@ -481,6 +597,11 @@
                 get currentDonor() {
                     return this.filteredDonors[this.currentIndex] || this.donors[0] || { items: [], followups: [] };
                 },
+                                get currentSoFollowups() {
+                    const so = this.currentSo;
+                    if (!so || !so.so_id) return [];
+                    return (this.allItemFollowups || []).filter(f => Number(f.so_id) === Number(so.so_id));
+                },
                 get currentSo() {
                     const items = this.currentDonor.items || [];
                     return items[this.selectedSoIndex] || items[0] || { item_followups: [] };
@@ -489,9 +610,79 @@
                     this.filterMode = m;
                     this.currentIndex = 0;
                     this.selectedSoIndex = 0;
+                    this.resetFollowForms();
+                },
+                                async saveItemFollowup() {
+                    const so = this.currentSo;
+                    if (!so || !so.so_id) {
+                        alert('يرجى تحديد استقطاع أولاً.');
+                        return;
+                    }
+                    if (!this.newItemFollow.call_date || !this.newItemFollow.call_result_cd || !this.newItemFollow.delay_reason_cd) {
+                        alert('يرجى إدخال تاريخ الاتصال واختيار نتيجة المتابعة وسبب التأخير أولاً.');
+                        return;
+                    }
+                    const currentSoIndex = this.selectedSoIndex;
+                    const res = await fetch('/api/followup/item/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            so_id: Number(so.so_id),
+                            donor_no: Number(this.currentDonor.donor_no),
+                            item_no: String(so.item_no || '1'),
+                            donation_start_date: so.donation_start_date || null,
+                            call_date: this.newItemFollow.call_date,
+                            call_time: this.newItemFollow.call_time,
+                            call_result_cd: Number(this.newItemFollow.call_result_cd),
+                            delay_reason_cd: Number(this.newItemFollow.delay_reason_cd),
+                            call_result_notes: this.newItemFollow.call_result_notes || '',
+                            delayed_months: Number(so.actual_delay_months || so.delay_months || 0),
+                            last_paid_month: so.last_paid_month || null
+                        })
+                    });
+                    if (res.ok) {
+                        this.resetFollowForms();
+                        await this.loadFollowupData(this.currentDonor.donor_no);
+                        this.selectedSoIndex = currentSoIndex;
+                        alert('تم حفظ متابعة الاستقطاع بنجاح!');
+                    } else {
+                        const err = await res.text();
+                        alert('خطأ أثناء حفظ متابعة الاستقطاع: ' + err);
+                    }
+                },
+                                async saveDonorContact() {
+                    const d = this.currentDonor;
+                    if (!d || !d.donor_no) return;
+                    const res = await fetch('/api/followup/update-contact', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            donor_no: Number(d.donor_no),
+                            address_type: Number(d.address_type || 1),
+                            donor_flat: d.donor_flat,
+                            donor_building: d.donor_building || '',
+                            donor_road: d.donor_road || '',
+                            donor_block: d.donor_block,
+                            donor_p_box: d.donor_p_box,
+                            donor_tel1: d.donor_tel1 || '',
+                            donor_tel2: d.donor_tel2 || '',
+                            donor_mobile: d.donor_mobile || ''
+                        })
+                    });
+                    if (res.ok) {
+                        await this.loadFollowupData(d.donor_no);
+                        alert('تم حفظ تحديثات العنوان وأرقام التواصل بنجاح!');
+                    } else {
+                        const err = await res.text();
+                        alert('خطأ أثناء تحديث بيانات التواصل: ' + err);
+                    }
                 },
                 async saveFollowup() {
                     if (!this.currentDonor.donor_no) return;
+                    if (!this.newFollow.call_date || !this.newFollow.call_result_cd || !this.newFollow.delay_reason_cd) {
+                        alert('يرجى إدخال تاريخ التواصل واختيار نتيجة التواصل وسبب التأخير أولاً.');
+                        return;
+                    }
                     const res = await fetch('/api/followup/add', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -506,7 +697,7 @@
                         })
                     });
                     if (res.ok) {
-                        this.newFollow.call_result_notes = '';
+                        this.resetFollowForms();
                         await this.loadFollowupData(this.currentDonor.donor_no);
                         alert('تم حفظ اتصال المتابعة بنجاح!');
                     } else {

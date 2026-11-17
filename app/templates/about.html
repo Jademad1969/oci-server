@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <title>About System - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
+</head>
+<body class="bg-slate-50 text-slate-800 flex h-screen overflow-hidden">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col justify-between shrink-0 shadow-xl">
+        <div>
+            <div class="p-4 border-b border-slate-800">
+                <h2 class="text-sm font-bold text-white tracking-wider">DISCOVER ISLAM</h2>
+                <p class="text-[11px] text-slate-400">Standing Orders & Donor System</p>
+            </div>
+            <nav class="p-3 space-y-1 text-xs">
+                <a href="/about" class="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-blue-600 text-white font-semibold">
+                    <span>📌</span> About System
+                </a>
+                <div class="pt-3 pb-1 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Modules</div>
+                <div class="space-y-1 pl-2 border-l border-slate-800 ml-3">
+                    <a href="/" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Donors & Standing Orders</a>
+                    <a href="/bank-codes-audit" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Bank Codes Audit</a>
+                    <a href="/bank-reconcile" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Bank Reconciliation CSV</a>
+                    <a href="/followup" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Donor Follow-up</a>
+                    <a href="/reports" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Reports & Statistics</a>
+                </div>
+            </nav>
+        </div>
+        <div class="p-3 border-t border-slate-800 text-xs">
+            <div class="flex items-center justify-between mb-2 px-2">
+                <span class="text-slate-400">User: <strong class="text-white">{{ user.username }}</strong></span>
+            </div>
+            <a href="/logout" class="block w-full py-2 text-center bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-lg font-semibold transition">Sign Out</a>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col overflow-y-auto">
+        <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-xs">
+            <h1 class="text-base font-bold text-slate-900">About System & Organization</h1>
+            <span class="text-xs font-mono bg-blue-50 text-blue-700 px-3 py-1 rounded-full border border-blue-200">Discover Islam Society - Bahrain</span>
+        </header>
+
+        <div class="p-8 max-w-4xl mx-auto w-full space-y-6">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <h3 class="text-lg font-bold text-slate-900 mb-2">جمعية اكتشف الإسلام (Discover Islam Society)</h3>
+                <p class="text-sm text-slate-600 leading-relaxed">
+                    نظام إدارة الاستقطاعات الآلية ومتابعة المتبرعين، المصمم خصيصاً لتحديث وترقية النظام القديم (Oracle Developer 6i) إلى بنية ويب حديثة وآمنة تعمل على الحوسبة السحابية. يتيح النظام إدارة المتبرعين، تدقيق أكواد البنوك، مطابقة كشوف البنوك عبر ملفات CSV، ومتابعة الاستقطاعات المتأخرة بدقة متناهية.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <span class="text-2xl">⚡</span>
+                    <h4 class="text-sm font-bold text-slate-900 mt-2">Modern Stack</h4>
+                    <p class="text-xs text-slate-500 mt-1">Built with FastAPI, PostgreSQL 16, Python, Tailwind CSS & Alpine.js.</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <span class="text-2xl">🔒</span>
+                    <h4 class="text-sm font-bold text-slate-900 mt-2">Secure RBAC</h4>
+                    <p class="text-xs text-slate-500 mt-1">Role-based access control with session security and audit logs.</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <span class="text-2xl">📊</span>
+                    <h4 class="text-sm font-bold text-slate-900 mt-2">Comprehensive Reports</h4>
+                    <p class="text-xs text-slate-500 mt-1">Real-time financial reconciliation and donor followup analytics.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+</html>

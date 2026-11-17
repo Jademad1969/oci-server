@@ -107,6 +107,7 @@ async def get_initial_screen_data(db: AsyncSession = Depends(get_db)):
         item["donation_start_date"] = item["donation_start_date"].strftime("%Y-%m-%d") if item["donation_start_date"] else ""
         item["donation_expected_edate"] = item["donation_expected_edate"].strftime("%Y-%m-%d") if item["donation_expected_edate"] else ""
         item["through_form"] = (item["through_form"] == 1)
+        item["item_followups"] = old_followups_by_so.get(item["so_id"], [])
         
         so_by_donor.setdefault(item["donor_no"], []).append(item)
 

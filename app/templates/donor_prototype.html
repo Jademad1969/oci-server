@@ -120,6 +120,9 @@
                 <button @click="saveDonor()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition">
                     <span>حفظ التعديلات</span>
                 </button>
+                <button @click="deleteDonor()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition" title="حذف المتبرع الحالي">
+                    <span>حذف المتبرع</span>
+                </button>
             </div>
         </div>
     </div>
@@ -461,11 +464,18 @@
                                 </td>
                                 <td class="py-2 px-2.5 text-center font-mono font-bold" :title="item.last_followup_summary" x-text="item.has_followup"></td>
                                 <td class="py-2 px-2.5 text-center">
-                                    <button @click.stop="toggleSoStatus(item)"
-                                            :class="item.status_no === 1 ? 'text-rose-600 hover:bg-rose-50 border-rose-200' : 'text-emerald-600 hover:bg-emerald-50 border-emerald-200'"
-                                            class="border px-2 py-0.5 rounded text-[11px] font-bold transition"
-                                            x-text="item.status_no === 1 ? 'إيقاف' : 'تفعيل'">
-                                    </button>
+                                    <div class="flex items-center justify-center gap-1">
+                                        <button @click.stop="toggleSoStatus(item)"
+                                                :class="item.status_no === 1 ? 'text-amber-700 hover:bg-amber-50 border-amber-200' : 'text-emerald-600 hover:bg-emerald-50 border-emerald-200'"
+                                                class="border px-2 py-0.5 rounded text-[11px] font-bold transition"
+                                                x-text="item.status_no === 1 ? 'إيقاف' : 'تفعيل'">
+                                        </button>
+                                        <button @click.stop="deleteSo(item)"
+                                                class="border border-rose-200 text-rose-600 hover:bg-rose-50 px-2 py-0.5 rounded text-[11px] font-bold transition"
+                                                title="حذف الاستقطاع">
+                                            حذف
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         </template>
@@ -660,7 +670,7 @@
                         donor_flat: null, donor_building: '', donor_road: '', donor_block: null, town_name: '', donor_p_box: null,
                         donor_tel1: '', donor_tel2: '', donor_mobile: '', address_type: 1,
                         bank2_cd: 1, donor_acc_no: '', acc_type_no: 1, donor_name_acc: '',
-                        append_date: new Date().toISOString().slice(0, 10), status_no: 1, user_id: 'TAREK', items: []
+                        append_date: new Date().toISOString().slice(0, 10), status_no: 1, user_id: 'TAREK', items: [], isNew: true
                     });
                     this.currentFilter = 'ALL';
                     this.currentIndex = this.filteredDonors.length - 1;
@@ -679,6 +689,50 @@
                     } else {
                         const err = await res.text();
                         alert('خطأ في الحفظ: ' + err);
+                    }
+                },
+                async deleteDonor() {
+                    if (!this.currentDonor) return;
+                    const dno = this.currentDonor.donor_no;
+                    const dname = this.currentDonor.donor_name || "";
+                    if (!confirm(`هل أنت متأكد من حذف سجل المتبرع رقم (${dno}) - ${dname}؟`)) return;
+
+                    if (this.currentDonor.isNew) {
+                        this.donors = this.donors.filter(d => d.donor_no !== dno);
+                        this.currentIndex = Math.max(0, this.filteredDonors.length - 1);
+                        return;
+                    }
+
+                    const res = await fetch(`/api/donors/${dno}`, { method: 'DELETE' });
+                    if (res.ok) {
+                        alert(`تم حذف المتبرع رقم (${dno}) بنجاح.`);
+                        await this.loadFromDatabase();
+                    } else {
+                        let msg = "تعذر حذف المتبرع.";
+                        try {
+                            const errJson = await res.json();
+                            msg = errJson.detail || msg;
+                        } catch (e) {
+                            msg = await res.text();
+                        }
+                        alert(msg);
+                    }
+                },
+                async deleteSo(item) {
+                    if (!confirm(`هل أنت متأكد من حذف الاستقطاع رقم (${item.so_id}) الخاص ببند (${item.item_desc})؟`)) return;
+                    const res = await fetch(`/api/standing-orders/${item.so_id}`, { method: 'DELETE' });
+                    if (res.ok) {
+                        alert(`تم حذف الاستقطاع رقم (${item.so_id}) بنجاح.`);
+                        await this.loadFromDatabase(this.currentDonor.donor_no);
+                    } else {
+                        let msg = "تعذر حذف الاستقطاع.";
+                        try {
+                            const errJson = await res.json();
+                            msg = errJson.detail || msg;
+                        } catch (e) {
+                            msg = await res.text();
+                        }
+                        alert(msg);
                     }
                 }
             }

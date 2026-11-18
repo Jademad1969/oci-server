@@ -143,6 +143,8 @@ async def get_initial_screen_data(db: AsyncSession = Depends(get_db)):
 
 @app.post("/api/donors/save")
 async def save_donor(payload: DonorSaveSchema, db: AsyncSession = Depends(get_db)):
+    if not payload.donor_name or payload.donor_name.strip() in ("", "جاري التحميل..."):
+        raise HTTPException(status_code=400, detail="لا يمكن حفظ المتبرع بدون اسم صحيح.")
     existing = await db.execute(text("SELECT status_no FROM donor_master WHERE donor_no = :dno"), {"dno": payload.donor_no})
     row = existing.first()
 
@@ -1017,3 +1019,65 @@ async def item_followup_test_full_api(db: AsyncSession = Depends(get_db)):
     """))
     followups = [dict(r._mapping) for r in f_res]
     return {"items": items, "followups": followups}
+
+
+@app.delete("/api/donors/{donor_no}")
+async def delete_donor(donor_no: int, db: AsyncSession = Depends(get_db)):
+    checks = [
+        ("استقطاعات", "SELECT COUNT(*) FROM donor_item WHERE donor_no = :dno"),
+        ("حركات مالية", "SELECT COUNT(*) FROM money_trans WHERE donor_no = :dno"),
+        ("متابعات عامة", "SELECT COUNT(*) FROM donor_followup WHERE donor_no = :dno"),
+        ("متابعات استقطاعات", "SELECT COUNT(*) FROM donor_item_followup WHERE donor_no = :dno"),
+        ("سجلات إيقاف استقطاع", "SELECT COUNT(*) FROM donor_item_deactiv_hist WHERE donor_no = :dno"),
+        ("حركات إيقاف متبرع", "SELECT COUNT(*) FROM deactivate_donor_trans WHERE donor_no = :dno"),
+        ("كشوف بنك محملة", "SELECT COUNT(*) FROM bank_statement_load WHERE donor_no = :dno"),
+    ]
+    reasons = []
+    for label, sql in checks:
+        res = await db.execute(text(sql), {"dno": donor_no})
+        cnt = res.scalar() or 0
+        if cnt > 0:
+            reasons.append(f"{cnt} {label}")
+
+    if reasons:
+        raise HTTPException(
+            status_code=400,
+            detail=f"لا يمكن حذف هذا المتبرع لوجود سجلات فرعية مرتبطة به: ({'، '.join(reasons)})."
+        )
+
+    del_res = await db.execute(text("DELETE FROM donor_master WHERE donor_no = :dno"), {"dno": donor_no})
+    await db.commit()
+    if del_res.rowcount == 0:
+        raise HTTPException(status_code=404, detail="السجل غير موجود في قاعدة البيانات.")
+    return {"status": "deleted", "donor_no": donor_no}
+
+
+@app.delete("/api/standing-orders/{so_id}")
+async def delete_standing_order(so_id: int, db: AsyncSession = Depends(get_db)):
+    checks = [
+        ("حركات تحصيل مسددة", "SELECT COUNT(*) FROM money_trans WHERE so_id = :sid AND status_no = 1"),
+        ("متابعات استقطاع", "SELECT COUNT(*) FROM donor_item_followup WHERE so_id = :sid"),
+        ("كشوف بنك محملة", "SELECT COUNT(*) FROM bank_statement_load WHERE so_id = :sid"),
+        ("سجلات إيقاف سابقة", "SELECT COUNT(*) FROM donor_item_deactiv_hist WHERE so_id = :sid"),
+        ("حركات تفعيل/إيقاف", "SELECT COUNT(*) FROM donor_item_actdeact_trns WHERE so_id = :sid"),
+    ]
+    reasons = []
+    for label, sql in checks:
+        res = await db.execute(text(sql), {"sid": so_id})
+        cnt = res.scalar() or 0
+        if cnt > 0:
+            reasons.append(f"{cnt} {label}")
+
+    if reasons:
+        raise HTTPException(
+            status_code=400,
+            detail=f"لا يمكن حذف الاستقطاع لوجود حركات مرتبطة به: ({'، '.join(reasons)}). يمكنك إيقاف الاستقطاع بدلاً من حذفه."
+        )
+
+    # حذف حركات الاستحقاق غير المسددة (إن وجدت) قبل حذف الاستقطاع
+    await db.execute(text("DELETE FROM money_trans WHERE so_id = :sid AND status_no != 1"), {"sid": so_id})
+    del_res = await db.execute(text("DELETE FROM donor_item WHERE so_id = :sid"), {"sid": so_id})
+    await db.commit()
+    if del_res.rowcount == 0:
+        raise HTTPException(status_code=404, detail="الاستقطاع غير موجود.")
+    return {"status": "deleted", "so_id": so_id}

@@ -99,6 +99,23 @@ async def get_initial_screen_data(db: AsyncSession = Depends(get_db)):
         FROM vw_standing_orders_summary
         ORDER BY so_id ASC
     """)
+    # جلب المتابعات القديمة على مستوى الاستقطاع لتجنب أي خطأ
+    old_f_res = await db.execute(text("""
+        SELECT f.trans_id, f.so_id, f.donor_no, f.item_no,
+               TO_CHAR(f.donation_start_date, 'YYYY-MM-DD') AS donation_start_date,
+               TO_CHAR(f.call_date, 'YYYY-MM-DD') AS call_date, f.call_time, f.call_by,
+               f.call_result_cd, f.delay_reason_cd, f.call_result_notes, f.delayed_months,
+               TO_CHAR(f.last_paid_month, 'YYYY-MM-DD') AS last_paid_month,
+               r.result_nm, d.reason_nm
+        FROM donor_item_followup f
+        LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
+        LEFT JOIN lkp_delay_reasons d ON f.delay_reason_cd = d.reason_cd
+    """))
+    old_followups_by_so = {}
+    for row in old_f_res:
+        item_f = dict(row._mapping)
+        old_followups_by_so.setdefault(item_f["so_id"], []).append(item_f)
+
     so_res = await db.execute(so_query)
     so_by_donor = {}
     for row in so_res:

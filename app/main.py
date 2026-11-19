@@ -20,6 +20,52 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
+DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "users")
+
+def normalize_page_permissions(role_code: Optional[str], raw_perms: Any) -> dict:
+    if isinstance(raw_perms, str):
+        try:
+            raw_perms = json.loads(raw_perms)
+        except Exception:
+            raw_perms = {}
+    if not isinstance(raw_perms, dict):
+        raw_perms = {}
+
+    # If explicit page keys already exist in raw_perms, honor them
+    if any(k in raw_perms for k in DEFAULT_PAGE_KEYS):
+        base = {k: raw_perms.get(k, "none") for k in DEFAULT_PAGE_KEYS}
+        base["about"] = raw_perms.get("about", "view")
+        for k, v in base.items():
+            if v not in ("none", "view", "edit"):
+                base[k] = "none"
+        return base
+
+    # Fallback based on legacy role_code
+    code = (role_code or "").upper()
+    if code in ("READ_WRITE", "ADMIN"):
+        return {k: "edit" for k in DEFAULT_PAGE_KEYS}
+    return {
+        "about": "view",
+        "donors": "view",
+        "audit": "view",
+        "reconcile": "view",
+        "followup": "view",
+        "users": "none",
+    }
+
+def resolve_page_key(path: str) -> str:
+    if path.startswith("/users") or path.startswith("/api/users"):
+        return "users"
+    if path.startswith("/bank-codes-audit") or path.startswith("/api/bank-codes-audit"):
+        return "audit"
+    if path.startswith("/bank-reconcile") or path.startswith("/api/bank-reconcile"):
+        return "reconcile"
+    if path.startswith("/followup") or path.startswith("/api/followup"):
+        return "followup"
+    if path in ("/", "/api/init-data") or path.startswith("/api/donors") or path.startswith("/api/standing-orders"):
+        return "donors"
+    return "about"
+
 def verify_session_token(token: str) -> Optional[dict]:
     if not token or "." not in token:
         return None
@@ -28,7 +74,9 @@ def verify_session_token(token: str) -> Optional[dict]:
     if not hmac.compare_digest(sig, expected_sig):
         return None
     try:
-        return json.loads(base64.urlsafe_b64decode(payload.encode("utf-8")).decode("utf-8"))
+        data = json.loads(base64.urlsafe_b64decode(payload.encode("utf-8")).decode("utf-8"))
+        data["page_permissions"] = normalize_page_permissions(data.get("role_code"), data.get("page_permissions"))
+        return data
     except Exception:
         return None
 
@@ -43,6 +91,9 @@ async def auth_and_rbac_middleware(request: Request, call_next):
     user = verify_session_token(token)
     request.state.user = user
 
+    page_key = resolve_page_key(path)
+    request.state.current_page_key = page_key
+
     if path in public_paths:
         return await call_next(request)
 
@@ -51,13 +102,22 @@ async def auth_and_rbac_middleware(request: Request, call_next):
             return JSONResponse(status_code=401, content={"detail": "Authentication required. Please sign in."})
         return RedirectResponse(url="/login", status_code=302)
 
-    # Enforce Read-Only vs Read-Write on any mutating request
-    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
-        if user.get("role_code") != "READ_WRITE":
-            return JSONResponse(
-                status_code=403,
-                content={"detail": "Access Denied: Your account has View-Only permission and cannot modify records."}
-            )
+    page_perms = user.get("page_permissions") or normalize_page_permissions(user.get("role_code"), None)
+    access_level = page_perms.get(page_key, "none")
+    request.state.current_page_access = access_level
+
+    if access_level == "none":
+        if path.startswith("/api/"):
+            return JSONResponse(status_code=403, content={"detail": f"Access Denied: No permission for module '{page_key}'."})
+        if path != "/about" and page_perms.get("about", "view") != "none":
+            return RedirectResponse(url="/about", status_code=302)
+        return JSONResponse(status_code=403, content={"detail": f"Access Denied: No permission for page '{page_key}'."})
+
+    if request.method in ("POST", "PUT", "DELETE", "PATCH") and access_level != "edit":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": f"Access Denied: You only have View permission on '{page_key}'."}
+        )
 
     return await call_next(request)
 
@@ -1153,7 +1213,7 @@ async def login_submit(request: Request, username: str = Form(...), password: st
     uname = username.strip().upper()
     pwd_hash = hash_password(password.strip())
     sql = text("""
-        SELECT u.user_id, u.username, u.full_name_en, u.full_name_ar, u.is_active, r.role_id, r.role_code, r.role_name_en
+        SELECT u.user_id, u.username, u.full_name_en, u.full_name_ar, u.is_active, r.role_id, r.role_code, r.role_name_en, r.permissions
         FROM sys_users u
         JOIN sys_roles r ON u.role_id = r.role_id
         WHERE UPPER(u.username) = :u AND u.password_hash = :p
@@ -1169,13 +1229,15 @@ async def login_submit(request: Request, username: str = Form(...), password: st
     await db.execute(text("UPDATE sys_users SET last_login = CURRENT_TIMESTAMP WHERE user_id = :uid"), {"uid": user_data["user_id"]})
     await db.commit()
 
+    page_perms = normalize_page_permissions(user_data.get("role_code"), user_data.get("permissions"))
     token = create_session_token({
         "user_id": user_data["user_id"],
         "username": user_data["username"],
         "full_name": user_data["full_name_en"] or user_data["full_name_ar"],
         "role_id": user_data["role_id"],
         "role_code": user_data["role_code"],
-        "role_name": user_data["role_name_en"]
+        "role_name": user_data["role_name_en"],
+        "page_permissions": page_perms
     })
     response = RedirectResponse(url="/about", status_code=302)
     response.set_cookie(key="dic_session", value=token, httponly=True, max_age=86400 * 7)
@@ -1195,15 +1257,42 @@ async def about_page(request: Request):
 async def users_page(request: Request):
     return templates.TemplateResponse("users.html", {"request": request})
 
+class UserPagePermissionsSchema(BaseModel):
+    page_permissions: dict[str, str]
+
 @app.get("/api/users")
 async def list_users(db: AsyncSession = Depends(get_db)):
     res = await db.execute(text("""
-        SELECT u.user_id, u.username, u.full_name_ar, u.full_name_en, u.role_id, u.is_active, r.role_code, r.role_name_en
+        SELECT u.user_id, u.username, u.full_name_ar, u.full_name_en, u.role_id, u.is_active, r.role_code, r.role_name_en, r.permissions
         FROM sys_users u
         JOIN sys_roles r ON u.role_id = r.role_id
         ORDER BY u.user_id ASC
     """))
-    return {"users": [dict(r._mapping) for r in res]}
+    rows = []
+    for r in res:
+        item = dict(r._mapping)
+        item["page_permissions"] = normalize_page_permissions(item.get("role_code"), item.get("permissions"))
+        item.pop("permissions", None)
+        rows.append(item)
+    return {"users": rows}
+
+@app.post("/api/users/{user_id}/page-permissions")
+async def update_user_page_permissions_api(user_id: int, payload: UserPagePermissionsSchema, db: AsyncSession = Depends(get_db)):
+    u_res = await db.execute(text("SELECT role_id FROM sys_users WHERE user_id = :uid"), {"uid": user_id})
+    u_row = u_res.first()
+    if not u_row:
+        raise HTTPException(status_code=404, detail="User not found.")
+    cleaned = {}
+    for k in DEFAULT_PAGE_KEYS:
+        val = payload.page_permissions.get(k, "none")
+        cleaned[k] = val if val in ("none", "view", "edit") else "none"
+    cleaned["can_edit"] = any(v == "edit" for k, v in cleaned.items() if k != "users")
+    await db.execute(
+        text("UPDATE sys_roles SET permissions = CAST(:perms AS jsonb) WHERE role_id = :rid"),
+        {"perms": json.dumps(cleaned), "rid": u_row.role_id}
+    )
+    await db.commit()
+    return {"status": "updated", "page_permissions": cleaned}
 
 @app.post("/api/users/create")
 async def create_user_api(payload: UserCreateSchema, db: AsyncSession = Depends(get_db)):

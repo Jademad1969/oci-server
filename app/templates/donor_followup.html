@@ -1,199 +1,194 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>متابعة الاستقطاعات المتأخرة - DIC</title>
+    <title>Delayed Standing Orders Follow-up - Discover Islam Society</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Cairo', sans-serif; }
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #f1f5f9; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .ar-text { direction: rtl; text-align: right; font-family: 'Cairo', sans-serif; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col" x-data="followupApp()">
+    {% include 'sidebar.html' %}
 
-    <!-- 1. الشريط العلوي الموحد -->
+    <!-- 1. Top Module Header -->
     <header class="bg-slate-900 text-white shadow-md border-b border-slate-700 sticky top-0 z-30">
-        <div class="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
-            <div class="flex items-center gap-4">
-                <div class="bg-emerald-600 text-white font-bold px-3 py-1 rounded-md text-sm tracking-wide">
-                    DIC BAHRAIN
+        <div class="max-w-[1600px] mx-auto px-4 h-13 py-2.5 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="bg-rose-600 text-white font-bold px-2.5 py-1 rounded text-xs tracking-wider">
+                    SO FOLLOW-UP
                 </div>
-                <h1 class="font-bold text-base md:text-lg text-slate-100">
-                    نظام الاستقطاعات الشهرية <span class="text-slate-400 text-sm font-normal">| شاشة متابعة الاستقطاعات المتأخرة (Donors & SO Followup)</span>
-                </h1>
-                <span class="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs px-2.5 py-0.5 rounded-full whitespace-nowrap">
-                    بيئة الاختبار (Testing Env)
-                </span>
+                <div>
+                    <h1 class="font-bold text-sm text-slate-100">
+                        Delayed Standing Orders & Donor Follow-up (DONOR_FOLLOWUP)
+                    </h1>
+                    <p class="text-[11px] text-slate-400">Track delayed payments, update contact addresses, and log donor/SO follow-up calls</p>
+                </div>
             </div>
 
-            <nav class="hidden lg:flex items-center gap-1 text-sm">
-                <a href="/" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">بيانات المستقطعين</a>
-                <a href="/bank-codes-audit" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تدقيق أكواد البنوك</a>
-                <a href="/bank-reconcile" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تحميل ومطابقة الكشوف (CSV)</a>
-                <a href="/followup" class="bg-slate-800 text-emerald-400 font-semibold px-3 py-1.5 rounded-md border border-slate-700">متابعة المتأخرين</a>
-                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">التقارير والإحصائيات</a>
-            </nav>
-
-            <div class="flex items-center gap-4 text-xs md:text-sm">
+            <div class="flex items-center gap-3 text-xs">
                 <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 flex items-center gap-2">
                     <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span class="text-slate-400">USER:</span> <span class="font-bold text-emerald-400" x-text="currentUser"></span>
+                    <span class="text-slate-400">AGENT:</span>
+                    <span class="font-bold text-emerald-400 font-mono" x-text="currentUser"></span>
                 </div>
             </div>
         </div>
     </header>
 
-    <!-- 2. شريط الفلترة والتنقل وتصدير إكسل المتابعة -->
-    <div class="bg-white border-b border-slate-200 shadow-sm sticky top-14 z-20">
+    <!-- 2. Filter, Search, Navigation & CSV Export Bar -->
+    <div class="bg-white border-b border-slate-200 shadow-xs sticky top-12 z-20">
         <div class="max-w-[1600px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
-            
+
             <div class="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-bold">
                 <button @click="setFilter('DELAYED')"
                         :class="filterMode === 'DELAYED' ? 'bg-rose-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
                         class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
-                    المتأخرين (&gt; شهرين) (<span x-text="donors.filter(d => d.max_delay > 2).length"></span>)
+                    Delayed (&gt; 2 Months) (<span x-text="donors.filter(d => d.max_delay > 2).length"></span>)
                 </button>
                 <button @click="setFilter('INACTIVE')"
                         :class="filterMode === 'INACTIVE' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
                         class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
-                    غير النشطين (<span x-text="donors.filter(d => Number(d.status_no) === 2).length"></span>)
+                    Inactive Donors (<span x-text="donors.filter(d => Number(d.status_no) === 2).length"></span>)
                 </button>
                 <button @click="setFilter('ALL')"
                         :class="filterMode === 'ALL' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
                         class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
-                    كافة المشتركين (<span x-text="donors.length"></span>)
+                    All Subscribers (<span x-text="donors.length"></span>)
                 </button>
             </div>
 
             <div class="flex-1 max-w-md relative">
                 <input type="text" x-model="searchQuery" @input="currentIndex = 0; selectedSoIndex = 0; resetFollowForms()"
-                       placeholder="بحث بكود المتبرع، الاسم، الرقم السكاني، أو رقم الهاتف..."
-                       class="w-full h-9 bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg pr-9 pl-3 text-xs">
-                <svg class="w-4 h-4 text-slate-400 absolute right-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                       placeholder="Search by Donor No, Name, CPR, or Mobile Phone..."
+                       class="w-full h-9 bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg pl-9 pr-3 text-xs">
+                <svg class="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
                 </svg>
             </div>
 
             <div class="flex items-center gap-2.5">
                 <div class="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-xs h-9">
-                    <button @click="currentIndex = 0; selectedSoIndex = 0; resetFollowForms()" class="px-2.5 h-full hover:bg-white rounded font-bold">|&lt;</button>
-                    <button @click="if(currentIndex > 0) { currentIndex--; selectedSoIndex = 0; resetFollowForms(); }" class="px-2.5 h-full hover:bg-white rounded font-bold">&lt;</button>
+                    <button @click="currentIndex = 0; selectedSoIndex = 0; resetFollowForms()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="First">|&lt;</button>
+                    <button @click="if(currentIndex > 0) { currentIndex--; selectedSoIndex = 0; resetFollowForms(); }" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Previous">&lt;</button>
                     <span class="px-3 font-mono font-bold text-slate-700 whitespace-nowrap">
                         <span x-text="filteredDonors.length ? currentIndex + 1 : 0"></span> / <span x-text="filteredDonors.length"></span>
                     </span>
-                    <button @click="if(currentIndex < filteredDonors.length - 1) { currentIndex++; selectedSoIndex = 0; resetFollowForms(); }" class="px-2.5 h-full hover:bg-white rounded font-bold">&gt;</button>
-                    <button @click="currentIndex = Math.max(0, filteredDonors.length - 1); selectedSoIndex = 0; resetFollowForms()" class="px-2.5 h-full hover:bg-white rounded font-bold">&gt;|</button>
+                    <button @click="if(currentIndex < filteredDonors.length - 1) { currentIndex++; selectedSoIndex = 0; resetFollowForms(); }" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Next">&gt;</button>
+                    <button @click="currentIndex = Math.max(0, filteredDonors.length - 1); selectedSoIndex = 0; resetFollowForms()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Last">&gt;|</button>
                 </div>
 
                 <a href="/api/followup/export-csv" target="_blank"
                    class="h-9 bg-emerald-700 hover:bg-emerald-800 text-white px-4 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5 whitespace-nowrap">
-                    <span>تصدير كشف المتابعة (Excel / CSV)</span>
+                    <span>Export Follow-up Report (Excel / CSV)</span>
                 </a>
             </div>
         </div>
     </div>
 
-    <!-- 3. المحتوى الرئيسي للشاشة -->
+    <!-- 3. Main Screen Content -->
     <main class="max-w-[1600px] w-full mx-auto px-4 py-3 flex-1 flex flex-col gap-3" x-show="currentDonor && currentDonor.donor_no">
 
-        <!-- القسم الأول: البيانات الأساسية والعنوان + بيانات الاتصال القابلة للتحديث -->
+        <!-- Section 1: Basic Profile & Address + Editable Contact Numbers -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
 
-            <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5">
+            <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-xs p-3.5">
                 <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5">
                     <h2 class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
                         <span class="w-2 h-2 rounded-full bg-blue-600"></span>
-                        البيانات الأساسية وعنوان المتبرع (قابلة للتعديل)
+                        Donor Profile & Address Details (Editable)
                     </h2>
                     <div class="flex items-center gap-2">
-                        <span class="text-[11px] font-semibold text-slate-500">عدد الاستقطاعات: <strong class="font-mono text-blue-800" x-text="currentDonor.items ? currentDonor.items.length : 0"></strong></span>
+                        <span class="text-[11px] font-semibold text-slate-500">Total SOs: <strong class="font-mono text-blue-800" x-text="currentDonor.items ? currentDonor.items.length : 0"></strong></span>
                         <span :class="Number(currentDonor.status_no) === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-800 border-rose-300'"
                               class="px-3 py-0.5 rounded-full text-xs font-extrabold border whitespace-nowrap"
-                              x-text="Number(currentDonor.status_no) === 1 ? 'فعال (Active)' : 'غير فعال (Inactive)'"></span>
+                              x-text="Number(currentDonor.status_no) === 1 ? 'Active' : 'Inactive'"></span>
                     </div>
                 </div>
 
                 <div class="grid grid-cols-2 sm:grid-cols-12 gap-2 mb-2.5 text-xs">
                     <div class="sm:col-span-2">
-                        <label class="block text-[11px] font-bold text-rose-700 mb-1">كود المتبرع</label>
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">Donor No</label>
                         <input type="text" :value="currentDonor.donor_no" readonly class="w-full h-8 bg-slate-100 border border-slate-300 rounded px-2 font-mono font-bold text-center text-sm">
                     </div>
                     <div class="sm:col-span-4">
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">اسم المتبرع (عربي)</label>
-                        <input type="text" :value="currentDonor.donor_name" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-bold text-slate-900">
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">Donor Name (Arabic)</label>
+                        <input type="text" :value="currentDonor.donor_name" readonly class="ar-text w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-bold text-slate-900">
                     </div>
                     <div class="sm:col-span-4">
-                        <label class="block text-[11px] font-semibold text-rose-700 mb-1">الاسم بالإنجليزية</label>
+                        <label class="block text-[11px] font-semibold text-rose-700 mb-1">Donor Name (English)</label>
                         <input type="text" dir="ltr" :value="currentDonor.donor_ename" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 text-xs font-mono font-bold text-rose-700">
                     </div>
                     <div class="sm:col-span-2">
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">الرقم السكاني (CPR)</label>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">CPR / ID No.</label>
                         <input type="text" :value="currentDonor.donor_cpr" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 font-mono font-bold text-center">
                     </div>
                 </div>
 
-                <!-- صف بيانات العنوان التفصيلية (شقة / مبنى / طريق / مجمع / المنطقة) -->
+                <!-- Detailed Address Row (Address Type / Flat / Building / Road / Block / Town) -->
                 <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 grid grid-cols-2 sm:grid-cols-12 gap-2 text-xs">
                     <div class="sm:col-span-2">
-                        <label class="block text-[11px] font-bold text-blue-900 mb-1">نوع العنوان</label>
+                        <label class="block text-[11px] font-bold text-blue-900 mb-1">Address Type</label>
                         <select x-model.number="currentDonor.address_type" class="w-full h-8 bg-white border border-blue-300 focus:border-blue-600 rounded px-1.5 font-bold text-slate-800">
-                            <option :value="1">منزل</option>
-                            <option :value="2">عمل</option>
-                            <option :value="3">ص.ب</option>
+                            <option :value="1">Home (منزل)</option>
+                            <option :value="2">Work (عمل)</option>
+                            <option :value="3">P.O. Box (ص.ب)</option>
                         </select>
                     </div>
                     <div class="sm:col-span-1">
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">شقة</label>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Flat</label>
                         <input type="text" x-model="currentDonor.donor_flat" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-1 font-mono font-bold text-center">
                     </div>
                     <div class="sm:col-span-2">
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">مبنى</label>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Building</label>
                         <input type="text" x-model="currentDonor.donor_building" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                     <div class="sm:col-span-2">
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">طريق</label>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Road</label>
                         <input type="text" x-model="currentDonor.donor_road" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                     <div class="sm:col-span-2">
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">مجمع (Block)</label>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Block</label>
                         <input type="text" x-model="currentDonor.donor_block" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                     <div class="sm:col-span-3">
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">المنطقة / المدينة</label>
-                        <input type="text" :value="(townsMap && townsMap[currentDonor.donor_block]) ? townsMap[currentDonor.donor_block] : (currentDonor.town_name || '-')" readonly class="w-full h-8 bg-slate-100 border border-slate-300 rounded px-2 font-bold text-blue-900 text-center">
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">Town / Area</label>
+                        <input type="text" :value="(townsMap && townsMap[currentDonor.donor_block]) ? townsMap[currentDonor.donor_block] : (currentDonor.town_name || '-')" readonly class="ar-text w-full h-8 bg-slate-100 border border-slate-300 rounded px-2 font-bold text-blue-900 text-center">
                     </div>
                 </div>
             </section>
 
-            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col justify-between">
+            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-xs p-3.5 flex flex-col justify-between">
                 <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5">
                     <h2 class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
                         <span class="w-2 h-2 rounded-full bg-emerald-600"></span>
-                        أرقام التواصل وصندوق البريد (قابلة للتعديل والحفظ)
+                        Contact Phones & P.O. Box (Editable)
                     </h2>
-                    <span class="text-[11px] font-semibold text-slate-500" x-text="'الجنس: ' + (Number(currentDonor.gen_cd) === 2 ? 'أنثى' : 'ذكر')"></span>
+                    <span class="text-[11px] font-semibold text-slate-500" x-text="'Gender: ' + (Number(currentDonor.gen_cd) === 2 ? 'Female' : 'Male')"></span>
                 </div>
 
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs mb-3">
                     <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">هاتف</label>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Phone 1</label>
                         <input type="text" x-model="currentDonor.donor_tel1" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-bold text-emerald-800 mb-1">نقال (1)</label>
+                        <label class="block text-[11px] font-bold text-emerald-800 mb-1">Mobile (1)</label>
                         <input type="text" x-model="currentDonor.donor_tel2" class="w-full h-8 bg-emerald-50/60 border border-emerald-400 focus:border-emerald-600 rounded px-2 font-mono font-extrabold text-center text-emerald-950">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">نقال (2)</label>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Mobile (2)</label>
                         <input type="text" x-model="currentDonor.donor_mobile" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">ص . ب (P.O.Box)</label>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">P.O. Box</label>
                         <input type="text" x-model="currentDonor.donor_p_box" class="w-full h-8 bg-white border border-slate-300 focus:border-blue-600 rounded px-2 font-mono font-bold text-center">
                     </div>
                 </div>
@@ -201,48 +196,48 @@
                 <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
                     <button @click="saveDonorContact()"
                             class="h-8 bg-blue-700 hover:bg-blue-800 text-white px-4 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5 whitespace-nowrap">
-                        <span>💾 حفظ تعديلات العنوان والتواصل</span>
+                        <span>💾 Save Contact & Address</span>
                     </button>
 
                     <button @click="openWhatsApp()"
                             class="h-8 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5 whitespace-nowrap">
-                        <span>إرسال رسالة واتساب (+973)</span>
+                        <span>Send WhatsApp (+973)</span>
                     </button>
                 </div>
             </section>
         </div>
 
-        <!-- القسم الثاني: جدول الاستقطاعات الخاص بالمتبرع (اضغط على أي صف لعرض متابعاته الخاصة بالأسفل) -->
-        <section class="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5">
+        <!-- Section 2: Donor Standing Orders & Delay Status -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-xs p-3.5">
             <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-2.5">
                 <h2 class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
                     <span class="w-2 h-2 rounded-full bg-blue-600"></span>
-                    الاستقطاعات المسجلة للمتبرع وحالة تأخيرها
+                    Donor Standing Orders & Delay Status
                 </h2>
                 <span class="text-[11px] font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded border border-blue-200">
-                    💡 اضغط على أي سطر استقطاع بالأسفل لعرض متابعاته الخاصة في جدول متابعات الاستقطاع
+                    💡 Click any Standing Order row below to view or log its specific follow-ups
                 </span>
             </div>
 
             <div class="overflow-x-auto border border-slate-200 rounded-lg">
-                <table class="w-full text-xs text-right border-collapse">
+                <table class="w-full text-xs text-left border-collapse">
                     <thead class="bg-slate-800 text-white whitespace-nowrap">
                         <tr>
-                            <th class="py-2.5 px-3 text-center">رقم SO</th>
-                            <th class="py-2.5 px-3 text-center">تاريخ البداية</th>
-                            <th class="py-2.5 px-3 text-center">تاريخ الانتهاء</th>
-                            <th class="py-2.5 px-3 text-center">المبلغ (د.ب)</th>
-                            <th class="py-2.5 px-3">البنك</th>
-                            <th class="py-2.5 px-3 text-center">رقم الحساب</th>
-                            <th class="py-2.5 px-3 text-center">كود الاستقطاع</th>
-                            <th class="py-2.5 px-3 text-center text-emerald-300">كود إثمار البديل</th>
-                            <th class="py-2.5 px-3 text-center">باستمارة</th>
-                            <th class="py-2.5 px-3 text-center min-w-[95px]">الحالة</th>
-                            <th class="py-2.5 px-3 text-center bg-rose-900">تأخير فعلي</th>
-                            <th class="py-2.5 px-3 text-center bg-amber-800">تأخير افتراضي</th>
-                            <th class="py-2.5 px-3 text-center">آخر سداد</th>
-                            <th class="py-2.5 px-3 text-center min-w-[140px]">ملاحظات السداد</th>
-                            <th class="py-2.5 px-3 min-w-[220px]">آخر متابعة للمتبرع</th>
+                            <th class="py-2.5 px-3 text-center">SO ID</th>
+                            <th class="py-2.5 px-3 text-center">Start Date</th>
+                            <th class="py-2.5 px-3 text-center">End Date</th>
+                            <th class="py-2.5 px-3 text-center">Amount (BHD)</th>
+                            <th class="py-2.5 px-3">Bank</th>
+                            <th class="py-2.5 px-3 text-center">Account No.</th>
+                            <th class="py-2.5 px-3 text-center">Bank SO Code</th>
+                            <th class="py-2.5 px-3 text-center text-emerald-300">Alt. Code</th>
+                            <th class="py-2.5 px-3 text-center">Form?</th>
+                            <th class="py-2.5 px-3 text-center min-w-[95px]">Status</th>
+                            <th class="py-2.5 px-3 text-center bg-rose-900">Actual Delay</th>
+                            <th class="py-2.5 px-3 text-center bg-amber-800">Virtual Delay</th>
+                            <th class="py-2.5 px-3 text-center">Last Paid</th>
+                            <th class="py-2.5 px-3 text-center min-w-[140px]">Payment Notes</th>
+                            <th class="py-2.5 px-3 min-w-[220px]">Last Donor Follow-up</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-200 whitespace-nowrap">
@@ -262,7 +257,7 @@
                                 <td class="py-2 px-3 text-center">
                                     <span :class="so.status_no === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-200 text-slate-700 border-slate-300'"
                                           class="inline-block whitespace-nowrap px-3 py-0.5 rounded-full text-[11px] font-bold border"
-                                          x-text="so.status_no === 1 ? 'فعال' : 'غير فعال'"></span>
+                                          x-text="so.status_no === 1 ? 'Active' : 'Inactive'"></span>
                                 </td>
                                 <td class="py-2 px-3 text-center font-mono font-extrabold text-base"
                                     :class="so.actual_delay_months > 2 ? 'text-rose-600 bg-rose-50' : 'text-slate-800'"
@@ -272,9 +267,9 @@
                                 <td class="py-2 px-3 text-center font-mono font-semibold text-slate-700" x-text="so.last_paid_month || '-'"></td>
                                 <td class="py-2 px-3 text-center">
                                     <span x-show="so.payment_notes" class="inline-block whitespace-nowrap bg-rose-100 text-rose-800 border border-rose-300 px-2.5 py-0.5 rounded text-[11px] font-bold" x-text="so.payment_notes"></span>
-                                    <span x-show="!so.payment_notes" class="inline-block whitespace-nowrap text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded text-[11px] font-bold">منتظم / له سداد</span>
+                                    <span x-show="!so.payment_notes" class="inline-block whitespace-nowrap text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded text-[11px] font-bold">Regular / Paid</span>
                                 </td>
-                                <td class="py-2 px-3 text-xs font-bold text-blue-900" x-text="so.last_followup_summary || 'بدون متابعة'"></td>
+                                <td class="py-2 px-3 text-xs font-bold text-blue-900" x-text="so.last_followup_summary || 'No follow-up'"></td>
                             </tr>
                         </template>
                     </tbody>
@@ -282,31 +277,31 @@
             </div>
         </section>
 
-        <!-- القسم الثالث: متابعات المستقطع + متابعات الاستقطاع المحدد -->
+        <!-- Section 3: General Donor Follow-ups + Selected SO Specific Follow-ups -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1">
-            
-            <!-- متابعات المستقطع على مستوى المتبرع -->
-            <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col justify-between">
+
+            <!-- Donor-Level Follow-ups (DONOR_FOLLOWUP) -->
+            <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-xs p-3.5 flex flex-col justify-between">
                 <div>
                     <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
                         <h2 class="text-xs font-extrabold text-rose-800 flex items-center gap-1.5">
                             <span class="w-2.5 h-2.5 rounded-full bg-rose-600"></span>
-                            متابعات المستقطع (على مستوى المتبرع - DONOR_FOLLOWUP)
+                            General Donor Follow-up Log (DONOR_FOLLOWUP)
                         </h2>
-                        <span class="text-[11px] font-bold text-slate-500" x-text="(currentDonor.followups ? currentDonor.followups.length : 0) + ' اتصال مسجل'"></span>
+                        <span class="text-[11px] font-bold text-slate-500" x-text="(currentDonor.followups ? currentDonor.followups.length : 0) + ' logged call(s)'"></span>
                     </div>
 
                     <div class="overflow-auto max-h-[180px] border border-slate-200 rounded-lg mb-3">
-                        <table class="w-full text-xs text-right border-collapse whitespace-nowrap">
+                        <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
                             <thead class="bg-slate-800 text-white sticky top-0">
                                 <tr>
-                                    <th class="py-2 px-3 text-center">تاريخ التواصل</th>
-                                    <th class="py-2 px-3 text-center">الوقت</th>
-                                    <th class="py-2 px-3 text-center bg-slate-700">اسم الموظف (بواسطة)</th>
-                                    <th class="py-2 px-3 text-center">طريقة التواصل</th>
-                                    <th class="py-2 px-3">نتيجة التواصل</th>
-                                    <th class="py-2 px-3">سبب التأخير / التوقف</th>
-                                    <th class="py-2 px-3">ملاحظات</th>
+                                    <th class="py-2 px-3 text-center">Call Date</th>
+                                    <th class="py-2 px-3 text-center">Time</th>
+                                    <th class="py-2 px-3 text-center bg-slate-700">Agent (By)</th>
+                                    <th class="py-2 px-3 text-center">Method</th>
+                                    <th class="py-2 px-3">Call Result</th>
+                                    <th class="py-2 px-3">Delay / Stop Reason</th>
+                                    <th class="py-2 px-3">Notes</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-200">
@@ -330,7 +325,7 @@
                                 </template>
                                 <tr x-show="!currentDonor.followups || currentDonor.followups.length === 0">
                                     <td colspan="7" class="py-6 text-center text-slate-400 font-semibold">
-                                        لا توجد اتصالات متابعة مسجلة لهذا المتبرع حتى الآن.
+                                        No follow-up calls logged for this donor yet.
                                     </td>
                                 </tr>
                             </tbody>
@@ -338,42 +333,42 @@
                     </div>
                 </div>
 
-                <!-- نموذج تسجيل متابعة جديدة بحقول متساوية الارتفاع تماماً (h-9) وحقل صريح لاسم الموظف -->
+                <!-- New Donor Follow-up Entry Form -->
                 <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                     <div class="text-xs font-extrabold text-slate-800 mb-2.5 border-b border-slate-200 pb-1.5">
-                        تسجيل متابعة جديدة (سجل تدقيقي ثابت لا يقبل الحذف أو التعديل بعد الحفظ):
+                        Log New Donor Follow-up (Immutable audit record once saved):
                     </div>
 
                     <div class="grid grid-cols-2 sm:grid-cols-12 gap-2.5 items-end text-xs mb-2.5">
                         <div class="sm:col-span-2">
-                            <label class="block text-[11px] font-bold text-slate-700 mb-1">اسم الموظف (بواسطة)</label>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Agent (By)</label>
                             <input type="text" :value="currentUser" readonly
                                    class="w-full h-9 bg-slate-200/80 border border-slate-300 text-blue-900 rounded-lg px-2.5 font-mono font-extrabold text-center cursor-not-allowed">
                         </div>
                         <div class="sm:col-span-3">
-                            <label class="block text-[11px] font-bold text-slate-700 mb-1">تاريخ التواصل</label>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Call Date</label>
                             <input type="date" x-model="newFollow.call_date"
                                    class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2.5 font-mono font-semibold">
                         </div>
                         <div class="sm:col-span-2">
-                            <label class="block text-[11px] font-bold text-slate-700 mb-1">الوقت</label>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Time</label>
                             <input type="text" x-model="newFollow.call_time" placeholder="11:00"
                                    class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2.5 font-mono font-semibold text-center">
                         </div>
                         <div class="sm:col-span-2">
-                            <label class="block text-[11px] font-bold text-blue-800 mb-1">طريقة التواصل</label>
+                            <label class="block text-[11px] font-bold text-blue-800 mb-1">Method</label>
                             <select x-model.number="newFollow.contact_method"
                                     class="w-full h-9 bg-white border border-blue-300 focus:border-blue-600 rounded-lg px-2 font-bold text-blue-900">
-                                <option :value="1">اتصال هاتفي</option>
-                                <option :value="2">رسالة (SMS/واتساب)</option>
-                                <option :value="3">بريد إلكتروني</option>
+                                <option :value="1">Phone Call</option>
+                                <option :value="2">SMS / WhatsApp</option>
+                                <option :value="3">Email</option>
                             </select>
                         </div>
                         <div class="sm:col-span-3">
-                            <label class="block text-[11px] font-bold text-emerald-800 mb-1">نتيجة التواصل</label>
+                            <label class="block text-[11px] font-bold text-emerald-800 mb-1">Call Result</label>
                             <select x-model.number="newFollow.call_result_cd"
                                     class="w-full h-9 bg-white border border-emerald-300 focus:border-emerald-600 rounded-lg px-2 font-bold text-emerald-900">
-                                <option value="">-- اختر النتيجة --</option>
+                                <option value="">-- Select Result --</option>
                                 <template x-for="res in followResults" :key="res.result_cd">
                                     <option :value="res.result_cd" x-text="res.result_nm"></option>
                                 </template>
@@ -383,53 +378,53 @@
 
                     <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end text-xs">
                         <div class="sm:col-span-4">
-                            <label class="block text-[11px] font-bold text-rose-800 mb-1">سبب التأخير / التوقف (من جدول الأسباب)</label>
+                            <label class="block text-[11px] font-bold text-rose-800 mb-1">Delay / Stop Reason</label>
                             <select x-model.number="newFollow.delay_reason_cd"
                                     class="w-full h-9 bg-white border border-rose-300 focus:border-rose-600 rounded-lg px-2 font-bold text-rose-900">
-                                <option value="">-- اختر السبب --</option>
+                                <option value="">-- Select Reason --</option>
                                 <template x-for="dr in delayReasons" :key="dr.reason_cd">
                                     <option :value="dr.reason_cd" x-text="dr.reason_nm"></option>
                                 </template>
                             </select>
                         </div>
                         <div class="sm:col-span-6">
-                            <label class="block text-[11px] font-bold text-slate-700 mb-1">ملاحظات المتابعة</label>
-                            <input type="text" x-model="newFollow.call_result_notes" placeholder="اكتب تفاصيل ما تم مع المتبرع..."
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Follow-up Notes</label>
+                            <input type="text" x-model="newFollow.call_result_notes" placeholder="Enter call details or donor feedback..."
                                    class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-3">
                         </div>
                         <div class="sm:col-span-2">
                             <button @click="saveFollowup()"
-                                    class="w-full h-9 bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded-lg font-bold whitespace-nowrap shadow-sm transition flex items-center justify-center">
-                                حفظ المتابعة
+                                    class="w-full h-9 bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded-lg font-bold whitespace-nowrap shadow-xs transition flex items-center justify-center">
+                                Save Follow-up
                             </button>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- سجل المتابعات الخاصة بالاستقطاع المحدد (بنفس هيكل جدول متابعات المستقطع الشغال) -->
-            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 flex flex-col">
+            <!-- Selected Standing Order Specific Follow-ups (DONOR_ITEM_FOLLOWUP) -->
+            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-xs p-3.5 flex flex-col">
                 <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
                     <h2 class="text-xs font-extrabold text-blue-900 flex items-center gap-1.5">
                         <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
-                        متابعات الاستقطاع المحدد (DONOR_ITEM_FOLLOWUP)
+                        Selected SO Follow-up Log (DONOR_ITEM_FOLLOWUP)
                     </h2>
                     <span class="bg-sky-100 text-sky-900 border border-sky-300 px-3 py-0.5 rounded-full text-xs font-mono font-extrabold"
-                          x-text="currentSo && currentSo.so_id ? 'الاستقطاع المحدد: SO #' + currentSo.so_id : 'لا يوجد استقطاع'"></span>
+                          x-text="currentSo && currentSo.so_id ? 'Selected: SO #' + currentSo.so_id : 'No SO Selected'"></span>
                 </div>
 
                 <div class="overflow-auto max-h-[180px] border border-slate-200 rounded-lg mb-3 flex-1">
-                    <table class="w-full text-xs text-right border-collapse whitespace-nowrap">
+                    <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
                         <thead class="bg-slate-700 text-white sticky top-0">
                             <tr>
-                                <th class="py-2 px-2.5 text-center">رقم SO</th>
-                                <th class="py-2 px-2.5 text-center">تاريخ الاتصال</th>
-                                <th class="py-2 px-2.5 text-center">بواسطة</th>
-                                <th class="py-2 px-2.5">النتيجة</th>
-                                <th class="py-2 px-2.5">سبب التأخير</th>
-                                <th class="py-2 px-2.5 text-center">أشهر التأخير</th>
-                                <th class="py-2 px-2.5 text-center">آخر دفع</th>
-                                <th class="py-2 px-2.5">ملاحظات</th>
+                                <th class="py-2 px-2.5 text-center">SO ID</th>
+                                <th class="py-2 px-2.5 text-center">Call Date</th>
+                                <th class="py-2 px-2.5 text-center">By</th>
+                                <th class="py-2 px-2.5">Result</th>
+                                <th class="py-2 px-2.5">Delay Reason</th>
+                                <th class="py-2 px-2.5 text-center">Delayed Mos.</th>
+                                <th class="py-2 px-2.5 text-center">Last Paid</th>
+                                <th class="py-2 px-2.5">Notes</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-200">
@@ -447,36 +442,36 @@
                             </template>
                             <tr x-show="currentSoFollowups.length === 0">
                                 <td colspan="8" class="py-8 text-center text-slate-400 font-semibold">
-                                    لا توجد سجلات متابعة خاصة بهذا الاستقطاع.
+                                    No specific follow-up records for this Standing Order.
                                 </td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
 
-                <!-- نموذج تسجيل متابعة جديدة للاستقطاع المحدد -->
+                <!-- New SO-Specific Follow-up Form -->
                 <div class="bg-sky-50/70 p-3.5 rounded-xl border border-sky-200" x-show="currentSo && currentSo.so_id">
                     <div class="flex items-center justify-between text-xs font-extrabold text-blue-900 mb-2.5 border-b border-sky-200 pb-1.5">
-                        <span>تسجيل متابعة للاستقطاع المحدد (<span class="font-mono text-rose-700" x-text="'SO #' + (currentSo ? currentSo.so_id : '')"></span>):</span>
-                        <span class="text-[11px] font-mono bg-white px-2 py-0.5 rounded border border-sky-200 text-slate-600" x-text="'بواسطة: ' + currentUser"></span>
+                        <span>Log Follow-up for Selected SO (<span class="font-mono text-rose-700" x-text="'SO #' + (currentSo ? currentSo.so_id : '')"></span>):</span>
+                        <span class="text-[11px] font-mono bg-white px-2 py-0.5 rounded border border-sky-200 text-slate-600" x-text="'By: ' + currentUser"></span>
                     </div>
 
                     <div class="grid grid-cols-2 sm:grid-cols-12 gap-2 items-end text-xs mb-2">
                         <div class="sm:col-span-4">
-                            <label class="block text-[11px] font-bold text-slate-700 mb-1">تاريخ الاتصال</label>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Call Date</label>
                             <input type="date" x-model="newItemFollow.call_date"
                                    class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2 font-mono font-semibold">
                         </div>
                         <div class="sm:col-span-3">
-                            <label class="block text-[11px] font-bold text-slate-700 mb-1">الوقت</label>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">Time</label>
                             <input type="text" x-model="newItemFollow.call_time" placeholder="11:00"
                                    class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2 font-mono font-semibold text-center">
                         </div>
                         <div class="sm:col-span-5">
-                            <label class="block text-[11px] font-bold text-emerald-800 mb-1">نتيجة المتابعة</label>
+                            <label class="block text-[11px] font-bold text-emerald-800 mb-1">Follow-up Result</label>
                             <select x-model.number="newItemFollow.call_result_cd"
                                     class="w-full h-9 bg-white border border-emerald-300 focus:border-emerald-600 rounded-lg px-2 font-bold text-emerald-900">
-                                <option value="">-- اختر النتيجة --</option>
+                                <option value="">-- Select Result --</option>
                                 <template x-for="res in followResults" :key="res.result_cd">
                                     <option :value="res.result_cd" x-text="res.result_nm"></option>
                                 </template>
@@ -486,24 +481,24 @@
 
                     <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end text-xs">
                         <div class="sm:col-span-5">
-                            <label class="block text-[11px] font-bold text-rose-800 mb-1">سبب التأخير</label>
+                            <label class="block text-[11px] font-bold text-rose-800 mb-1">Delay Reason</label>
                             <select x-model.number="newItemFollow.delay_reason_cd"
                                     class="w-full h-9 bg-white border border-rose-300 focus:border-rose-600 rounded-lg px-2 font-bold text-rose-900">
-                                <option value="">-- اختر السبب --</option>
+                                <option value="">-- Select Reason --</option>
                                 <template x-for="dr in delayReasons" :key="dr.reason_cd">
                                     <option :value="dr.reason_cd" x-text="dr.reason_nm"></option>
                                 </template>
                             </select>
                         </div>
                         <div class="sm:col-span-5">
-                            <label class="block text-[11px] font-bold text-slate-700 mb-1">ملاحظات الاستقطاع</label>
-                            <input type="text" x-model="newItemFollow.call_result_notes" placeholder="ملاحظات خاصة بهذا الاستقطاع..."
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1">SO Notes</label>
+                            <input type="text" x-model="newItemFollow.call_result_notes" placeholder="Notes specific to this SO..."
                                    class="w-full h-9 bg-white border border-slate-300 focus:border-blue-600 rounded-lg px-2.5">
                         </div>
                         <div class="sm:col-span-2">
                             <button @click="saveItemFollowup()"
-                                    class="w-full h-9 bg-blue-700 hover:bg-blue-800 text-white px-3 rounded-lg font-bold whitespace-nowrap shadow-sm transition flex items-center justify-center">
-                                حفظ
+                                    class="w-full h-9 bg-blue-700 hover:bg-blue-800 text-white px-3 rounded-lg font-bold whitespace-nowrap shadow-xs transition flex items-center justify-center">
+                                Save
                             </button>
                         </div>
                     </div>
@@ -516,7 +511,7 @@
     <script>
         function followupApp() {
             return {
-                currentUser: 'HASAN',
+                currentUser: (window.ERP_USER && window.ERP_USER.username) || 'HASAN',
                 filterMode: 'ALL',
                 searchQuery: '',
                 currentIndex: 0,
@@ -559,6 +554,9 @@
                     };
                 },
                 async init() {
+                    if (window.ERP_USER && window.ERP_USER.username) {
+                        this.currentUser = window.ERP_USER.username;
+                    }
                     await this.loadFollowupData();
                 },
                 async loadFollowupData(keepDonorNo = null) {
@@ -597,7 +595,7 @@
                 get currentDonor() {
                     return this.filteredDonors[this.currentIndex] || this.donors[0] || { items: [], followups: [] };
                 },
-                                get currentSoFollowups() {
+                get currentSoFollowups() {
                     const so = this.currentSo;
                     if (!so || !so.so_id) return [];
                     return (this.allItemFollowups || []).filter(f => Number(f.so_id) === Number(so.so_id));
@@ -612,14 +610,14 @@
                     this.selectedSoIndex = 0;
                     this.resetFollowForms();
                 },
-                                async saveItemFollowup() {
+                async saveItemFollowup() {
                     const so = this.currentSo;
                     if (!so || !so.so_id) {
-                        alert('يرجى تحديد استقطاع أولاً.');
+                        alert('Please select a Standing Order first.');
                         return;
                     }
                     if (!this.newItemFollow.call_date || !this.newItemFollow.call_result_cd || !this.newItemFollow.delay_reason_cd) {
-                        alert('يرجى إدخال تاريخ الاتصال واختيار نتيجة المتابعة وسبب التأخير أولاً.');
+                        alert('Please enter the Call Date, Follow-up Result, and Delay Reason first.');
                         return;
                     }
                     const currentSoIndex = this.selectedSoIndex;
@@ -644,13 +642,13 @@
                         this.resetFollowForms();
                         await this.loadFollowupData(this.currentDonor.donor_no);
                         this.selectedSoIndex = currentSoIndex;
-                        alert('تم حفظ متابعة الاستقطاع بنجاح!');
+                        alert('Standing Order follow-up saved successfully!');
                     } else {
                         const err = await res.text();
-                        alert('خطأ أثناء حفظ متابعة الاستقطاع: ' + err);
+                        alert('Error saving SO follow-up: ' + err);
                     }
                 },
-                                async saveDonorContact() {
+                async saveDonorContact() {
                     const d = this.currentDonor;
                     if (!d || !d.donor_no) return;
                     const res = await fetch('/api/followup/update-contact', {
@@ -671,16 +669,16 @@
                     });
                     if (res.ok) {
                         await this.loadFollowupData(d.donor_no);
-                        alert('تم حفظ تحديثات العنوان وأرقام التواصل بنجاح!');
+                        alert('Donor address and contact numbers updated successfully!');
                     } else {
                         const err = await res.text();
-                        alert('خطأ أثناء تحديث بيانات التواصل: ' + err);
+                        alert('Error updating contact details: ' + err);
                     }
                 },
                 async saveFollowup() {
                     if (!this.currentDonor.donor_no) return;
                     if (!this.newFollow.call_date || !this.newFollow.call_result_cd || !this.newFollow.delay_reason_cd) {
-                        alert('يرجى إدخال تاريخ التواصل واختيار نتيجة التواصل وسبب التأخير أولاً.');
+                        alert('Please enter Call Date, Call Result, and Delay Reason first.');
                         return;
                     }
                     const res = await fetch('/api/followup/add', {
@@ -699,16 +697,16 @@
                     if (res.ok) {
                         this.resetFollowForms();
                         await this.loadFollowupData(this.currentDonor.donor_no);
-                        alert('تم حفظ اتصال المتابعة بنجاح!');
+                        alert('Donor follow-up call saved successfully!');
                     } else {
                         const err = await res.text();
-                        alert('خطأ أثناء حفظ المتابعة: ' + err);
+                        alert('Error saving follow-up: ' + err);
                     }
                 },
                 openWhatsApp() {
                     const phone = (this.currentDonor.donor_tel2 || this.currentDonor.donor_mobile || '').replace(/\D/g, '');
                     if (!phone) {
-                        alert('لا يوجد رقم هاتف نقال مسجل لهذا المتبرع.');
+                        alert('No mobile phone number registered for this donor.');
                         return;
                     }
                     const fullPhone = phone.startsWith('973') ? phone : '973' + phone;

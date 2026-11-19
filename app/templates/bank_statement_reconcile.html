@@ -1,176 +1,167 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تحميل قوائم البنوك وتحديث حالة دفع استقطاع - DIC</title>
+    <title>Bank Statement Load & Reconciliation - Discover Islam Society</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Cairo', sans-serif; }
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #f1f5f9; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col" x-data="reconcileApp()">
+    {% include 'sidebar.html' %}
 
-    <!-- 1. الشريط العلوي الموحد -->
+    <!-- 1. Top Module Header -->
     <header class="bg-slate-900 text-white shadow-md border-b border-slate-700 sticky top-0 z-30">
-        <div class="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
-            <div class="flex items-center gap-4">
-                <div class="bg-emerald-600 text-white font-bold px-3 py-1 rounded-md text-sm tracking-wide">
-                    DIC BAHRAIN
+        <div class="max-w-[1600px] mx-auto px-4 h-13 py-2.5 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="bg-teal-600 text-white font-bold px-2.5 py-1 rounded text-xs tracking-wider">
+                    CSV RECONCILE
                 </div>
-                <h1 class="font-bold text-base md:text-lg text-slate-100">
-                    نظام الاستقطاعات الشهرية <span class="text-slate-400 text-sm font-normal">| تحميل قوائم البنوك وتحديث حالة دفع استقطاع</span>
-                </h1>
-                <span class="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs px-2.5 py-0.5 rounded-full">
-                    بيئة الاختبار (Testing Env)
-                </span>
+                <div>
+                    <h1 class="font-bold text-sm text-slate-100">
+                        Bank Statement Load & Payment Status Reconciliation (CSV)
+                    </h1>
+                    <p class="text-[11px] text-slate-400">Upload monthly bank CSV statements, match standing orders, and update MONEY_TRANS payment status</p>
+                </div>
             </div>
 
-            <nav class="hidden lg:flex items-center gap-1 text-sm">
-                <a href="/" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">بيانات المستقطعين</a>
-                <a href="/bank-codes-audit" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تدقيق أكواد البنوك</a>
-                <a href="/bank-reconcile" class="bg-slate-800 text-emerald-400 font-semibold px-3 py-1.5 rounded-md border border-slate-700">تحميل ومطابقة الكشوف (CSV)</a>
-                <a href="/followup" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">متابعة المتأخرين</a>
-                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">التقارير والإحصائيات</a>
-            </nav>
-
-            <div class="flex items-center gap-4 text-xs md:text-sm">
+            <div class="flex items-center gap-3 text-xs">
                 <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 flex items-center gap-2">
                     <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span class="text-slate-400">USER:</span> <span class="font-bold text-emerald-400">TAREK</span>
+                    <span class="text-slate-400">USER:</span>
+                    <span class="font-bold text-emerald-400 font-mono" x-text="(window.ERP_USER && window.ERP_USER.username) || 'TAREK'"></span>
                 </div>
             </div>
         </div>
     </header>
 
-    <!-- 2. شريط التحكم العلوي: اختيار البنك، الشهر، حالة الشهر، رفع CSV، والأزرار الإجرائية -->
-    <div class="bg-white border-b border-slate-200 shadow-sm">
-        <div class="max-w-[1600px] mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-4">
-            
-            <!-- اختيار البنك والشهر وحالة التحميل -->
+    <!-- 2. Control Bar: Bank, Month, Month Status, CSV Upload & Actions -->
+    <div class="bg-white border-b border-slate-200 shadow-xs">
+        <div class="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+
             <div class="flex flex-wrap items-center gap-4">
                 <div>
-                    <label class="block text-xs font-bold text-slate-600 mb-1">اختر البنك:</label>
+                    <label class="block text-[11px] font-bold text-slate-600 mb-1">Select Bank:</label>
                     <select x-model.number="selectedBank" @change="loadStatementData()"
-                            class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-2 text-sm font-bold text-blue-900 min-w-[250px]">
+                            class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-1.5 text-xs font-bold text-blue-900 min-w-[240px]">
                         <template x-for="b in banks" :key="b.bank_cd">
-                            <option :value="b.bank_cd" x-text="b.bank_desc + ' (' + b.bank_e_desc + ')'"></option>
+                            <option :value="b.bank_cd" x-text="b.bank_e_desc + ' (' + b.bank_desc + ')'"></option>
                         </template>
                     </select>
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-600 mb-1">حدد الشهر:</label>
+                    <label class="block text-[11px] font-bold text-slate-600 mb-1">Statement Month:</label>
                     <input type="month" x-model="selectedMonth" @change="loadStatementData()"
-                           class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-2 text-sm font-mono font-bold text-slate-800">
+                           class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-1.5 text-xs font-mono font-bold text-slate-800">
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-600 mb-1">حالة التحميل والتحديث:</label>
+                    <label class="block text-[11px] font-bold text-slate-600 mb-1">Month Status:</label>
                     <div :class="isMonthClosed ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-emerald-50 text-emerald-800 border-emerald-300'"
-                         class="border rounded-lg px-4 py-2 text-sm font-extrabold flex items-center gap-2">
-                        <span class="w-2.5 h-2.5 rounded-full" :class="isMonthClosed ? 'bg-rose-600' : 'bg-emerald-600'"></span>
-                        <span x-text="isMonthClosed ? 'الشهر مغلق (Closed)' : 'قابل للتحميل والتحديث'"></span>
+                         class="border rounded-lg px-3.5 py-1.5 text-xs font-extrabold flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full" :class="isMonthClosed ? 'bg-rose-600' : 'bg-emerald-600'"></span>
+                        <span x-text="isMonthClosed ? 'Closed' : 'Open for Load & Update'"></span>
                     </div>
                 </div>
 
-                <div class="pt-5">
-                    <button @click="loadStatementData()" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-bold shadow-sm transition">
-                        عرض
+                <div class="pt-4">
+                    <button @click="loadStatementData()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
+                        Show
                     </button>
                 </div>
             </div>
 
-            <!-- رفع ملف CSV والأزرار الرئيسية (تحديث الحركات، حذف القائمة، إغلاق/فتح الشهر) -->
-            <div class="flex flex-wrap items-center gap-2.5 pt-2 sm:pt-4">
+            <!-- CSV Upload & Primary Actions -->
+            <div class="flex flex-wrap items-center gap-2 pt-2 sm:pt-4">
                 <input type="file" x-ref="csvFileInput" accept=".csv" @change="uploadCsvFile($event)" class="hidden">
-                
+
                 <button @click="$refs.csvFileInput.click()" :disabled="isMonthClosed"
                         :class="isMonthClosed ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-indigo-600 hover:bg-indigo-700'"
-                        class="text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition flex items-center gap-1.5">
-                    <span>📂 تحميل من CSV</span>
+                        class="text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5">
+                    <span>📂 Load CSV</span>
                 </button>
 
                 <button @click="loadSampleCsvForTesting()" :disabled="isMonthClosed"
                         :class="isMonthClosed ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-100'"
-                        class="bg-amber-50 text-amber-900 border border-amber-300 px-3 py-2 rounded-lg text-xs font-bold transition"
-                        title="يولد بيانات كشف بنك تجريبية مطابقة للاستقطاعات الحالية لاختبار الدورة فوراً">
-                    ⚡ تجربة كشف تجريبي
+                        class="bg-amber-50 text-amber-900 border border-amber-300 px-3 py-1.5 rounded-lg text-xs font-bold transition"
+                        title="Generate a sample bank statement matching active SOs for testing">
+                    ⚡ Load Sample CSV
                 </button>
 
-                <div class="h-6 w-px bg-slate-300 mx-1"></div>
+                <div class="h-5 w-px bg-slate-300 mx-0.5"></div>
 
                 <button @click="confirmUpdateTransactions()" :disabled="isMonthClosed || rows.length === 0"
                         :class="(isMonthClosed || rows.length === 0) ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-emerald-600 hover:bg-emerald-700'"
-                        class="text-white px-5 py-2 rounded-lg text-sm font-bold shadow-sm transition">
-                    ✔ تحديث الحركات
+                        class="text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
+                    ✔ Update Payments
                 </button>
 
                 <button @click="deleteBankStatement()" :disabled="isMonthClosed || rows.length === 0"
                         :class="(isMonthClosed || rows.length === 0) ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-rose-600 hover:bg-rose-700'"
-                        class="text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition">
-                    🗑 حذف قائمة البنك
+                        class="text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
+                    🗑 Delete Statement
                 </button>
 
                 <button x-show="!isMonthClosed" @click="toggleMonthLock(true)" :disabled="rows.length === 0"
-                        class="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition">
-                    🔒 إغلاق الشهر
+                        class="bg-slate-800 hover:bg-slate-900 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
+                    🔒 Close Month
                 </button>
 
                 <button x-show="isMonthClosed" @click="toggleMonthLock(false)"
-                        class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition">
-                    🔓 إعادة فتح الشهر
+                        class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
+                    🔓 Reopen Month
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- 3. المحتوى الرئيسي: جدول البيانات المحملة + المؤشرات السفلية -->
+    <!-- 3. Main Content: Loaded Bank Statement Table + Bottom Reconciliation Panels -->
     <main class="max-w-[1600px] w-full mx-auto px-4 py-3 flex-1 flex flex-col gap-4">
 
-        <!-- شريط عنوان الجدول وفلتر (الكل / بدون حركات) -->
-        <section class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex-1 flex flex-col">
+        <!-- Table Header & Filter (All / Without Txns) -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-xs p-4 flex-1 flex flex-col">
             <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-3 mb-3">
                 <div class="flex items-center gap-3">
-                    <span class="bg-cyan-600 text-white font-bold px-4 py-1 rounded-lg text-sm" x-text="currentBankName"></span>
-                    <span class="bg-slate-100 border border-slate-300 text-slate-800 font-mono font-extrabold px-3 py-1 rounded-lg text-base" x-text="filteredRows.length"></span>
-                    <span class="text-xs font-semibold text-slate-500">عدد السجلات المعروضة</span>
+                    <span class="bg-cyan-600 text-white font-bold px-3.5 py-1 rounded-lg text-xs" x-text="currentBankName"></span>
+                    <span class="bg-slate-100 border border-slate-300 text-slate-800 font-mono font-extrabold px-3 py-1 rounded-lg text-sm" x-text="filteredRows.length"></span>
+                    <span class="text-xs font-semibold text-slate-500">Displayed Rows</span>
                 </div>
 
-                <!-- راديو فلتر: الكل / بدون حركات -->
-                <div class="flex items-center gap-4 bg-slate-100 px-4 py-1.5 rounded-lg border border-slate-200 text-sm font-bold">
+                <div class="flex items-center gap-4 bg-slate-100 px-3.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold">
                     <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="rowFilter" value="ALL" x-model="viewFilter" class="w-4 h-4 accent-blue-600">
-                        <span>الكل (<span x-text="rows.length"></span>)</span>
+                        <input type="radio" name="rowFilter" value="ALL" x-model="viewFilter" class="w-3.5 h-3.5 accent-blue-600">
+                        <span>All (<span x-text="rows.length"></span>)</span>
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer text-amber-800">
-                        <input type="radio" name="rowFilter" value="NO_TRANS" x-model="viewFilter" class="w-4 h-4 accent-amber-600">
-                        <span>بدون حركات (<span x-text="rows.filter(r => r.cash_deposit === 2 && r.money_trans_found === 0).length"></span>)</span>
+                        <input type="radio" name="rowFilter" value="NO_TRANS" x-model="viewFilter" class="w-3.5 h-3.5 accent-amber-600">
+                        <span>Without Txns (<span x-text="rows.filter(r => r.cash_deposit === 2 && r.money_trans_found === 0).length"></span>)</span>
                     </label>
                 </div>
             </div>
 
-            <!-- جدول البيانات المحملة من كشف البنك -->
             <div class="overflow-auto max-h-[380px] border border-slate-200 rounded-lg">
-                <table class="w-full text-xs text-right border-collapse">
+                <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
                     <thead class="sticky top-0 bg-slate-800 text-white">
                         <tr>
-                            <th class="py-2.5 px-3 text-center">تاريخ الإيداع</th>
-                            <th class="py-2.5 px-3">وصف الإيداع (Pay Description)</th>
-                            <th class="py-2.5 px-3 text-center">المبلغ بالبنك</th>
-                            <th class="py-2.5 px-3 text-center">المبلغ بالنظام</th>
-                            <th class="py-2.5 px-3 text-center">نوع البيان</th>
-                            <th class="py-2.5 px-3 text-center">بالنظام</th>
-                            <th class="py-2.5 px-3 text-center bg-slate-700">رقم الاستقطاع</th>
-                            <th class="py-2.5 px-3 text-center">له حركة</th>
-                            <th class="py-2.5 px-3 text-center">تم تحديثها</th>
-                            <th class="py-2.5 px-3 text-center">شهر الحركة</th>
-                            <th class="py-2.5 px-3 text-center">تاريخ التحميل</th>
+                            <th class="py-2.5 px-3 text-center">Deposit Date</th>
+                            <th class="py-2.5 px-3">Pay Description</th>
+                            <th class="py-2.5 px-3 text-center">Bank Amt</th>
+                            <th class="py-2.5 px-3 text-center">System Amt</th>
+                            <th class="py-2.5 px-3 text-center">Entry Type</th>
+                            <th class="py-2.5 px-3 text-center">In Sys</th>
+                            <th class="py-2.5 px-3 text-center bg-slate-700">SO Code</th>
+                            <th class="py-2.5 px-3 text-center">Has Txn</th>
+                            <th class="py-2.5 px-3 text-center">Updated</th>
+                            <th class="py-2.5 px-3 text-center">Txn Month</th>
+                            <th class="py-2.5 px-3 text-center">Loaded At</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-200">
@@ -185,7 +176,7 @@
                                 <td class="py-2 px-3 text-center">
                                     <span :class="r.cash_deposit === 2 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-amber-100 text-amber-800 border-amber-300'"
                                           class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border"
-                                          x-text="r.cash_deposit === 2 ? 'استقطاع' : 'إيداع نقدي / فوري'"></span>
+                                          x-text="r.cash_deposit === 2 ? 'Standing Order' : 'Cash / Fawri'"></span>
                                 </td>
                                 <td class="py-2 px-3 text-center font-mono font-bold"
                                     :class="r.sys_found === 1 ? 'text-emerald-700' : 'text-rose-600'"
@@ -203,7 +194,7 @@
                         </template>
                         <tr x-show="filteredRows.length === 0">
                             <td colspan="11" class="py-10 text-center text-slate-400 font-bold text-sm">
-                                لا توجد بيانات محملة لهذا البنك في هذا الشهر. اضغط على "تحميل من CSV" أو "تجربة كشف تجريبي" للبدء.
+                                No statement rows loaded for this bank and month. Click "Load CSV" or "Load Sample CSV" to begin.
                             </td>
                         </tr>
                     </tbody>
@@ -211,115 +202,115 @@
             </div>
         </section>
 
-        <!-- 4. القسم السفلي: (1) معلومات أخرى عن الاستقطاع + (2) استقطاعات + (3) مؤشرات ونتائج -->
+        <!-- 4. Bottom Panels: (1) Selected SO Details + (2) Count Stats + (3) Financial Summary -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            
-            <!-- (1) معلومات أخرى عن الاستقطاع المحدد (3 أعمدة) -->
-            <section class="lg:col-span-3 bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-                <h3 class="text-sm font-extrabold text-rose-800 border-b border-slate-200 pb-2 mb-3">
-                    معلومات أخرى عن الاستقطاع المحدد
+
+            <!-- (1) Selected Row Details (3 Cols) -->
+            <section class="lg:col-span-3 bg-white rounded-xl border border-slate-200 shadow-xs p-4">
+                <h3 class="text-xs font-extrabold text-rose-800 border-b border-slate-200 pb-2 mb-3">
+                    Selected Standing Order Details
                 </h3>
-                <div class="space-y-2.5 text-sm">
+                <div class="space-y-2.5 text-xs">
                     <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                        <span class="font-bold text-slate-600">كود المستقطع:</span>
-                        <span class="font-mono font-extrabold text-lg text-cyan-700 bg-cyan-50 px-3 py-0.5 rounded border border-cyan-200"
+                        <span class="font-bold text-slate-600">Donor No:</span>
+                        <span class="font-mono font-extrabold text-base text-cyan-700 bg-cyan-50 px-3 py-0.5 rounded border border-cyan-200"
                               x-text="selectedRow && selectedRow.donor_no ? selectedRow.donor_no : '-'"></span>
                     </div>
                     <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                        <span class="font-bold text-slate-600">اسم المستقطع:</span>
-                        <span class="font-bold text-xs text-slate-800 truncate max-w-[150px]"
+                        <span class="font-bold text-slate-600">Donor Name:</span>
+                        <span class="font-bold text-xs text-slate-800 truncate max-w-[155px]"
                               x-text="selectedRow && selectedRow.donor_name ? selectedRow.donor_name : '-'"></span>
                     </div>
                     <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                        <span class="font-bold text-slate-600">بند التبرع:</span>
-                        <span class="font-mono font-bold text-base text-blue-800"
+                        <span class="font-bold text-slate-600">Item Code:</span>
+                        <span class="font-mono font-bold text-sm text-blue-800"
                               x-text="selectedRow && selectedRow.item_no ? selectedRow.item_no : '-'"></span>
                     </div>
                     <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                        <span class="font-bold text-slate-600">تاريخ الاستقطاع:</span>
-                        <span class="font-mono font-bold text-sm text-slate-800"
+                        <span class="font-bold text-slate-600">SO Start Date:</span>
+                        <span class="font-mono font-bold text-xs text-slate-800"
                               x-text="selectedRow && selectedRow.donation_start_date ? selectedRow.donation_start_date : '-'"></span>
                     </div>
                 </div>
             </section>
 
-            <!-- (2) إحصائيات عددية للاستقطاعات (4 أعمدة) -->
-            <section class="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-                <h3 class="text-sm font-extrabold text-rose-800 border-b border-slate-200 pb-2 mb-3">
-                    إحصائيات مطابقة الاستقطاعات (بالعدد)
+            <!-- (2) Count Reconciliation Indicators (4 Cols) -->
+            <section class="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-xs p-4">
+                <h3 class="text-xs font-extrabold text-rose-800 border-b border-slate-200 pb-2 mb-3">
+                    Reconciliation Count Indicators
                 </h3>
-                <div class="grid grid-cols-2 gap-2.5 text-center">
+                <div class="grid grid-cols-2 gap-2 text-center">
                     <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center px-3">
-                        <span class="text-xs font-bold text-slate-600">حسب البنك:</span>
-                        <span class="text-xl font-extrabold font-mono text-slate-900" x-text="indicators.so_in_bank"></span>
+                        <span class="text-[11px] font-bold text-slate-600">In Bank:</span>
+                        <span class="text-lg font-extrabold font-mono text-slate-900" x-text="indicators.so_in_bank"></span>
                     </div>
                     <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center px-3">
-                        <span class="text-xs font-bold text-slate-600">غير معرفة:</span>
-                        <span class="text-xl font-extrabold font-mono text-slate-900" x-text="indicators.unknown_count"></span>
+                        <span class="text-[11px] font-bold text-slate-600">Unknown:</span>
+                        <span class="text-lg font-extrabold font-mono text-slate-900" x-text="indicators.unknown_count"></span>
                     </div>
                     <div class="bg-emerald-50 p-2.5 rounded-lg border border-emerald-200 flex justify-between items-center px-3">
-                        <span class="text-xs font-bold text-emerald-800">حسب النظام:</span>
-                        <span class="text-xl font-extrabold font-mono text-emerald-700" x-text="indicators.so_in_sys"></span>
+                        <span class="text-[11px] font-bold text-emerald-800">In System:</span>
+                        <span class="text-lg font-extrabold font-mono text-emerald-700" x-text="indicators.so_in_sys"></span>
                     </div>
                     <div class="bg-emerald-50 p-2.5 rounded-lg border border-emerald-200 flex justify-between items-center px-3">
-                        <span class="text-xs font-bold text-emerald-800">بالحركات:</span>
-                        <span class="text-xl font-extrabold font-mono text-emerald-700" x-text="indicators.in_money_trans"></span>
+                        <span class="text-[11px] font-bold text-emerald-800">In Txns:</span>
+                        <span class="text-lg font-extrabold font-mono text-emerald-700" x-text="indicators.in_money_trans"></span>
                     </div>
                     <div :class="indicators.not_in_sys > 0 ? 'bg-amber-100 border-amber-400' : 'bg-slate-50 border-slate-200'"
                          class="p-2.5 rounded-lg border flex justify-between items-center px-3">
-                        <span class="text-xs font-bold text-slate-700">ليست بالنظام:</span>
-                        <span class="text-xl font-extrabold font-mono text-amber-800" x-text="indicators.not_in_sys"></span>
+                        <span class="text-[11px] font-bold text-slate-700">Not in Sys:</span>
+                        <span class="text-lg font-extrabold font-mono text-amber-800" x-text="indicators.not_in_sys"></span>
                     </div>
                     <div :class="indicators.matched_no_trans > 0 ? 'bg-amber-100 border-amber-400' : 'bg-slate-50 border-slate-200'"
                          class="p-2.5 rounded-lg border flex justify-between items-center px-3">
-                        <span class="text-xs font-bold text-slate-700">مطابق بدون حركة:</span>
-                        <span class="text-xl font-extrabold font-mono text-amber-800" x-text="indicators.matched_no_trans"></span>
+                        <span class="text-[11px] font-bold text-slate-700">No Txn:</span>
+                        <span class="text-lg font-extrabold font-mono text-amber-800" x-text="indicators.matched_no_trans"></span>
                     </div>
                     <div :class="indicators.duplicated_in_bank > 0 ? 'bg-rose-100 border-rose-400' : 'bg-slate-50 border-slate-200'"
                          class="p-2.5 rounded-lg border flex justify-between items-center px-3">
-                        <span class="text-xs font-bold text-rose-700">مكرر في البنك:</span>
-                        <span class="text-xl font-extrabold font-mono text-rose-700" x-text="indicators.duplicated_in_bank"></span>
+                        <span class="text-[11px] font-bold text-rose-700">Duplicate:</span>
+                        <span class="text-lg font-extrabold font-mono text-rose-700" x-text="indicators.duplicated_in_bank"></span>
                     </div>
                     <div :class="indicators.cannot_update > 0 ? 'bg-rose-100 border-rose-400' : 'bg-slate-50 border-slate-200'"
                          class="p-2.5 rounded-lg border flex justify-between items-center px-3">
-                        <span class="text-xs font-bold text-rose-800">لا يمكن تحديثها:</span>
-                        <span class="text-xl font-extrabold font-mono text-rose-800" x-text="indicators.cannot_update"></span>
+                        <span class="text-[11px] font-bold text-rose-800">Blocked:</span>
+                        <span class="text-lg font-extrabold font-mono text-rose-800" x-text="indicators.cannot_update"></span>
                     </div>
                 </div>
             </section>
 
-            <!-- (3) مؤشرات ونتائج مالية ونسب مئوية (5 أعمدة) -->
-            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+            <!-- (3) Financial Totals & Percentages (5 Cols) -->
+            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-xs p-4">
                 <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
-                    <h3 class="text-sm font-extrabold text-rose-800">مؤشرات ونتائج مالية (بالدينار البحريني)</h3>
-                    <span class="text-xs font-bold bg-blue-50 text-blue-800 px-2.5 py-0.5 rounded border border-blue-200"
-                          x-text="'إجمالي القائمة المحملة: ' + indicators.total_loaded_amt + ' د.ب'"></span>
+                    <h3 class="text-xs font-extrabold text-rose-800">Financial Totals & Ratios (BHD)</h3>
+                    <span class="text-[11px] font-bold bg-blue-50 text-blue-800 px-2.5 py-0.5 rounded border border-blue-200"
+                          x-text="'Loaded Total: ' + indicators.total_loaded_amt + ' BHD'"></span>
                 </div>
 
-                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-center">
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">
                     <div class="bg-blue-50/70 p-2.5 rounded-lg border border-blue-200">
-                        <span class="block text-xs font-bold text-blue-900 mb-0.5">مج الاستقطاعات</span>
-                        <span class="text-xl font-extrabold font-mono text-blue-800" x-text="indicators.sum_so_amt"></span>
+                        <span class="block text-[11px] font-bold text-blue-900 mb-0.5">SO Total</span>
+                        <span class="text-lg font-extrabold font-mono text-blue-800" x-text="indicators.sum_so_amt"></span>
                     </div>
                     <div class="bg-amber-50/70 p-2.5 rounded-lg border border-amber-200">
-                        <span class="block text-xs font-bold text-amber-900 mb-0.5">إيداعات نقدية / فوري</span>
-                        <span class="text-xl font-extrabold font-mono text-amber-800" x-text="indicators.sum_cash_amt"></span>
+                        <span class="block text-[11px] font-bold text-amber-900 mb-0.5">Cash / Fawri</span>
+                        <span class="text-lg font-extrabold font-mono text-amber-800" x-text="indicators.sum_cash_amt"></span>
                     </div>
                     <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                        <span class="block text-xs font-bold text-slate-600 mb-0.5">قيمة المكرر</span>
-                        <span class="text-xl font-extrabold font-mono text-rose-700" x-text="indicators.sum_dup_amt"></span>
+                        <span class="block text-[11px] font-bold text-slate-600 mb-0.5">Duplicate Amt</span>
+                        <span class="text-lg font-extrabold font-mono text-rose-700" x-text="indicators.sum_dup_amt"></span>
                     </div>
                     <div class="bg-emerald-50 p-2.5 rounded-lg border border-emerald-300">
-                        <span class="block text-xs font-bold text-emerald-900 mb-0.5">نسبة تحديث محتملة</span>
-                        <span class="text-xl font-extrabold font-mono text-emerald-700" x-text="indicators.potential_update_pct + '%'"></span>
+                        <span class="block text-[11px] font-bold text-emerald-900 mb-0.5">Update Ratio</span>
+                        <span class="text-lg font-extrabold font-mono text-emerald-700" x-text="indicators.potential_update_pct + '%'"></span>
                     </div>
                     <div class="bg-emerald-100/80 p-2.5 rounded-lg border border-emerald-400">
-                        <span class="block text-xs font-bold text-emerald-950 mb-0.5">تم تحديثها فعلياً</span>
-                        <span class="text-xl font-extrabold font-mono text-emerald-800" x-text="indicators.updated_count"></span>
+                        <span class="block text-[11px] font-bold text-emerald-950 mb-0.5">Updated Txns</span>
+                        <span class="text-lg font-extrabold font-mono text-emerald-800" x-text="indicators.updated_count"></span>
                     </div>
                     <div class="bg-slate-800 text-white p-2.5 rounded-lg border border-slate-700">
-                        <span class="block text-xs font-semibold text-slate-300 mb-0.5">صافي الاستقطاعات + النقدي</span>
-                        <span class="text-xl font-extrabold font-mono text-emerald-400" x-text="indicators.total_loaded_amt"></span>
+                        <span class="block text-[11px] font-semibold text-slate-300 mb-0.5">Net Statement</span>
+                        <span class="text-lg font-extrabold font-mono text-emerald-400" x-text="indicators.total_loaded_amt"></span>
                     </div>
                 </div>
             </section>
@@ -348,7 +339,7 @@
                 },
                 get currentBankName() {
                     const b = this.banks.find(x => Number(x.bank_cd) === Number(this.selectedBank));
-                    return b ? b.bank_desc : 'البنك المحدد';
+                    return b ? (b.bank_e_desc || b.bank_desc) : 'Selected Bank';
                 },
                 get filteredRows() {
                     if (this.viewFilter === 'NO_TRANS') {
@@ -382,10 +373,10 @@
                     event.target.value = '';
                     if (res.ok) {
                         await this.loadStatementData();
-                        alert('تم تحميل ملف البنك ومطابقته المبدئية بنجاح!');
+                        alert('Bank CSV file uploaded and reconciled successfully!');
                     } else {
                         const err = await res.text();
-                        alert('خطأ في رفع الملف: ' + err);
+                        alert('Error uploading CSV file: ' + err);
                     }
                 },
                 async loadSampleCsvForTesting() {
@@ -396,14 +387,14 @@
                     });
                     if (res.ok) {
                         await this.loadStatementData();
-                        alert('تم توليد وتحميل كشف حساب تجريبي مطابق لاستقطاعات هذا البنك والشهر!');
+                        alert('Sample bank statement generated and loaded for testing!');
                     } else {
                         const err = await res.text();
-                        alert('تنبيه: ' + err);
+                        alert('Notice: ' + err);
                     }
                 },
                 async confirmUpdateTransactions() {
-                    if (!confirm('هل أنت متأكد من تحديث حالة الحركات المطابقة إلى "مسدد" في جدول الحركات؟')) return;
+                    if (!confirm('Are you sure you want to mark matched transactions as Paid in MONEY_TRANS?')) return;
                     const res = await fetch('/api/bank-reconcile/confirm-update', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -412,11 +403,11 @@
                     if (res.ok) {
                         const result = await res.json();
                         await this.loadStatementData();
-                        alert(`تم تحديث ${result.updated_count} حركة في جدول MONEY_TRANS وتحويلها إلى مسدد بنجاح!`);
+                        alert(`Updated ${result.updated_count} transaction(s) to Paid in MONEY_TRANS successfully!`);
                     }
                 },
                 async deleteBankStatement() {
-                    if (!confirm('تحذير: سيتم حذف قائمة البنك المحملة لهذا الشهر وإرجاع حالة الحركات التي تم تحديثها إلى "غير مسدد" (Rollback). هل تريد الاستمرار؟')) return;
+                    if (!confirm('Warning: This will delete the loaded bank statement for this month and roll back updated transactions to Unpaid. Continue?')) return;
                     const res = await fetch('/api/bank-reconcile/delete-statement', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -424,13 +415,13 @@
                     });
                     if (res.ok) {
                         await this.loadStatementData();
-                        alert('تم حذف قائمة البنك وإلغاء تحديث الحركات (Rollback) بنجاح!');
+                        alert('Bank statement deleted and transactions rolled back successfully!');
                     }
                 },
                 async toggleMonthLock(closeMonth) {
                     const msg = closeMonth
-                        ? 'هل تريد إغلاق هذا الشهر للبنك المحدد؟ لن يمكن التحميل أو التحديث مرة أخرى إلا بعد إعادة فتحه.'
-                        : 'هل تريد إعادة فتح هذا الشهر للبنك المحدد للسماح بالتعديل؟';
+                        ? 'Close this month for the selected bank? Further loads or updates will be locked until reopened.'
+                        : 'Reopen this month for the selected bank to allow edits?';
                     if (!confirm(msg)) return;
                     const res = await fetch('/api/bank-reconcile/toggle-lock', {
                         method: 'POST',

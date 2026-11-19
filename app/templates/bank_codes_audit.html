@@ -1,162 +1,156 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تدقيق ومطابقة أكواد البنوك بالحركات - DIC</title>
+    <title>Bank Codes Audit & Reconciliation - Discover Islam Society</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Cairo', sans-serif; }
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #f1f5f9; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .ar-text { direction: rtl; text-align: right; font-family: 'Cairo', sans-serif; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col" x-data="bankCodesAuditApp()">
+    {% include 'sidebar.html' %}
 
-    <!-- 1. الشريط العلوي الموحد -->
+    <!-- 1. Top Module Header -->
     <header class="bg-slate-900 text-white shadow-md border-b border-slate-700 sticky top-0 z-30">
-        <div class="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
-            <div class="flex items-center gap-4">
-                <div class="bg-emerald-600 text-white font-bold px-3 py-1 rounded-md text-sm tracking-wide">
-                    DIC BAHRAIN
+        <div class="max-w-[1600px] mx-auto px-4 h-13 py-2.5 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="bg-purple-600 text-white font-bold px-2.5 py-1 rounded text-xs tracking-wider">
+                    CODES AUDIT
                 </div>
-                <h1 class="font-bold text-base md:text-lg text-slate-100">
-                    نظام الاستقطاعات الشهرية <span class="text-slate-400 text-sm font-normal">| شاشة التأكد من مطابقة بيانات الاستقطاعات بجدول الحركات</span>
-                </h1>
-                <span class="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs px-2.5 py-0.5 rounded-full">
-                    بيئة الاختبار (Testing Env)
-                </span>
+                <div>
+                    <h1 class="font-bold text-sm text-slate-100">
+                        Bank Standing Order Codes & Monthly Transactions Audit
+                    </h1>
+                    <p class="text-[11px] text-slate-400">Verify SO sort codes against MONEY_TRANS and generate missing monthly entries</p>
+                </div>
             </div>
 
-            <nav class="hidden lg:flex items-center gap-1 text-sm">
-                <a href="/" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">بيانات المستقطعين</a>
-                <a href="/bank-codes-audit" class="bg-slate-800 text-emerald-400 font-semibold px-3 py-1.5 rounded-md border border-slate-700">تدقيق أكواد البنوك</a>
-                <a href="/bank-reconcile" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">تحميل ومطابقة الكشوف (CSV)</a>
-                <a href="/followup" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">متابعة المتأخرين</a>
-                <a href="#" class="text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-md transition">التقارير والإحصائيات</a>
-            </nav>
-
-            <div class="flex items-center gap-4 text-xs md:text-sm">
+            <div class="flex items-center gap-3 text-xs">
                 <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 flex items-center gap-2">
                     <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span class="text-slate-400">USER:</span> <span class="font-bold text-emerald-400">TAREK</span>
+                    <span class="text-slate-400">USER:</span>
+                    <span class="font-bold text-emerald-400 font-mono" x-text="(window.ERP_USER && window.ERP_USER.username) || 'TAREK'"></span>
                 </div>
             </div>
         </div>
     </header>
 
-    <!-- 2. شريط اختيار البنك والشهر -->
-    <div class="bg-white border-b border-slate-200 shadow-sm">
-        <div class="max-w-[1600px] mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-4">
-            <div class="flex flex-wrap items-center gap-5">
-                <div class="flex items-center gap-2.5">
-                    <label class="text-sm font-bold text-slate-700">اختر البنك (Select Bank):</label>
+    <!-- 2. Bank & Month Selection Bar -->
+    <div class="bg-white border-b border-slate-200 shadow-xs">
+        <div class="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex flex-wrap items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <label class="text-xs font-bold text-slate-700">Select Bank:</label>
                     <select x-model.number="selectedBank" @change="loadAuditData()"
-                            class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-4 py-2 text-sm font-bold text-blue-900 min-w-[280px] shadow-xs">
+                            class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-1.5 text-xs font-bold text-blue-900 min-w-[260px] shadow-2xs">
                         <template x-for="b in banks" :key="b.bank_cd">
-                            <option :value="b.bank_cd" x-text="b.bank_desc + ' (' + b.bank_e_desc + ')'"></option>
+                            <option :value="b.bank_cd" x-text="b.bank_e_desc + ' (' + b.bank_desc + ')'"></option>
                         </template>
                     </select>
                 </div>
 
-                <div class="flex items-center gap-2.5">
-                    <label class="text-sm font-bold text-slate-700">حدد شهر المطابقة (Select Month):</label>
+                <div class="flex items-center gap-2">
+                    <label class="text-xs font-bold text-slate-700">Audit Month:</label>
                     <input type="month" x-model="selectedMonth" @change="loadAuditData()"
-                           class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-4 py-2 text-sm font-mono font-bold text-slate-800 shadow-xs">
+                           class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-1.5 text-xs font-mono font-bold text-slate-800 shadow-2xs">
                 </div>
 
-                <button @click="loadAuditData()" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-bold shadow-sm transition">
-                    عرض البيانات (Show)
+                <button @click="loadAuditData()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
+                    Show Data
                 </button>
             </div>
 
-            <!-- زر تحديث الأكواد وإدراج الحركات المفقودة للبنك والشهر المحددين -->
             <div>
                 <button @click="updateCodesAndMissingTrans()"
-                        class="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-lg text-sm font-bold shadow-md transition flex items-center gap-2">
-                    <span>تحديث الحركات والأكواد (Update Codes)</span>
+                        class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-2">
+                    <span>Update Codes & Missing Transactions</span>
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- 3. المحتوى الرئيسي -->
+    <!-- 3. Main Content -->
     <main class="max-w-[1600px] w-full mx-auto px-4 py-4 flex-1 flex flex-col gap-4">
 
-        <!-- قسم مؤشرات المطابقة والإحصائيات بخط كبير وواضح -->
-        <section class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-            <div class="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
-                <h2 class="text-base font-extrabold text-slate-800 flex items-center gap-2">
-                    <span class="w-3 h-3 rounded-full bg-emerald-600"></span>
-                    مؤشرات المطابقة وإحصائيات البنك للشهر المحدد
+        <!-- Audit KPIs & Indicators -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-xs p-4">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-2.5 mb-3.5">
+                <h2 class="text-sm font-extrabold text-slate-800 flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                    Reconciliation & Code Match Indicators for Selected Month
                 </h2>
-                <span class="text-xs font-semibold text-slate-500">
-                    يجب أن يكون عدد السجلات غير المطابقة (UN-Match) وبدون حركة (Without Trans) مساوياً للصفر قبل تحميل كشف البنك
+                <span class="text-[11px] font-semibold text-slate-500">
+                    Unmatched codes and missing transactions should be zero before loading a bank CSV statement
                 </span>
             </div>
 
             <div class="grid grid-cols-1 xl:grid-cols-12 gap-4">
-                
-                <!-- إحصائيات الاستقطاعات بالبنك (4 أعمدة) -->
+
+                <!-- Bank SO Summary (5 Cols) -->
                 <div class="xl:col-span-5 bg-slate-50 rounded-xl p-3.5 border border-slate-200">
                     <div class="text-xs font-bold text-blue-900 mb-2.5 border-b border-slate-200 pb-1.5">
-                        إحصائيات الاستقطاعات المسجلة بالبنك (SO List Summary)
+                        Registered Standing Orders Summary (SO List)
                     </div>
                     <div class="grid grid-cols-4 gap-2 text-center">
                         <div class="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
-                            <span class="block text-xs font-semibold text-slate-500 mb-1">الإجمالي (Total)</span>
-                            <span class="text-2xl font-extrabold font-mono text-slate-800" x-text="stats.so_total_count"></span>
+                            <span class="block text-[11px] font-semibold text-slate-500 mb-1">Total</span>
+                            <span class="text-xl font-extrabold font-mono text-slate-800" x-text="stats.so_total_count"></span>
                         </div>
                         <div class="bg-white p-2.5 rounded-lg border border-emerald-200 shadow-2xs">
-                            <span class="block text-xs font-bold text-emerald-700 mb-1">الفعال (Active)</span>
-                            <span class="text-2xl font-extrabold font-mono text-emerald-600" x-text="stats.so_active_count"></span>
+                            <span class="block text-[11px] font-bold text-emerald-700 mb-1">Active</span>
+                            <span class="text-xl font-extrabold font-mono text-emerald-600" x-text="stats.so_active_count"></span>
                         </div>
                         <div class="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
-                            <span class="block text-xs font-semibold text-slate-500 mb-1">غير الفعال (Inactive)</span>
-                            <span class="text-2xl font-extrabold font-mono text-slate-600" x-text="stats.so_inactive_count"></span>
+                            <span class="block text-[11px] font-semibold text-slate-500 mb-1">Inactive</span>
+                            <span class="text-xl font-extrabold font-mono text-slate-600" x-text="stats.so_inactive_count"></span>
                         </div>
                         <div class="bg-blue-50/60 p-2.5 rounded-lg border border-blue-200 shadow-2xs">
-                            <span class="block text-xs font-bold text-blue-800 mb-1">مبلغ الفعال ( د.ب )</span>
-                            <span class="text-xl font-extrabold font-mono text-blue-700" x-text="stats.so_active_sum"></span>
+                            <span class="block text-[11px] font-bold text-blue-800 mb-1">Active (BHD)</span>
+                            <span class="text-lg font-extrabold font-mono text-blue-700" x-text="stats.so_active_sum"></span>
                         </div>
                     </div>
                 </div>
 
-                <!-- مؤشرات مطابقة الحركات (8 أعمدة) -->
+                <!-- MONEY_TRANS Match Indicators (7 Cols) -->
                 <div class="xl:col-span-7 bg-slate-50 rounded-xl p-3.5 border border-slate-200">
                     <div class="text-xs font-bold text-emerald-900 mb-2.5 border-b border-slate-200 pb-1.5">
-                        مؤشرات المطابقة مع جدول الحركات الشهرية (MONEY TRANS Match Indicators)
+                        Monthly Transactions Match Indicators (MONEY_TRANS)
                     </div>
-                    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5 text-center">
+                    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-center">
                         <div class="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
-                            <span class="block text-xs font-bold text-slate-600 mb-1">حركات الشهر</span>
-                            <span class="text-2xl font-extrabold font-mono text-slate-900" x-text="stats.trans_count"></span>
+                            <span class="block text-[11px] font-bold text-slate-600 mb-1">Month Txns</span>
+                            <span class="text-xl font-extrabold font-mono text-slate-900" x-text="stats.trans_count"></span>
                         </div>
                         <div class="bg-emerald-50 p-2.5 rounded-lg border border-emerald-300 shadow-2xs">
-                            <span class="block text-xs font-bold text-emerald-800 mb-1">مطابق الكود الأصلي</span>
-                            <span class="text-2xl font-extrabold font-mono text-emerald-700" x-text="stats.match_orig"></span>
+                            <span class="block text-[11px] font-bold text-emerald-800 mb-1">Match Orig.</span>
+                            <span class="text-xl font-extrabold font-mono text-emerald-700" x-text="stats.match_orig"></span>
                         </div>
                         <div class="bg-emerald-50 p-2.5 rounded-lg border border-emerald-300 shadow-2xs">
-                            <span class="block text-xs font-bold text-emerald-800 mb-1">مطابق الكود البديل</span>
-                            <span class="text-2xl font-extrabold font-mono text-emerald-700" x-text="stats.match_alt"></span>
+                            <span class="block text-[11px] font-bold text-emerald-800 mb-1">Match Alt.</span>
+                            <span class="text-xl font-extrabold font-mono text-emerald-700" x-text="stats.match_alt"></span>
                         </div>
                         <div :class="stats.unmatch_orig > 0 ? 'bg-rose-100 border-rose-500 ring-2 ring-rose-300' : 'bg-white border-slate-200'"
                              class="p-2.5 rounded-lg border shadow-2xs">
-                            <span class="block text-xs font-bold mb-1" :class="stats.unmatch_orig > 0 ? 'text-rose-900' : 'text-slate-500'">غير مطابق أصلي</span>
-                            <span class="text-2xl font-extrabold font-mono" :class="stats.unmatch_orig > 0 ? 'text-rose-700' : 'text-slate-700'" x-text="stats.unmatch_orig"></span>
+                            <span class="block text-[11px] font-bold mb-1" :class="stats.unmatch_orig > 0 ? 'text-rose-900' : 'text-slate-500'">Unmatch Orig.</span>
+                            <span class="text-xl font-extrabold font-mono" :class="stats.unmatch_orig > 0 ? 'text-rose-700' : 'text-slate-700'" x-text="stats.unmatch_orig"></span>
                         </div>
                         <div :class="stats.unmatch_alt > 0 ? 'bg-rose-100 border-rose-500 ring-2 ring-rose-300' : 'bg-white border-slate-200'"
                              class="p-2.5 rounded-lg border shadow-2xs">
-                            <span class="block text-xs font-bold mb-1" :class="stats.unmatch_alt > 0 ? 'text-rose-900' : 'text-slate-500'">غير مطابق بديل</span>
-                            <span class="text-2xl font-extrabold font-mono" :class="stats.unmatch_alt > 0 ? 'text-rose-700' : 'text-slate-700'" x-text="stats.unmatch_alt"></span>
+                            <span class="block text-[11px] font-bold mb-1" :class="stats.unmatch_alt > 0 ? 'text-rose-900' : 'text-slate-500'">Unmatch Alt.</span>
+                            <span class="text-xl font-extrabold font-mono" :class="stats.unmatch_alt > 0 ? 'text-rose-700' : 'text-slate-700'" x-text="stats.unmatch_alt"></span>
                         </div>
                         <div :class="stats.without_trans > 0 ? 'bg-amber-100 border-amber-500 ring-2 ring-amber-300' : 'bg-white border-slate-200'"
                              class="p-2.5 rounded-lg border shadow-2xs">
-                            <span class="block text-xs font-bold mb-1" :class="stats.without_trans > 0 ? 'text-amber-900' : 'text-slate-500'">بدون حركة (ساقط)</span>
-                            <span class="text-2xl font-extrabold font-mono" :class="stats.without_trans > 0 ? 'text-amber-800' : 'text-slate-700'" x-text="stats.without_trans"></span>
+                            <span class="block text-[11px] font-bold mb-1" :class="stats.without_trans > 0 ? 'text-amber-900' : 'text-slate-500'">Missing Txn</span>
+                            <span class="text-xl font-extrabold font-mono" :class="stats.without_trans > 0 ? 'text-amber-800' : 'text-slate-700'" x-text="stats.without_trans"></span>
                         </div>
                     </div>
                 </div>
@@ -164,39 +158,39 @@
             </div>
         </section>
 
-        <!-- الجدولان جنباً إلى جنب -->
+        <!-- Side-by-Side Tables -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1">
-            
-            <!-- الجدول الأيمن: SO List -->
-            <section class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col">
+
+            <!-- Left Table: SO List -->
+            <section class="bg-white rounded-xl border border-slate-200 shadow-xs p-4 flex flex-col">
                 <div class="flex items-center justify-between border-b border-slate-200 pb-2.5 mb-3">
-                    <h2 class="text-sm font-bold text-blue-900 flex items-center gap-2">
+                    <h2 class="text-xs font-bold text-blue-900 flex items-center gap-2">
                         <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
-                        قائمة الاستقطاعات المسجلة بالبنك (SO List)
+                        Bank Standing Orders List (SO List)
                     </h2>
-                    <span class="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded font-mono" x-text="soList.length + ' استقطاع'"></span>
+                    <span class="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded font-mono" x-text="soList.length + ' SO(s)'"></span>
                 </div>
 
                 <div class="overflow-auto max-h-[500px] border border-slate-200 rounded-lg">
-                    <table class="w-full text-xs text-right border-collapse">
+                    <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
                         <thead class="sticky top-0 bg-slate-800 text-white">
                             <tr>
-                                <th class="py-2.5 px-2.5 text-center">كود المتبرع</th>
-                                <th class="py-2.5 px-2.5">اسم المتبرع</th>
-                                <th class="py-2.5 px-2.5 text-center">تاريخ البداية</th>
-                                <th class="py-2.5 px-2.5 text-center">المبلغ</th>
-                                <th class="py-2.5 px-2.5 text-center">رقم الحساب</th>
-                                <th class="py-2.5 px-2.5 text-center bg-slate-700">كود البنك</th>
-                                <th class="py-2.5 px-2.5 text-center">الكود البديل</th>
-                                <th class="py-2.5 px-2.5 text-center">الحالة</th>
-                                <th class="py-2.5 px-2.5 text-center">آخر سداد</th>
+                                <th class="py-2.5 px-2.5 text-center">Donor No</th>
+                                <th class="py-2.5 px-2.5">Donor Name</th>
+                                <th class="py-2.5 px-2.5 text-center">Start Date</th>
+                                <th class="py-2.5 px-2.5 text-center">Amount</th>
+                                <th class="py-2.5 px-2.5 text-center">Account No.</th>
+                                <th class="py-2.5 px-2.5 text-center bg-slate-700">Bank Code</th>
+                                <th class="py-2.5 px-2.5 text-center">Alt. Code</th>
+                                <th class="py-2.5 px-2.5 text-center">Status</th>
+                                <th class="py-2.5 px-2.5 text-center">Last Paid</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             <template x-for="so in soList" :key="so.so_id">
                                 <tr class="hover:bg-slate-50">
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-blue-700 text-sm" x-text="so.donor_no"></td>
-                                    <td class="py-2 px-2.5 font-bold text-slate-800 truncate max-w-[170px]" x-text="so.donor_name"></td>
+                                    <td class="py-2 px-2.5 font-bold text-slate-800 truncate max-w-[180px]" x-text="so.donor_name"></td>
                                     <td class="py-2 px-2.5 text-center font-mono" x-text="so.donation_start_date"></td>
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-sm text-blue-900" x-text="so.monthly_pay"></td>
                                     <td class="py-2 px-2.5 text-center font-mono" x-text="so.donor_acc_no"></td>
@@ -215,55 +209,55 @@
                 </div>
             </section>
 
-            <!-- الجدول الأيسر: MONEY TRANS -->
-            <section class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col">
+            <!-- Right Table: MONEY_TRANS -->
+            <section class="bg-white rounded-xl border border-slate-200 shadow-xs p-4 flex flex-col">
                 <div class="flex items-center justify-between border-b border-slate-200 pb-2.5 mb-3">
-                    <h2 class="text-sm font-bold text-emerald-900 flex items-center gap-2">
+                    <h2 class="text-xs font-bold text-emerald-900 flex items-center gap-2">
                         <span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
-                        حركات الشهر في جدول الحركات (MONEY TRANS)
+                        Monthly Transactions (MONEY_TRANS)
                     </h2>
-                    <span class="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded font-mono" x-text="moneyTransList.length + ' حركة'"></span>
+                    <span class="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded font-mono" x-text="moneyTransList.length + ' txn(s)'"></span>
                 </div>
 
                 <div class="overflow-auto max-h-[500px] border border-slate-200 rounded-lg">
-                    <table class="w-full text-xs text-right border-collapse">
+                    <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
                         <thead class="sticky top-0 bg-slate-800 text-white">
                             <tr>
-                                <th class="py-2.5 px-2.5 text-center">كود المتبرع</th>
-                                <th class="py-2.5 px-2.5">اسم المشترك</th>
-                                <th class="py-2.5 px-2.5 text-center">تاريخ البداية</th>
-                                <th class="py-2.5 px-2.5 text-center">شهر الحركة</th>
-                                <th class="py-2.5 px-2.5 text-center">المبلغ</th>
-                                <th class="py-2.5 px-2.5 text-center">الحالة</th>
+                                <th class="py-2.5 px-2.5 text-center">Donor No</th>
+                                <th class="py-2.5 px-2.5">Donor Name</th>
+                                <th class="py-2.5 px-2.5 text-center">Start Date</th>
+                                <th class="py-2.5 px-2.5 text-center">Txn Month</th>
+                                <th class="py-2.5 px-2.5 text-center">Amount</th>
+                                <th class="py-2.5 px-2.5 text-center">Status</th>
                                 <th class="py-2.5 px-2.5 text-center bg-slate-700">Code (1)</th>
                                 <th class="py-2.5 px-2.5 text-center">Alt Code</th>
-                                <th class="py-2.5 px-2.5 text-center">التطابق</th>
+                                <th class="py-2.5 px-2.5 text-center">Match</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             <template x-for="tr in moneyTransList" :key="tr.so_id + '_' + tr.month_year">
                                 <tr :class="!tr.is_code_matched ? 'bg-rose-50' : 'hover:bg-slate-50'">
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-blue-700 text-sm" x-text="tr.donor_no"></td>
-                                    <td class="py-2 px-2.5 font-bold text-slate-800 truncate max-w-[170px]" x-text="tr.donor_name"></td>
+                                    <td class="py-2 px-2.5 font-bold text-slate-800 truncate max-w-[180px]" x-text="tr.donor_name"></td>
                                     <td class="py-2 px-2.5 text-center font-mono" x-text="tr.donation_start_date"></td>
                                     <td class="py-2 px-2.5 text-center font-mono" x-text="tr.month_year"></td>
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-sm text-blue-900" x-text="tr.paid_sum"></td>
                                     <td class="py-2 px-2.5 text-center">
                                         <span :class="tr.status_no === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300'"
                                               class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border"
-                                              x-text="tr.status_no === 1 ? 'Collected' : 'Unpaid'"></span>
+                                              x-text="tr.status_no === 1 ? 'Paid' : 'Unpaid'"></span>
                                     </td>
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-sm bg-slate-100" x-text="tr.st_order_no"></td>
                                     <td class="py-2 px-2.5 text-center font-mono font-bold" x-text="tr.alt_st_no || ''"></td>
                                     <td class="py-2 px-2.5 text-center">
-                                        <span x-show="tr.is_code_matched" class="text-emerald-600 font-bold text-xs">✔ مطابق</span>
-                                        <span x-show="!tr.is_code_matched" class="text-rose-600 font-bold text-xs">✖ غير مطابق</span>
+                                        <span x-show="tr.is_code_matched" class="text-emerald-600 font-bold text-xs">✔ Matched</span>
+                                        <span x-show="!tr.is_code_matched" class="text-rose-600 font-bold text-xs">✖ Mismatch</span>
                                     </td>
                                 </tr>
                             </template>
                             <tr x-show="moneyTransList.length === 0">
                                 <td colspan="9" class="py-10 text-center text-slate-500 font-bold text-sm">
-                                    لا توجد حركات مسجلة لهذا البنك في هذا الشهر. اضغط على زر "تحديث الحركات والأكواد (Update Codes)" لإدراج الحركات المفقودة ومطابقتها.
+                                    No transactions found for this bank and month. Click "Update Codes & Missing Transactions" to generate and match missing entries.
                                 </td>
                             </tr>
                         </tbody>
@@ -307,7 +301,7 @@
                     if (res.ok) {
                         const result = await res.json();
                         await this.loadAuditData();
-                        alert(`تم تحديث ومطابقة الحركات للبنك والشهر المحددين بنجاح!\n- حركات تم تحديث أكوادها: ${result.updated_codes}\n- حركات مفقودة تم إدراجها: ${result.inserted_missing}`);
+                        alert(`Bank codes and transactions updated successfully!\n- Codes updated: ${result.updated_codes}\n- Missing transactions inserted: ${result.inserted_missing}`);
                     }
                 }
             }

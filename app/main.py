@@ -1,17 +1,66 @@
-from fastapi import FastAPI, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, Depends, HTTPException, Form
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel, field_validator
 from typing import Optional, Any
 from datetime import date, datetime
-import os
+import hashlib, hmac, json, base64, os
 
 from app.database import get_db
 
+SECRET_KEY = os.getenv("SECRET_KEY", "dic_bahrain_erp_secret_key_2026")
+
+def hash_password(raw_password: str) -> str:
+    return hashlib.sha256(f"dic_salt_{raw_password}".encode("utf-8")).hexdigest()
+
+def create_session_token(data: dict) -> str:
+    payload = base64.urlsafe_b64encode(json.dumps(data).encode("utf-8")).decode("utf-8")
+    sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
+
+def verify_session_token(token: str) -> Optional[dict]:
+    if not token or "." not in token:
+        return None
+    payload, sig = token.rsplit(".", 1)
+    expected_sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected_sig):
+        return None
+    try:
+        return json.loads(base64.urlsafe_b64decode(payload.encode("utf-8")).decode("utf-8"))
+    except Exception:
+        return None
+
 app = FastAPI(title="DIC Standing Orders System - Bahrain")
 templates = Jinja2Templates(directory="app/templates")
+
+@app.middleware("http")
+async def auth_and_rbac_middleware(request: Request, call_next):
+    path = request.url.path
+    public_paths = ("/login", "/logout", "/health", "/favicon.ico")
+    token = request.cookies.get("dic_session")
+    user = verify_session_token(token)
+    request.state.user = user
+
+    if path in public_paths:
+        return await call_next(request)
+
+    if not user:
+        if path.startswith("/api/"):
+            return JSONResponse(status_code=401, content={"detail": "Authentication required. Please sign in."})
+        return RedirectResponse(url="/login", status_code=302)
+
+    # Enforce Read-Only vs Read-Write on any mutating request
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        if user.get("role_code") != "READ_WRITE":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Access Denied: Your account has View-Only permission and cannot modify records."}
+            )
+
+    return await call_next(request)
+
 
 class DonorSaveSchema(BaseModel):
     donor_no: Optional[int] = None
@@ -1081,3 +1130,107 @@ async def delete_standing_order(so_id: int, db: AsyncSession = Depends(get_db)):
     if del_res.rowcount == 0:
         raise HTTPException(status_code=404, detail="الاستقطاع غير موجود.")
     return {"status": "deleted", "so_id": so_id}
+
+
+class UserCreateSchema(BaseModel):
+    username: str
+    full_name: str
+    password: str
+    role_id: int = 2
+
+class UserRoleUpdateSchema(BaseModel):
+    role_id: int
+
+class UserPasswordUpdateSchema(BaseModel):
+    password: str
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request, username: str = Form(...), password: str = Form(...), db: AsyncSession = Depends(get_db)):
+    uname = username.strip().upper()
+    pwd_hash = hash_password(password.strip())
+    sql = text("""
+        SELECT u.user_id, u.username, u.full_name_en, u.full_name_ar, u.is_active, r.role_id, r.role_code, r.role_name_en
+        FROM sys_users u
+        JOIN sys_roles r ON u.role_id = r.role_id
+        WHERE UPPER(u.username) = :u AND u.password_hash = :p
+    """)
+    res = await db.execute(sql, {"u": uname, "p": pwd_hash})
+    row = res.first()
+    if not row:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid username or password."})
+    user_data = dict(row._mapping)
+    if not user_data["is_active"]:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "This user account is disabled."})
+
+    await db.execute(text("UPDATE sys_users SET last_login = CURRENT_TIMESTAMP WHERE user_id = :uid"), {"uid": user_data["user_id"]})
+    await db.commit()
+
+    token = create_session_token({
+        "user_id": user_data["user_id"],
+        "username": user_data["username"],
+        "full_name": user_data["full_name_en"] or user_data["full_name_ar"],
+        "role_id": user_data["role_id"],
+        "role_code": user_data["role_code"],
+        "role_name": user_data["role_name_en"]
+    })
+    response = RedirectResponse(url="/about", status_code=302)
+    response.set_cookie(key="dic_session", value=token, httponly=True, max_age=86400 * 7)
+    return response
+
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse(url="/login", status_code=302)
+    response.delete_cookie("dic_session")
+    return response
+
+@app.get("/about", response_class=HTMLResponse)
+async def about_page(request: Request):
+    return templates.TemplateResponse("about.html", {"request": request})
+
+@app.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request):
+    return templates.TemplateResponse("users.html", {"request": request})
+
+@app.get("/api/users")
+async def list_users(db: AsyncSession = Depends(get_db)):
+    res = await db.execute(text("""
+        SELECT u.user_id, u.username, u.full_name_ar, u.full_name_en, u.role_id, u.is_active, r.role_code, r.role_name_en
+        FROM sys_users u
+        JOIN sys_roles r ON u.role_id = r.role_id
+        ORDER BY u.user_id ASC
+    """))
+    return {"users": [dict(r._mapping) for r in res]}
+
+@app.post("/api/users/create")
+async def create_user_api(payload: UserCreateSchema, db: AsyncSession = Depends(get_db)):
+    uname = payload.username.strip().upper()
+    if not uname or not payload.password:
+        raise HTTPException(status_code=400, detail="Username and password are required.")
+    pwd_hash = hash_password(payload.password.strip())
+    try:
+        await db.execute(text("""
+            INSERT INTO sys_users (username, password_hash, full_name_ar, full_name_en, role_id, is_active)
+            VALUES (:u, :p, :fn, :fn, :rid, true)
+        """), {"u": uname, "p": pwd_hash, "fn": payload.full_name.strip() or uname, "rid": payload.role_id})
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Could not create user: {str(e)}")
+    return {"status": "created"}
+
+@app.post("/api/users/{user_id}/role")
+async def update_user_role_api(user_id: int, payload: UserRoleUpdateSchema, db: AsyncSession = Depends(get_db)):
+    await db.execute(text("UPDATE sys_users SET role_id = :rid WHERE user_id = :uid"), {"rid": payload.role_id, "uid": user_id})
+    await db.commit()
+    return {"status": "updated"}
+
+@app.post("/api/users/{user_id}/password")
+async def update_user_password_api(user_id: int, payload: UserPasswordUpdateSchema, db: AsyncSession = Depends(get_db)):
+    pwd_hash = hash_password(payload.password.strip())
+    await db.execute(text("UPDATE sys_users SET password_hash = :p WHERE user_id = :uid"), {"p": pwd_hash, "uid": user_id})
+    await db.commit()
+    return {"status": "password_updated"}

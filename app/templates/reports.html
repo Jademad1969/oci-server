@@ -2,122 +2,293 @@
 <html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
-    <title>Reports & Statistics - Discover Islam Society</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Standing Orders Reports - Discover Islam Society</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
-<body class="bg-slate-50 text-slate-800 flex h-screen overflow-hidden" x-data="reportsApp()">
-    <!-- Sidebar -->
-    <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col justify-between shrink-0 shadow-xl">
-        <div>
-            <div class="p-4 border-b border-slate-800">
-                <h2 class="text-sm font-bold text-white tracking-wider">DISCOVER ISLAM</h2>
-                <p class="text-[11px] text-slate-400">Standing Orders & Donor System</p>
-            </div>
-            <nav class="p-3 space-y-1 text-xs">
-                <a href="/about" class="flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-slate-800 hover:text-white transition">
-                    <span>📌</span> About System
-                </a>
-                <div class="pt-3 pb-1 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Modules</div>
-                <div class="space-y-1 pl-2 border-l border-slate-800 ml-3">
-                    <a href="/" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Donors & Standing Orders</a>
-                    <a href="/bank-codes-audit" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Bank Codes Audit</a>
-                    <a href="/bank-reconcile" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Bank Reconciliation CSV</a>
-                    <a href="/followup" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">Donor Follow-up</a>
-                    <a href="/reports" class="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white font-semibold">Reports & Statistics</a>
-                </div>
-            </nav>
-        </div>
-        <div class="p-3 border-t border-slate-800 text-xs">
-            <div class="flex items-center justify-between mb-2 px-2">
-                <span class="text-slate-400">User: <strong class="text-white">{{ user.username }}</strong></span>
-            </div>
-            <a href="/logout" class="block w-full py-2 text-center bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-lg font-semibold transition">Sign Out</a>
-        </div>
-    </aside>
+<body class="bg-slate-50 text-slate-800">
+    {% include 'sidebar.html' %}
 
-    <!-- Main Content -->
-    <main class="flex-1 flex flex-col overflow-y-auto">
-        <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-xs">
-            <h1 class="text-base font-bold text-slate-900">Standing Orders Reports & Analytics</h1>
-            <a href="/api/followup/export-csv" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-xs transition">
-                📥 Export All to Excel (CSV)
-            </a>
-        </header>
-
-        <div class="p-6 max-w-7xl mx-auto w-full space-y-6">
-            <!-- KPI Cards -->
-            <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <span class="text-xs font-semibold text-slate-500">Active Standing Orders</span>
-                    <div class="text-xl font-bold font-mono text-blue-900 mt-1" x-text="stats.active_count || 0"></div>
-                </div>
-                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <span class="text-xs font-semibold text-slate-500">Expected Monthly (BHD)</span>
-                    <div class="text-xl font-bold font-mono text-emerald-800 mt-1" x-text="Number(stats.total_monthly || 0).toFixed(3)"></div>
-                </div>
-                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <span class="text-xs font-semibold text-slate-500">Delayed SOs (> 2 Months)</span>
-                    <div class="text-xl font-bold font-mono text-rose-700 mt-1" x-text="stats.delayed_count || 0"></div>
-                </div>
-                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <span class="text-xs font-semibold text-slate-500">Total Donors</span>
-                    <div class="text-xl font-bold font-mono text-slate-800 mt-1" x-text="stats.donor_count || 0"></div>
-                </div>
+    <div class="p-6 max-w-7xl mx-auto w-full space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div>
+                <h1 class="text-base font-bold text-slate-900">Standing Orders & Bank Reports</h1>
+                <p class="text-xs text-slate-500">Filter by Month/Year, Full Date Range, or Data Audit criteria and export results to CSV</p>
             </div>
-
-            <!-- Report Tables / Tabs -->
-            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-                <h3 class="text-sm font-bold text-slate-800 mb-3">Top Delayed Standing Orders Report</h3>
-                <div class="overflow-x-auto max-h-[500px]">
-                    <table class="w-full text-left text-xs border-collapse">
-                        <thead class="bg-slate-100 text-slate-700 uppercase sticky top-0">
-                            <tr>
-                                <th class="p-2.5">Donor No</th>
-                                <th class="p-2.5">Donor Name</th>
-                                <th class="p-2.5">Phone (Mobile)</th>
-                                <th class="p-2.5">SO ID</th>
-                                <th class="p-2.5">Bank</th>
-                                <th class="p-2.5 text-right">Monthly (BHD)</th>
-                                <th class="p-2.5 text-center">Delay (Months)</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-100 font-mono">
-                            <template x-for="r in delayedList" :key="r.so_id">
-                                <tr class="hover:bg-slate-50">
-                                    <td class="p-2.5 font-bold text-slate-900" x-text="r.donor_no"></td>
-                                    <td class="p-2.5 font-sans font-semibold text-slate-800" x-text="r.donor_name"></td>
-                                    <td class="p-2.5 text-slate-600" x-text="r.donor_tel2 || r.donor_tel1 || '-'"></td>
-                                    <td class="p-2.5 text-blue-700 font-bold" x-text="r.so_id"></td>
-                                    <td class="p-2.5 font-sans" x-text="r.bank_desc"></td>
-                                    <td class="p-2.5 text-right font-bold text-emerald-800" x-text="Number(r.monthly_pay).toFixed(3)"></td>
-                                    <td class="p-2.5 text-center font-bold text-rose-700 bg-rose-50/50 rounded" x-text="r.actual_delay_months"></td>
-                                </tr>
-                            </template>
-                        </tbody>
-                    </table>
-                </div>
+            <div class="flex items-center gap-2">
+                <button type="button" id="btn-run-report"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-sm transition">
+                    Run Report
+                </button>
+                <button type="button" id="btn-export-csv" disabled
+                        class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-sm transition opacity-40 cursor-not-allowed">
+                    Export CSV
+                </button>
             </div>
         </div>
-    </main>
+
+        <div id="rep-alert" style="display: none;" class="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-2.5 rounded-xl text-xs font-semibold"></div>
+
+        <section class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                <div class="md:col-span-2">
+                    <label class="block font-semibold text-slate-700 mb-1">Report Type</label>
+                    <select id="rep-type" class="w-full border border-slate-300 rounded-lg px-3 py-2 font-semibold text-slate-800 bg-white">
+                        <option value="paid_unpaid_so">1. Paid & Unpaid Standing Orders (SO Only - Month/Year)</option>
+                        <option value="so_revenues_summary">2. Standing Orders Revenues Summary (SO Only - Month/Year)</option>
+                        <option value="bank_statement_income">3. Bank Statement Income (Cash/Fawri + Reconciled SO - Month/Year)</option>
+                        <option value="new_so">4. New Standing Orders (Full Date Range)</option>
+                        <option value="data_audit">5. Data Audit Reports (Donor vs SO Status)</option>
+                        <option value="unpaid_followup">6. Unpaid Follow-up Data (Full Date Range)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">Bank</label>
+                    <select id="rep-bank" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white">
+                        <option value="">All Banks</option>
+                    </select>
+                </div>
+
+                <div id="subfilter-status-box" style="display: block;">
+                    <label class="block font-semibold text-slate-700 mb-1">Payment Status</label>
+                    <select id="rep-status" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white font-semibold">
+                        <option value="ALL">All (Paid & Unpaid)</option>
+                        <option value="PAID">Paid Only</option>
+                        <option value="UNPAID">Unpaid Only</option>
+                    </select>
+                </div>
+
+                <div id="subfilter-audit-box" style="display: none;">
+                    <label class="block font-semibold text-slate-700 mb-1">Audit Check</label>
+                    <select id="rep-audit" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white font-semibold">
+                        <option value="NON_ACTIVE_DONOR_ACTIVE_SO">Non-active Donors with Active SO</option>
+                        <option value="ACTIVE_DONOR_INACTIVE_SO">Active Donors with Inactive SO</option>
+                    </select>
+                </div>
+
+                <div id="subfilter-followup-box" style="display: none;">
+                    <label class="block font-semibold text-slate-700 mb-1">SO Status Filter</label>
+                    <select id="rep-followup-status" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white font-semibold">
+                        <option value="ALL">All SO Statuses</option>
+                        <option value="ACTIVE_SO">Active SO Only</option>
+                        <option value="INACTIVE_SO">Inactive SO Only</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-200 flex flex-wrap items-end gap-4 text-xs">
+                <div id="period-month-box" style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 1rem;">
+                    <div>
+                        <label class="block font-semibold text-slate-700 mb-1">From Month (Month / Year)</label>
+                        <input type="month" id="rep-from-month" value="2025-01" class="border border-slate-300 rounded-lg px-3 py-1.5 font-mono bg-white">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-slate-700 mb-1">To Month (Month / Year)</label>
+                        <input type="month" id="rep-to-month" value="2026-12" class="border border-slate-300 rounded-lg px-3 py-1.5 font-mono bg-white">
+                    </div>
+                </div>
+
+                <div id="period-date-box" style="display: none; flex-wrap: wrap; align-items: flex-end; gap: 1rem;">
+                    <div>
+                        <label class="block font-semibold text-slate-700 mb-1">From Date (Day / Month / Year)</label>
+                        <input type="date" id="rep-from-date" value="2019-01-01" class="border border-slate-300 rounded-lg px-3 py-1.5 font-mono bg-white">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-slate-700 mb-1">To Date (Day / Month / Year)</label>
+                        <input type="date" id="rep-to-date" value="2026-12-31" class="border border-slate-300 rounded-lg px-3 py-1.5 font-mono bg-white">
+                    </div>
+                </div>
+
+                <div id="period-none-box" style="display: none;" class="text-slate-500 italic py-1.5">
+                    Data Audit reports check current master/SO status records and do not require a date/month range.
+                </div>
+            </div>
+        </section>
+
+        <section id="rep-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"></section>
+
+        <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+            <table class="w-full text-xs text-left border-collapse">
+                <thead>
+                    <tr id="rep-thead" class="bg-slate-800 text-slate-100">
+                        <th class="py-3 px-3 font-semibold">Report Results</th>
+                    </tr>
+                </thead>
+                <tbody id="rep-tbody" class="divide-y divide-slate-200">
+                    <tr>
+                        <td class="py-8 text-center text-slate-400">Loading report data...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+    </div>
 
     <script>
-        function reportsApp() {
-            return {
-                stats: {},
-                delayedList: [],
-                async init() {
-                    const res = await fetch('/api/reports/data');
-                    if (res.ok) {
-                        const data = await res.json();
-                        this.stats = data.stats || {};
-                        this.delayedList = data.delayed_list || [];
-                    }
-                }
-            }
+        let currentColumns = [];
+        let currentHeaders = [];
+        let currentRows = [];
+
+        function showRepAlert(msg) {
+            const box = document.getElementById("rep-alert");
+            if (!msg) { box.style.display = "none"; box.textContent = ""; return; }
+            box.textContent = msg; box.style.display = "block";
         }
+
+        function updateReportFormVisibility() {
+            const rt = document.getElementById("rep-type").value;
+            const monthBox = document.getElementById("period-month-box");
+            const dateBox = document.getElementById("period-date-box");
+            const noneBox = document.getElementById("period-none-box");
+            const stBox = document.getElementById("subfilter-status-box");
+            const auBox = document.getElementById("subfilter-audit-box");
+            const fuBox = document.getElementById("subfilter-followup-box");
+
+            monthBox.style.display = "none";
+            dateBox.style.display = "none";
+            noneBox.style.display = "none";
+
+            if (rt === "new_so" || rt === "unpaid_followup") dateBox.style.display = "flex";
+            else if (rt === "data_audit") noneBox.style.display = "block";
+            else monthBox.style.display = "flex";
+
+            stBox.style.display = (rt === "paid_unpaid_so") ? "block" : "none";
+            auBox.style.display = (rt === "data_audit") ? "block" : "none";
+            fuBox.style.display = (rt === "unpaid_followup") ? "block" : "none";
+        }
+
+        function renderSummaryCards(summary) {
+            const container = document.getElementById("rep-summary");
+            const cards = [{ label: "Total Records", val: summary.total_rows ?? 0, cls: "text-slate-900" }];
+            if (summary.paid_amount !== undefined) cards.push({ label: "Paid Amount (BHD)", val: Number(summary.paid_amount || 0).toFixed(3), cls: "text-emerald-700" });
+            if (summary.unpaid_amount !== undefined) cards.push({ label: "Unpaid Amount (BHD)", val: Number(summary.unpaid_amount || 0).toFixed(3), cls: "text-rose-700" });
+            if (summary.cash_fawri_amount !== undefined) cards.push({ label: "Cash / Fawri (BHD)", val: Number(summary.cash_fawri_amount || 0).toFixed(3), cls: "text-blue-700" });
+            if (summary.reconciled_so_amount !== undefined) cards.push({ label: "Reconciled SO (BHD)", val: Number(summary.reconciled_so_amount || 0).toFixed(3), cls: "text-indigo-700" });
+            if (summary.total_amount !== undefined) cards.push({ label: "Total Amount (BHD)", val: Number(summary.total_amount || 0).toFixed(3), cls: "text-slate-900" });
+
+            container.innerHTML = cards.map(c => `
+                <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
+                    <div class="text-slate-500 font-medium">${c.label}</div>
+                    <div class="text-lg font-bold font-mono mt-0.5 ${c.cls}">${c.val}</div>
+                </div>
+            `).join("");
+        }
+
+        function renderReportTable(headers, columns, rows) {
+            const thead = document.getElementById("rep-thead");
+            const tbody = document.getElementById("rep-tbody");
+            const exportBtn = document.getElementById("btn-export-csv");
+
+            thead.innerHTML = (headers.length ? headers : ["Results"]).map(h =>
+                `<th class="py-3 px-3 font-semibold whitespace-nowrap">${h}</th>`
+            ).join("");
+
+            if (!rows || rows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${Math.max(headers.length, 1)}" class="py-8 text-center text-slate-400">No rows returned for the selected criteria.</td></tr>`;
+                exportBtn.disabled = true;
+                exportBtn.classList.add("opacity-40", "cursor-not-allowed");
+                return;
+            }
+
+            tbody.innerHTML = rows.map(r => `
+                <tr class="hover:bg-slate-50">
+                    ${columns.map(col => `<td class="py-2.5 px-3 whitespace-nowrap">${r[col] ?? ""}</td>`).join("")}
+                </tr>
+            `).join("");
+
+            exportBtn.disabled = false;
+            exportBtn.classList.remove("opacity-40", "cursor-not-allowed");
+        }
+
+        async function loadBanksMeta() {
+            try {
+                const res = await fetch("/api/reports/meta", { credentials: "same-origin" });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) { showRepAlert(data.detail || ("Failed to load banks (HTTP " + res.status + ")")); return; }
+                const sel = document.getElementById("rep-bank");
+                sel.innerHTML = '<option value="">All Banks</option>';
+                (data.banks || []).forEach(b => {
+                    const opt = document.createElement("option");
+                    opt.value = b.bank_cd;
+                    opt.textContent = b.bank_e_desc || b.bank_desc || ("Bank #" + b.bank_cd);
+                    sel.appendChild(opt);
+                });
+            } catch (e) { showRepAlert("Network error loading banks list."); }
+        }
+
+        async function runSelectedReport() {
+            showRepAlert("");
+            const rt = document.getElementById("rep-type").value;
+            const params = new URLSearchParams({ report_type: rt });
+            const bankVal = document.getElementById("rep-bank").value;
+            if (bankVal) params.set("bank_cd", bankVal);
+
+            if (rt === "paid_unpaid_so") {
+                params.set("status_filter", document.getElementById("rep-status").value);
+                params.set("from_month", document.getElementById("rep-from-month").value);
+                params.set("to_month", document.getElementById("rep-to-month").value);
+            } else if (rt === "so_revenues_summary" || rt === "bank_statement_income") {
+                params.set("from_month", document.getElementById("rep-from-month").value);
+                params.set("to_month", document.getElementById("rep-to-month").value);
+            } else if (rt === "new_so") {
+                params.set("from_date", document.getElementById("rep-from-date").value);
+                params.set("to_date", document.getElementById("rep-to-date").value);
+            } else if (rt === "unpaid_followup") {
+                params.set("status_filter", document.getElementById("rep-followup-status").value);
+                params.set("from_date", document.getElementById("rep-from-date").value);
+                params.set("to_date", document.getElementById("rep-to-date").value);
+            } else if (rt === "data_audit") {
+                params.set("audit_mode", document.getElementById("rep-audit").value);
+            }
+
+            try {
+                const res = await fetch("/api/reports/run?" + params.toString(), { credentials: "same-origin" });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showRepAlert(data.detail || ("Failed to load report (HTTP " + res.status + ")"));
+                    renderReportTable([], [], []);
+                    return;
+                }
+                currentHeaders = data.headers || [];
+                currentColumns = data.columns || [];
+                currentRows = data.rows || [];
+                renderSummaryCards(data.summary || {});
+                renderReportTable(currentHeaders, currentColumns, currentRows);
+            } catch (e) { showRepAlert("Network or server error while loading report."); }
+        }
+
+        function exportCurrentCsv() {
+            if (!currentRows.length || !currentColumns.length) return;
+            const esc = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+            const lines = [
+                currentHeaders.map(esc).join(","),
+                ...currentRows.map(r => currentColumns.map(c => esc(r[c])).join(","))
+            ];
+            const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = (document.getElementById("rep-type").value || "report") + ".csv";
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        async function initReportsScreen() {
+            const typeSel = document.getElementById("rep-type");
+            if (!typeSel || typeSel.dataset.bound === "1") return;
+            typeSel.dataset.bound = "1";
+            typeSel.addEventListener("change", () => { updateReportFormVisibility(); runSelectedReport(); });
+            document.getElementById("btn-run-report").addEventListener("click", runSelectedReport);
+            document.getElementById("btn-export-csv").addEventListener("click", exportCurrentCsv);
+            updateReportFormVisibility();
+            await loadBanksMeta();
+            await runSelectedReport();
+        }
+
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initReportsScreen);
+        else initReportsScreen();
     </script>
 </body>
 </html>

@@ -20,7 +20,7 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
-DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "users")
+DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "reports", "users")
 
 def normalize_page_permissions(role_code: Optional[str], raw_perms: Any) -> dict:
     if isinstance(raw_perms, str):
@@ -56,6 +56,8 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any) -> dict
 def resolve_page_key(path: str) -> str:
     if path.startswith("/users") or path.startswith("/api/users"):
         return "users"
+    if path.startswith("/reports") or path.startswith("/reports-matrix") or path.startswith("/api/reports"):
+        return "reports"
     if path.startswith("/bank-codes-audit") or path.startswith("/api/bank-codes-audit"):
         return "audit"
     if path.startswith("/bank-reconcile") or path.startswith("/api/bank-reconcile"):
@@ -1323,3 +1325,536 @@ async def update_user_password_api(user_id: int, payload: UserPasswordUpdateSche
     await db.execute(text("UPDATE sys_users SET password_hash = :p WHERE user_id = :uid"), {"p": pwd_hash, "uid": user_id})
     await db.commit()
     return {"status": "password_updated"}
+# ----------------- Module 5: Reports & Analytics (/reports) -----------------
+@app.get("/reports", response_class=HTMLResponse)
+async def reports_page(request: Request):
+    return templates.TemplateResponse("reports.html", {"request": request})
+
+@app.get("/api/reports/meta")
+async def get_reports_meta(db: AsyncSession = Depends(get_db)):
+    banks_res = await db.execute(text("SELECT bank_cd, bank_desc, bank_e_desc FROM lkp_banks ORDER BY bank_cd"))
+    banks = [dict(r._mapping) for r in banks_res]
+    return {"banks": banks}
+
+def _parse_month_range(from_month: Optional[str], to_month: Optional[str]):
+    fm_str = (from_month or "2026-01")[:7]
+    tm_str = (to_month or "2026-12")[:7]
+    d_from = datetime.strptime(f"{fm_str}-01", "%Y-%m-%d").date()
+    d_to = datetime.strptime(f"{tm_str}-01", "%Y-%m-%d").date()
+    if d_to < d_from:
+        d_from, d_to = d_to, d_from
+    return d_from, d_to
+
+@app.get("/api/reports/run")
+async def run_report_api(
+    report_type: str,
+    bank_cd: Optional[int] = None,
+    status_filter: Optional[str] = "ALL",
+    audit_mode: Optional[str] = "NON_ACTIVE_DONOR_ACTIVE_SO",
+    from_month: Optional[str] = None,
+    to_month: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    bank_filter_sql = ""
+    params: dict[str, Any] = {}
+    if bank_cd and int(bank_cd) > 0:
+        params["bank_cd"] = int(bank_cd)
+
+    if report_type == "paid_unpaid_so":
+        d_from, d_to = _parse_month_range(from_month, to_month)
+        params["d_from"] = d_from
+        params["d_to"] = d_to
+        if "bank_cd" in params:
+            bank_filter_sql = " AND m.bank_cd = :bank_cd"
+        status_sql = ""
+        if status_filter == "PAID":
+            status_sql = " AND m.status_no = 1"
+        elif status_filter == "UNPAID":
+            status_sql = " AND COALESCE(m.status_no, 2) <> 1"
+
+        sql = text(f"""
+            SELECT TO_CHAR(m.month_year, 'YYYY-MM') AS month_str,
+                   m.donor_no,
+                   COALESCE(d.donor_ename, d.donor_name) AS donor_name_en,
+                   COALESCE(d.donor_name, '') AS donor_name_ar,
+                   m.item_no,
+                   COALESCE(b.bank_e_desc, b.bank_desc, '') AS bank_name,
+                   COALESCE(m.st_order_no, '') AS so_code,
+                   m.paid_sum AS amount,
+                   CASE WHEN m.status_no = 1 THEN 'Paid' ELSE 'Unpaid' END AS payment_status
+            FROM money_trans m
+            JOIN donor_master d ON m.donor_no = d.donor_no
+            LEFT JOIN lkp_banks b ON m.bank_cd = b.bank_cd
+            WHERE m.month_year >= :d_from AND m.month_year <= :d_to
+            {bank_filter_sql}
+            {status_sql}
+            ORDER BY m.month_year ASC, m.donor_no ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = [dict(r._mapping) for r in res]
+        for r in rows:
+            r["amount"] = float(r["amount"] or 0)
+        paid_amt = round(sum(r["amount"] for r in rows if r["payment_status"] == "Paid"), 3)
+        unpaid_amt = round(sum(r["amount"] for r in rows if r["payment_status"] != "Paid"), 3)
+        return {
+            "columns": ["month_str", "donor_no", "donor_name_en", "donor_name_ar", "item_no", "bank_name", "so_code", "amount", "payment_status"],
+            "headers": ["Month", "Donor No", "Donor Name (EN)", "Donor Name (AR)", "Item", "Bank", "SO Code", "Amount (BHD)", "Status"],
+            "rows": rows,
+            "summary": {
+                "total_rows": len(rows),
+                "paid_amount": paid_amt,
+                "unpaid_amount": unpaid_amt,
+                "total_amount": round(paid_amt + unpaid_amt, 3)
+            }
+        }
+
+    elif report_type == "so_revenues_summary":
+        d_from, d_to = _parse_month_range(from_month, to_month)
+        params["d_from"] = d_from
+        params["d_to"] = d_to
+        if "bank_cd" in params:
+            bank_filter_sql = " AND m.bank_cd = :bank_cd"
+
+        sql = text(f"""
+            SELECT TO_CHAR(m.month_year, 'YYYY-MM') AS month_str,
+                   COALESCE(b.bank_e_desc, b.bank_desc, 'All Banks') AS bank_name,
+                   COUNT(*) AS total_txns,
+                   SUM(CASE WHEN m.status_no = 1 THEN 1 ELSE 0 END) AS paid_txns,
+                   SUM(CASE WHEN COALESCE(m.status_no, 2) <> 1 THEN 1 ELSE 0 END) AS unpaid_txns,
+                   COALESCE(SUM(CASE WHEN m.status_no = 1 THEN m.paid_sum ELSE 0 END), 0) AS paid_amount,
+                   COALESCE(SUM(CASE WHEN COALESCE(m.status_no, 2) <> 1 THEN m.paid_sum ELSE 0 END), 0) AS unpaid_amount,
+                   COALESCE(SUM(m.paid_sum), 0) AS total_amount
+            FROM money_trans m
+            LEFT JOIN lkp_banks b ON m.bank_cd = b.bank_cd
+            WHERE m.month_year >= :d_from AND m.month_year <= :d_to
+            {bank_filter_sql}
+            GROUP BY TO_CHAR(m.month_year, 'YYYY-MM'), COALESCE(b.bank_e_desc, b.bank_desc, 'All Banks')
+            ORDER BY month_str ASC, bank_name ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = [dict(r._mapping) for r in res]
+        for r in rows:
+            r["paid_amount"] = float(r["paid_amount"] or 0)
+            r["unpaid_amount"] = float(r["unpaid_amount"] or 0)
+            r["total_amount"] = float(r["total_amount"] or 0)
+        return {
+            "columns": ["month_str", "bank_name", "total_txns", "paid_txns", "unpaid_txns", "paid_amount", "unpaid_amount", "total_amount"],
+            "headers": ["Month", "Bank", "Total Txns", "Paid Txns", "Unpaid Txns", "Paid (BHD)", "Unpaid (BHD)", "Total SO (BHD)"],
+            "rows": rows,
+            "summary": {
+                "total_rows": len(rows),
+                "paid_amount": round(sum(r["paid_amount"] for r in rows), 3),
+                "unpaid_amount": round(sum(r["unpaid_amount"] for r in rows), 3),
+                "total_amount": round(sum(r["total_amount"] for r in rows), 3)
+            }
+        }
+
+    elif report_type == "bank_statement_income":
+        d_from, d_to = _parse_month_range(from_month, to_month)
+        params["d_from"] = d_from
+        params["d_to"] = d_to
+        if "bank_cd" in params:
+            bank_filter_sql = " AND l.bank_cd = :bank_cd"
+
+        # Includes Cash/Fawri deposits AND Standing Orders updated via bank statement reconciliation
+        sql = text(f"""
+            SELECT TO_CHAR(l.money_trans_month, 'YYYY-MM') AS month_str,
+                   COALESCE(b.bank_e_desc, b.bank_desc, '') AS bank_name,
+                   CASE
+                       WHEN COALESCE(l.cash_deposit, 2) <> 2 THEN 'Cash / Fawri'
+                       ELSE 'Reconciled Standing Order'
+                   END AS income_source,
+                   COALESCE(l.donor_no, 0) AS donor_no,
+                   COALESCE(l.bank_stmnt_paydesc, '') AS pay_description,
+                   l.bank_stmnt_payamt AS amount,
+                   CASE WHEN l.money_trans_status = 1 THEN 'Updated / Paid' ELSE 'Loaded Only' END AS recon_status
+            FROM bank_statement_load l
+            LEFT JOIN lkp_banks b ON l.bank_cd = b.bank_cd
+            WHERE l.money_trans_month >= :d_from AND l.money_trans_month <= :d_to
+            {bank_filter_sql}
+              AND (COALESCE(l.cash_deposit, 2) <> 2 OR l.money_trans_status = 1)
+            ORDER BY l.money_trans_month ASC, l.trans_id ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = [dict(r._mapping) for r in res]
+        for r in rows:
+            r["amount"] = float(r["amount"] or 0)
+        cash_amt = round(sum(r["amount"] for r in rows if r["income_source"] == "Cash / Fawri"), 3)
+        so_amt = round(sum(r["amount"] for r in rows if r["income_source"] != "Cash / Fawri"), 3)
+        return {
+            "columns": ["month_str", "bank_name", "income_source", "donor_no", "pay_description", "amount", "recon_status"],
+            "headers": ["Month", "Bank", "Source Type", "Donor No", "Description", "Amount (BHD)", "Status"],
+            "rows": rows,
+            "summary": {
+                "total_rows": len(rows),
+                "cash_fawri_amount": cash_amt,
+                "reconciled_so_amount": so_amt,
+                "total_amount": round(cash_amt + so_amt, 3)
+            }
+        }
+
+    elif report_type == "new_so":
+        df_str = from_date or "2026-01-01"
+        dt_str = to_date or "2026-12-31"
+        params["df"] = datetime.strptime(df_str, "%Y-%m-%d").date()
+        params["dt"] = datetime.strptime(dt_str, "%Y-%m-%d").date()
+        if "bank_cd" in params:
+            bank_filter_sql = " AND i.bank2_cd = :bank_cd"
+
+        sql = text(f"""
+            SELECT i.so_id,
+                   i.donor_no,
+                   COALESCE(d.donor_ename, d.donor_name) AS donor_name_en,
+                   COALESCE(d.donor_name, '') AS donor_name_ar,
+                   i.item_no,
+                   COALESCE(b.bank_e_desc, b.bank_desc, '') AS bank_name,
+                   TO_CHAR(i.donation_start_date, 'YYYY-MM-DD') AS start_date,
+                   i.monthly_pay AS amount,
+                   CASE WHEN i.status_no = 1 THEN 'Active' ELSE 'Inactive' END AS so_status
+            FROM donor_item i
+            JOIN donor_master d ON i.donor_no = d.donor_no
+            LEFT JOIN lkp_banks b ON i.bank2_cd = b.bank_cd
+            WHERE i.donation_start_date >= :df AND i.donation_start_date <= :dt
+            {bank_filter_sql}
+            ORDER BY i.donation_start_date DESC, i.so_id DESC
+        """)
+        res = await db.execute(sql, params)
+        rows = [dict(r._mapping) for r in res]
+        for r in rows:
+            r["amount"] = float(r["amount"] or 0)
+        return {
+            "columns": ["so_id", "donor_no", "donor_name_en", "donor_name_ar", "item_no", "bank_name", "start_date", "amount", "so_status"],
+            "headers": ["SO ID", "Donor No", "Donor Name (EN)", "Donor Name (AR)", "Item", "Bank", "Start Date", "Monthly Pay (BHD)", "SO Status"],
+            "rows": rows,
+            "summary": {
+                "total_rows": len(rows),
+                "total_amount": round(sum(r["amount"] for r in rows), 3)
+            }
+        }
+
+    elif report_type == "data_audit":
+        if "bank_cd" in params:
+            bank_filter_sql = " AND i.bank2_cd = :bank_cd"
+        if audit_mode == "ACTIVE_DONOR_INACTIVE_SO":
+            sql = text(f"""
+                SELECT i.so_id,
+                       i.donor_no,
+                       COALESCE(d.donor_ename, d.donor_name) AS donor_name_en,
+                       COALESCE(d.donor_name, '') AS donor_name_ar,
+                       'Active Donor' AS donor_state,
+                       'Inactive SO' AS so_state,
+                       COALESCE(b.bank_e_desc, b.bank_desc, '') AS bank_name,
+                       i.monthly_pay AS amount
+                FROM donor_item i
+                JOIN donor_master d ON i.donor_no = d.donor_no
+                LEFT JOIN lkp_banks b ON i.bank2_cd = b.bank_cd
+                WHERE d.status_no = 1 AND i.status_no <> 1
+                {bank_filter_sql}
+                ORDER BY i.donor_no ASC, i.so_id ASC
+            """)
+        else:
+            sql = text(f"""
+                SELECT i.so_id,
+                       i.donor_no,
+                       COALESCE(d.donor_ename, d.donor_name) AS donor_name_en,
+                       COALESCE(d.donor_name, '') AS donor_name_ar,
+                       'Inactive Donor' AS donor_state,
+                       'Active SO' AS so_state,
+                       COALESCE(b.bank_e_desc, b.bank_desc, '') AS bank_name,
+                       i.monthly_pay AS amount
+                FROM donor_item i
+                JOIN donor_master d ON i.donor_no = d.donor_no
+                LEFT JOIN lkp_banks b ON i.bank2_cd = b.bank_cd
+                WHERE d.status_no <> 1 AND i.status_no = 1
+                {bank_filter_sql}
+                ORDER BY i.donor_no ASC, i.so_id ASC
+            """)
+        res = await db.execute(sql, params)
+        rows = [dict(r._mapping) for r in res]
+        for r in rows:
+            r["amount"] = float(r["amount"] or 0)
+        return {
+            "columns": ["so_id", "donor_no", "donor_name_en", "donor_name_ar", "donor_state", "so_state", "bank_name", "amount"],
+            "headers": ["SO ID", "Donor No", "Donor Name (EN)", "Donor Name (AR)", "Donor Status", "SO Status", "Bank", "Monthly Pay (BHD)"],
+            "rows": rows,
+            "summary": {
+                "total_rows": len(rows),
+                "total_amount": round(sum(r["amount"] for r in rows), 3)
+            }
+        }
+
+    elif report_type == "unpaid_followup":
+        df_str = from_date or "2026-01-01"
+        dt_str = to_date or "2026-12-31"
+        params["df"] = datetime.strptime(df_str, "%Y-%m-%d").date()
+        params["dt"] = datetime.strptime(dt_str, "%Y-%m-%d").date()
+        if "bank_cd" in params:
+            bank_filter_sql = " AND m.bank_cd = :bank_cd"
+        so_status_sql = ""
+        if status_filter == "ACTIVE_SO":
+            so_status_sql = " AND i.status_no = 1"
+        elif status_filter == "INACTIVE_SO":
+            so_status_sql = " AND i.status_no <> 1"
+
+        sql = text(f"""
+            SELECT m.donor_no,
+                   COALESCE(d.donor_ename, d.donor_name) AS donor_name_en,
+                   COALESCE(d.donor_name, '') AS donor_name_ar,
+                   COALESCE(d.donor_mobile, d.donor_tel1, '') AS mobile,
+                   COALESCE(b.bank_e_desc, b.bank_desc, '') AS bank_name,
+                   CASE WHEN i.status_no = 1 THEN 'Active' ELSE 'Inactive' END AS so_status,
+                   TO_CHAR(m.month_year, 'YYYY-MM') AS unpaid_month,
+                   m.paid_sum AS unpaid_amount
+            FROM money_trans m
+            JOIN donor_master d ON m.donor_no = d.donor_no
+            LEFT JOIN donor_item i ON m.so_id = i.so_id
+            LEFT JOIN lkp_banks b ON m.bank_cd = b.bank_cd
+            WHERE COALESCE(m.status_no, 2) <> 1
+              AND m.month_year >= :df AND m.month_year <= :dt
+              {bank_filter_sql}
+              {so_status_sql}
+            ORDER BY m.month_year DESC, m.donor_no ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = [dict(r._mapping) for r in res]
+        for r in rows:
+            r["unpaid_amount"] = float(r["unpaid_amount"] or 0)
+        return {
+            "columns": ["donor_no", "donor_name_en", "donor_name_ar", "mobile", "bank_name", "so_status", "unpaid_month", "unpaid_amount"],
+            "headers": ["Donor No", "Donor Name (EN)", "Donor Name (AR)", "Mobile", "Bank", "SO Status", "Unpaid Month", "Unpaid (BHD)"],
+            "rows": rows,
+            "summary": {
+                "total_rows": len(rows),
+                "total_amount": round(sum(r["unpaid_amount"] for r in rows), 3)
+            }
+        }
+
+    raise HTTPException(status_code=400, detail="Unsupported report_type")
+# ----------------- Matrix Reports API (/api/reports/matrix) -----------------
+@app.get("/reports-matrix", response_class=HTMLResponse)
+async def reports_matrix_page(request: Request):
+    return templates.TemplateResponse("matrix_reports.html", {"request": request})
+
+@app.get("/api/reports/matrix")
+async def get_reports_matrix_api(
+    years: Optional[str] = "2025,2026",
+    bank_cd: Optional[int] = None,
+    search_q: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    raw_years = [int(y.strip()) for y in (years or "2026").split(",") if y.strip().isdigit()]
+    if not raw_years:
+        raw_years = [2026]
+    selected_years = sorted(set(raw_years))
+    single_year = (len(selected_years) == 1)
+
+    month_names = {
+        1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+        7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
+    }
+
+    periods = []
+    for yr in selected_years:
+        for m in range(1, 13):
+            periods.append({
+                "key": f"{yr}-{m:02d}",
+                "month_start": f"{yr}-{m:02d}-01",
+                "label": month_names[m] if single_year else f"{yr}-{m:02d}",
+                "year": yr,
+                "month": m
+            })
+
+    period_keys = [p["key"] for p in periods]
+
+    banks_res = await db.execute(text("SELECT bank_cd, bank_desc, bank_e_desc FROM lkp_banks ORDER BY bank_cd"))
+    all_banks = [dict(r._mapping) for r in banks_res]
+    if bank_cd and int(bank_cd) > 0:
+        target_banks = [b for b in all_banks if int(b["bank_cd"]) == int(bank_cd)]
+    else:
+        target_banks = all_banks
+
+    bsl_sql = text(
+        "SELECT bank_cd, TO_CHAR(money_trans_month, 'YYYY-MM') AS p_key, "
+        "COALESCE(SUM(bank_stmnt_payamt), 0) AS gen_amt "
+        "FROM bank_statement_load "
+        "WHERE EXTRACT(YEAR FROM money_trans_month)::int = ANY(:yrs) "
+        "AND (COALESCE(cash_deposit, 2) <> 2 OR money_trans_status = 1) "
+        "GROUP BY bank_cd, TO_CHAR(money_trans_month, 'YYYY-MM')"
+    )
+    bsl_res = await db.execute(bsl_sql, {"yrs": selected_years})
+    gen_map = {}
+    for r in bsl_res:
+        m = r._mapping
+        gen_map[(int(m["bank_cd"]), str(m["p_key"]))] = float(m["gen_amt"] or 0)
+
+    paid_so_sql = text(
+        "SELECT bank_cd, TO_CHAR(month_year, 'YYYY-MM') AS p_key, "
+        "COALESCE(SUM(paid_sum), 0) AS so_amt "
+        "FROM money_trans "
+        "WHERE EXTRACT(YEAR FROM month_year)::int = ANY(:yrs) "
+        "AND status_no = 1 "
+        "GROUP BY bank_cd, TO_CHAR(month_year, 'YYYY-MM')"
+    )
+    paid_so_res = await db.execute(paid_so_sql, {"yrs": selected_years})
+    bank_so_map = {}
+    for r in paid_so_res:
+        m = r._mapping
+        bank_so_map[(int(m["bank_cd"]), str(m["p_key"]))] = float(m["so_amt"] or 0)
+
+    bank_rows = []
+    period_gen_totals = {k: 0.0 for k in period_keys}
+    period_so_totals = {k: 0.0 for k in period_keys}
+    grand_gen_total = 0.0
+    grand_so_total = 0.0
+
+    for b in target_banks:
+        bcd = int(b["bank_cd"])
+        bname = b["bank_e_desc"] or b["bank_desc"] or f"Bank #{bcd}"
+        cells = {}
+        row_gen = 0.0
+        row_so = 0.0
+        for k in period_keys:
+            g_val = round(gen_map.get((bcd, k), 0.0), 3)
+            s_val = round(bank_so_map.get((bcd, k), 0.0), 3)
+            cells[k] = {"general": g_val, "so": s_val}
+            row_gen = round(row_gen + g_val, 3)
+            row_so = round(row_so + s_val, 3)
+            period_gen_totals[k] = round(period_gen_totals[k] + g_val, 3)
+            period_so_totals[k] = round(period_so_totals[k] + s_val, 3)
+
+        grand_gen_total = round(grand_gen_total + row_gen, 3)
+        grand_so_total = round(grand_so_total + row_so, 3)
+
+        bank_rows.append({
+            "bank_cd": bcd,
+            "bank_name": bname,
+            "cells": cells,
+            "total_general": row_gen,
+            "total_so": row_so
+        })
+
+    so_params = {"yrs": selected_years}
+    so_where = ["1=1"]
+    if bank_cd and int(bank_cd) > 0:
+        so_where.append("i.bank2_cd = :bank_cd")
+        so_params["bank_cd"] = int(bank_cd)
+    if search_q and search_q.strip():
+        so_where.append(
+            "(CAST(i.so_id AS TEXT) ILIKE :q OR CAST(i.donor_no AS TEXT) ILIKE :q "
+            "OR COALESCE(d.donor_ename, '') ILIKE :q OR COALESCE(d.donor_name, '') ILIKE :q)"
+        )
+        so_params["q"] = f"%{search_q.strip()}%"
+
+    so_list_sql = text(
+        "SELECT i.so_id, i.donor_no, "
+        "COALESCE(d.donor_ename, d.donor_name) AS donor_name_en, "
+        "COALESCE(d.donor_name, '') AS donor_name_ar, "
+        "i.monthly_pay, i.status_no AS so_status, "
+        "TO_CHAR(i.donation_start_date, 'YYYY-MM-DD') AS start_date_str, "
+        "COALESCE(b.bank_e_desc, b.bank_desc, '') AS bank_name "
+        "FROM donor_item i "
+        "JOIN donor_master d ON i.donor_no = d.donor_no "
+        "LEFT JOIN lkp_banks b ON i.bank2_cd = b.bank_cd "
+        f"WHERE {' AND '.join(so_where)} "
+        "ORDER BY d.donor_name ASC, i.so_id ASC"
+    )
+    so_list_res = await db.execute(so_list_sql, so_params)
+    so_items = [dict(r._mapping) for r in so_list_res]
+
+    mt_sql = text(
+        "SELECT so_id, TO_CHAR(month_year, 'YYYY-MM') AS p_key, "
+        "status_no, COALESCE(paid_sum, 0) AS amt "
+        "FROM money_trans "
+        "WHERE EXTRACT(YEAR FROM month_year)::int = ANY(:yrs)"
+    )
+    mt_res = await db.execute(mt_sql, {"yrs": selected_years})
+    mt_map = {}
+    for r in mt_res:
+        m = r._mapping
+        mt_map[(int(m["so_id"]), str(m["p_key"]))] = {
+            "status_no": int(m["status_no"] or 2),
+            "amt": round(float(m["amt"] or 0), 3)
+        }
+
+    so_matrix_rows = []
+    col_paid_totals = {k: 0.0 for k in period_keys}
+    col_unpaid_totals = {k: 0.0 for k in period_keys}
+    all_paid_sum = 0.0
+    all_unpaid_sum = 0.0
+
+    for item in so_items:
+        sid = int(item["so_id"])
+        monthly_amt = round(float(item["monthly_pay"] or 0), 3)
+        is_so_active = (int(item["so_status"] or 0) == 1)
+        start_str = item.get("start_date_str") or ""
+
+        cells = {}
+        row_paid = 0.0
+        row_unpaid = 0.0
+
+        for p in periods:
+            k = p["key"]
+            m_start = p["month_start"]
+            rec = mt_map.get((sid, k))
+
+            if rec:
+                if rec["status_no"] == 1:
+                    amt_val = rec["amt"] if rec["amt"] > 0 else monthly_amt
+                    cells[k] = {"state": "paid", "amt": amt_val}
+                    row_paid = round(row_paid + amt_val, 3)
+                    col_paid_totals[k] = round(col_paid_totals[k] + amt_val, 3)
+                else:
+                    amt_val = rec["amt"] if rec["amt"] > 0 else monthly_amt
+                    cells[k] = {"state": "unpaid", "amt": amt_val}
+                    row_unpaid = round(row_unpaid + amt_val, 3)
+                    col_unpaid_totals[k] = round(col_unpaid_totals[k] + amt_val, 3)
+            else:
+                # No money_trans record yet: if SO is active and started on or before this month, treat as Unpaid (Red)
+                if is_so_active and (not start_str or start_str[:10] <= m_start):
+                    cells[k] = {"state": "unpaid", "amt": monthly_amt}
+                    row_unpaid = round(row_unpaid + monthly_amt, 3)
+                    col_unpaid_totals[k] = round(col_unpaid_totals[k] + monthly_amt, 3)
+                else:
+                    cells[k] = {"state": "none", "amt": 0.0}
+
+        all_paid_sum = round(all_paid_sum + row_paid, 3)
+        all_unpaid_sum = round(all_unpaid_sum + row_unpaid, 3)
+
+        donor_label = item["donor_name_en"] or item["donor_name_ar"] or f"Donor #{item['donor_no']}"
+        if item["donor_name_ar"] and item["donor_name_en"] and item["donor_name_ar"] != item["donor_name_en"]:
+            donor_label = f"{item['donor_name_en']} ({item['donor_name_ar']})"
+
+        so_matrix_rows.append({
+            "so_id": sid,
+            "donor_no": item["donor_no"],
+            "donor_name": donor_label,
+            "bank_name": item["bank_name"],
+            "monthly_pay": monthly_amt,
+            "so_active": is_so_active,
+            "cells": cells,
+            "paid_total": row_paid,
+            "unpaid_total": row_unpaid
+        })
+
+    return {
+        "years": selected_years,
+        "periods": periods,
+        "banks_matrix": {
+            "rows": bank_rows,
+            "period_totals": {
+                k: {"general": period_gen_totals[k], "so": period_so_totals[k]}
+                for k in period_keys
+            },
+            "grand_total": {"general": grand_gen_total, "so": grand_so_total}
+        },
+        "so_matrix": {
+            "rows": so_matrix_rows,
+            "period_totals": {
+                k: {"paid": col_paid_totals[k], "unpaid": col_unpaid_totals[k]}
+                for k in period_keys
+            },
+            "grand_total": {"paid": all_paid_sum, "unpaid": all_unpaid_sum}
+        }
+    }

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Year Tags & Matrix Reports - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .sticky-col { position: sticky; left: 0; z-index: 10; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    {% include 'sidebar.html' %}
+
+    <div class="p-6 max-w-7xl mx-auto w-full space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div>
+                <h1 class="text-base font-bold text-slate-900">Year Tags & Matrix Analytics</h1>
+                <p class="text-xs text-slate-500">Select from last 5 years tags: Banks Matrix (General & SO per month) and Donors/SO Paid/Unpaid Matrix</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+                <button type="button" id="btn-export-banks-csv"
+                        class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-sm transition">
+                    Export Banks CSV
+                </button>
+                <button type="button" id="btn-export-so-csv"
+                        class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-sm transition">
+                    Export SO Matrix CSV
+                </button>
+            </div>
+        </div>
+
+        <div id="mtx-alert" style="display: none;" class="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-2.5 rounded-xl text-xs font-semibold"></div>
+
+        <!-- Year Tags & Filters -->
+        <section class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4 text-xs">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                    <span class="block font-semibold text-slate-700 mb-2">Years (Last 5 Years - Multi-select Tags)</span>
+                    <div id="year-tags-container" class="flex flex-wrap items-center gap-2"></div>
+                </div>
+
+                <div class="flex flex-wrap items-end gap-3">
+                    <div>
+                        <label class="block font-semibold text-slate-700 mb-1">Bank Filter</label>
+                        <select id="mtx-bank" class="border border-slate-300 rounded-lg px-3 py-1.5 bg-white min-w-[190px]">
+                            <option value="">All Banks</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-slate-700 mb-1">Donor / SO Search</label>
+                        <input type="text" id="mtx-search" placeholder="Donor name, no, or SO ID..."
+                               class="border border-slate-300 rounded-lg px-3 py-1.5 bg-white min-w-[210px]">
+                    </div>
+                    <button type="button" id="btn-refresh-matrix"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg font-semibold shadow-sm transition">
+                        Apply
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 1. BANKS MATRIX -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50">
+                <div>
+                    <h2 class="text-sm font-bold text-slate-900">1. Banks Collection Matrix (General vs. Standing Orders)</h2>
+                    <p class="text-[11px] text-slate-500">Each month column is split into <strong class="text-blue-700">General</strong> (Total bank statement incl. Fawri/Cash) and <strong class="text-indigo-700">SO</strong> (Paid standing orders)</p>
+                </div>
+                <div id="banks-grand-summary" class="text-xs font-mono font-semibold text-slate-700"></div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-[11px] text-left border-collapse">
+                    <thead id="banks-mtx-thead"></thead>
+                    <tbody id="banks-mtx-tbody" class="divide-y divide-slate-200"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 2. DONORS & STANDING ORDERS MATRIX -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50">
+                <div>
+                    <h2 class="text-sm font-bold text-slate-900">2. Donors & Standing Orders Payment Matrix</h2>
+                    <p class="text-[11px] text-slate-500">
+                        Rows show Donor Name + SO ID across selected months:
+                        <span class="inline-block px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">Green = Paid</span>
+                        <span class="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-semibold">Red = Unpaid</span>
+                    </p>
+                </div>
+                <div id="so-grand-summary" class="text-xs font-mono font-semibold text-slate-700"></div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-[11px] text-left border-collapse">
+                    <thead id="so-mtx-thead"></thead>
+                    <tbody id="so-mtx-tbody" class="divide-y divide-slate-200"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const CURRENT_YEAR = new Date().getFullYear();
+        const LAST_FIVE_YEARS = [CURRENT_YEAR - 4, CURRENT_YEAR - 3, CURRENT_YEAR - 2, CURRENT_YEAR - 1, CURRENT_YEAR];
+        let selectedYears = new Set([2025, 2026].filter(y => LAST_FIVE_YEARS.includes(y)));
+        if (selectedYears.size === 0) selectedYears.add(CURRENT_YEAR);
+        let latestMatrixData = null;
+
+        function showAlert(msg) {
+            const el = document.getElementById("mtx-alert");
+            if (!msg) { el.style.display = "none"; el.textContent = ""; return; }
+            el.textContent = msg; el.style.display = "block";
+        }
+
+        function fmtAmt(v) { return Number(v || 0).toFixed(3); }
+
+        function renderYearTags() {
+            const box = document.getElementById("year-tags-container");
+            box.innerHTML = LAST_FIVE_YEARS.map(yr => {
+                const active = selectedYears.has(yr);
+                const cls = active
+                    ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100";
+                return `<button type="button" data-year="${yr}" class="year-tag-btn px-3 py-1 rounded-full border font-mono font-semibold text-xs transition ${cls}">${yr}</button>`;
+            }).join("");
+
+            box.querySelectorAll(".year-tag-btn").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const y = Number(btn.dataset.year);
+                    if (selectedYears.has(y)) {
+                        if (selectedYears.size > 1) selectedYears.delete(y);
+                    } else {
+                        selectedYears.add(y);
+                    }
+                    renderYearTags();
+                    loadMatrices();
+                });
+            });
+        }
+
+        function renderBanksMatrix(data) {
+            const thead = document.getElementById("banks-mtx-thead");
+            const tbody = document.getElementById("banks-mtx-tbody");
+            const summaryEl = document.getElementById("banks-grand-summary");
+            const periods = data.periods || [];
+            const bm = data.banks_matrix || { rows: [], period_totals: {}, grand_total: { general: 0, so: 0 } };
+
+            summaryEl.textContent = `Grand Total -> General: ${fmtAmt(bm.grand_total?.general)} BHD | SO: ${fmtAmt(bm.grand_total?.so)} BHD`;
+
+            let h1 = `<tr class="bg-slate-800 text-slate-100">
+                <th rowspan="2" class="py-2.5 px-3 font-semibold border-r border-slate-700 sticky-col bg-slate-800 min-w-[210px]">Bank</th>`;
+            periods.forEach(p => {
+                h1 += `<th colspan="2" class="py-2 px-2 text-center font-semibold border-r border-slate-700 whitespace-nowrap">${p.label}</th>`;
+            });
+            h1 += `<th colspan="2" class="py-2 px-2 text-center font-semibold bg-slate-900 whitespace-nowrap">Total</th></tr>`;
+
+            let h2 = `<tr class="bg-slate-700 text-slate-100 text-[10px]">`;
+            periods.forEach(() => {
+                h2 += `<th class="py-1 px-1.5 text-right font-medium text-sky-200 border-r border-slate-600">General</th>
+                       <th class="py-1 px-1.5 text-right font-medium text-indigo-200 border-r border-slate-700">SO</th>`;
+            });
+            h2 += `<th class="py-1 px-1.5 text-right font-semibold text-sky-200 bg-slate-800 border-r border-slate-600">General</th>
+                   <th class="py-1 px-1.5 text-right font-semibold text-indigo-200 bg-slate-800">SO</th></tr>`;
+            thead.innerHTML = h1 + h2;
+
+            if (!bm.rows || bm.rows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${periods.length * 2 + 3}" class="py-6 text-center text-slate-400">No bank rows found.</td></tr>`;
+                return;
+            }
+
+            let bodyHtml = bm.rows.map(r => {
+                let rowCells = `<td class="py-2 px-3 font-semibold text-slate-800 border-r border-slate-200 sticky-col bg-white whitespace-nowrap">${r.bank_name}</td>`;
+                periods.forEach(p => {
+                    const c = (r.cells && r.cells[p.key]) || { general: 0, so: 0 };
+                    rowCells += `
+                        <td class="py-2 px-1.5 text-right font-mono border-r border-slate-100 ${c.general > 0 ? 'text-blue-700 font-semibold' : 'text-slate-400'}">${fmtAmt(c.general)}</td>
+                        <td class="py-2 px-1.5 text-right font-mono border-r border-slate-200 ${c.so > 0 ? 'text-indigo-700 font-semibold' : 'text-slate-400'}">${fmtAmt(c.so)}</td>
+                    `;
+                });
+                rowCells += `
+                    <td class="py-2 px-1.5 text-right font-mono font-bold bg-blue-50/60 text-blue-800 border-r border-slate-200">${fmtAmt(r.total_general)}</td>
+                    <td class="py-2 px-1.5 text-right font-mono font-bold bg-indigo-50/60 text-indigo-800">${fmtAmt(r.total_so)}</td>
+                `;
+                return `<tr class="hover:bg-slate-50">${rowCells}</tr>`;
+            }).join("");
+
+            let totRow = `<td class="py-2.5 px-3 font-bold text-slate-900 bg-slate-100 border-r border-slate-300 sticky-col">Grand Total</td>`;
+            periods.forEach(p => {
+                const pt = (bm.period_totals && bm.period_totals[p.key]) || { general: 0, so: 0 };
+                totRow += `
+                    <td class="py-2.5 px-1.5 text-right font-mono font-bold bg-slate-100 text-blue-800 border-r border-slate-200">${fmtAmt(pt.general)}</td>
+                    <td class="py-2.5 px-1.5 text-right font-mono font-bold bg-slate-100 text-indigo-800 border-r border-slate-300">${fmtAmt(pt.so)}</td>
+                `;
+            });
+            totRow += `
+                <td class="py-2.5 px-1.5 text-right font-mono font-bold bg-blue-100 text-blue-900 border-r border-slate-200">${fmtAmt(bm.grand_total?.general)}</td>
+                <td class="py-2.5 px-1.5 text-right font-mono font-bold bg-indigo-100 text-indigo-900">${fmtAmt(bm.grand_total?.so)}</td>
+            `;
+            bodyHtml += `<tr class="border-t-2 border-slate-300">${totRow}</tr>`;
+            tbody.innerHTML = bodyHtml;
+        }
+
+        function renderSoMatrix(data) {
+            const thead = document.getElementById("so-mtx-thead");
+            const tbody = document.getElementById("so-mtx-tbody");
+            const summaryEl = document.getElementById("so-grand-summary");
+            const periods = data.periods || [];
+            const sm = data.so_matrix || { rows: [], period_totals: {}, grand_total: { paid: 0, unpaid: 0 } };
+
+            summaryEl.innerHTML = `Total Paid: <span class="text-emerald-700">${fmtAmt(sm.grand_total?.paid)} BHD</span> | Total Unpaid: <span class="text-rose-700">${fmtAmt(sm.grand_total?.unpaid)} BHD</span>`;
+
+            let headHtml = `<tr class="bg-slate-800 text-slate-100">
+                <th class="py-2.5 px-3 font-semibold border-r border-slate-700 sticky-col bg-slate-800 min-w-[240px]">Donor & SO ID</th>
+                <th class="py-2.5 px-2 font-semibold border-r border-slate-700 whitespace-nowrap">Bank</th>`;
+            periods.forEach(p => {
+                headHtml += `<th class="py-2.5 px-2 text-center font-semibold border-r border-slate-700 whitespace-nowrap">${p.label}</th>`;
+            });
+            headHtml += `<th class="py-2.5 px-2 text-right font-semibold bg-emerald-900 text-emerald-100 border-r border-slate-700 whitespace-nowrap">Paid Total</th>
+                         <th class="py-2.5 px-2 text-right font-semibold bg-rose-900 text-rose-100 whitespace-nowrap">Unpaid Total</th></tr>`;
+            thead.innerHTML = headHtml;
+
+            if (!sm.rows || sm.rows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${periods.length + 4}" class="py-6 text-center text-slate-400">No standing orders found for selected filters.</td></tr>`;
+                return;
+            }
+
+            let html = sm.rows.map(r => {
+                let rowHtml = `
+                    <td class="py-2 px-3 border-r border-slate-200 sticky-col bg-white whitespace-nowrap">
+                        <span class="font-mono font-bold text-slate-900">#${r.so_id}</span>
+                        <span class="text-slate-400 mx-1">|</span>
+                        <span class="font-semibold text-slate-800">${r.donor_name}</span>
+                    </td>
+                    <td class="py-2 px-2 text-slate-600 border-r border-slate-200 whitespace-nowrap">${r.bank_name || "-"}</td>
+                `;
+
+                periods.forEach(p => {
+                    const c = (r.cells && r.cells[p.key]) || { state: "none", amt: 0 };
+                    if (c.state === "paid") {
+                        rowHtml += `<td class="py-1.5 px-1.5 text-center font-mono font-semibold bg-emerald-100 text-emerald-900 border-r border-emerald-200 whitespace-nowrap" title="Paid">${fmtAmt(c.amt)}</td>`;
+                    } else if (c.state === "unpaid") {
+                        rowHtml += `<td class="py-1.5 px-1.5 text-center font-mono font-semibold bg-rose-100 text-rose-900 border-r border-rose-200 whitespace-nowrap" title="Unpaid">${fmtAmt(c.amt)}</td>`;
+                    } else {
+                        rowHtml += `<td class="py-1.5 px-1.5 text-center text-slate-300 border-r border-slate-100">-</td>`;
+                    }
+                });
+
+                rowHtml += `
+                    <td class="py-2 px-2 text-right font-mono font-bold bg-emerald-50 text-emerald-800 border-r border-slate-200 whitespace-nowrap">${fmtAmt(r.paid_total)}</td>
+                    <td class="py-2 px-2 text-right font-mono font-bold bg-rose-50 text-rose-800 whitespace-nowrap">${fmtAmt(r.unpaid_total)}</td>
+                `;
+                return `<tr class="hover:bg-slate-50">${rowHtml}</tr>`;
+            }).join("");
+
+            let footHtml = `<td class="py-2.5 px-3 font-bold text-slate-900 bg-slate-100 border-r border-slate-300 sticky-col">Monthly Totals (Paid / Unpaid)</td>
+                            <td class="py-2.5 px-2 bg-slate-100 border-r border-slate-300"></td>`;
+            periods.forEach(p => {
+                const pt = (sm.period_totals && sm.period_totals[p.key]) || { paid: 0, unpaid: 0 };
+                footHtml += `
+                    <td class="py-1.5 px-1.5 text-center font-mono bg-slate-100 border-r border-slate-200 whitespace-nowrap">
+                        <div class="text-emerald-700 font-bold">${fmtAmt(pt.paid)}</div>
+                        <div class="text-rose-700 font-semibold">${fmtAmt(pt.unpaid)}</div>
+                    </td>
+                `;
+            });
+            footHtml += `
+                <td class="py-2.5 px-2 text-right font-mono font-bold bg-emerald-100 text-emerald-900 border-r border-slate-200">${fmtAmt(sm.grand_total?.paid)}</td>
+                <td class="py-2.5 px-2 text-right font-mono font-bold bg-rose-100 text-rose-900">${fmtAmt(sm.grand_total?.unpaid)}</td>
+            `;
+            html += `<tr class="border-t-2 border-slate-300">${footHtml}</tr>`;
+            tbody.innerHTML = html;
+        }
+
+        async function loadMatrices() {
+            showAlert("");
+            const yrsParam = Array.from(selectedYears).sort().join(",");
+            const bankVal = document.getElementById("mtx-bank").value;
+            const qVal = document.getElementById("mtx-search").value;
+            const params = new URLSearchParams({ years: yrsParam });
+            if (bankVal) params.set("bank_cd", bankVal);
+            if (qVal) params.set("search_q", qVal);
+
+            try {
+                const res = await fetch("/api/reports/matrix?" + params.toString(), { credentials: "same-origin" });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) { showAlert(data.detail || ("Failed to load matrix data (HTTP " + res.status + ")")); return; }
+                latestMatrixData = data;
+                renderBanksMatrix(data);
+                renderSoMatrix(data);
+            } catch (e) { showAlert("Network error while loading matrices."); }
+        }
+
+        function downloadCsv(filename, lines) {
+            const esc = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+            const csvText = "\uFEFF" + lines.map(row => row.map(esc).join(",")).join("\n");
+            const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function exportBanksMatrixCsv() {
+            if (!latestMatrixData) return;
+            const periods = latestMatrixData.periods || [];
+            const bm = latestMatrixData.banks_matrix || { rows: [] };
+            const header = ["Bank"];
+            periods.forEach(p => { header.push(`${p.label} (General)`, `${p.label} (SO)`); });
+            header.push("Total (General)", "Total (SO)");
+            const lines = [header];
+            (bm.rows || []).forEach(r => {
+                const line = [r.bank_name];
+                periods.forEach(p => {
+                    const c = (r.cells && r.cells[p.key]) || { general: 0, so: 0 };
+                    line.push(fmtAmt(c.general), fmtAmt(c.so));
+                });
+                line.push(fmtAmt(r.total_general), fmtAmt(r.total_so));
+                lines.push(line);
+            });
+            downloadCsv("banks_matrix_general_so.csv", lines);
+        }
+
+        function exportSoMatrixCsv() {
+            if (!latestMatrixData) return;
+            const periods = latestMatrixData.periods || [];
+            const sm = latestMatrixData.so_matrix || { rows: [] };
+            const header = ["SO ID", "Donor No", "Donor Name", "Bank"];
+            periods.forEach(p => header.push(`${p.label} Status & Amt`));
+            header.push("Paid Total", "Unpaid Total");
+            const lines = [header];
+            (sm.rows || []).forEach(r => {
+                const line = [r.so_id, r.donor_no, r.donor_name, r.bank_name];
+                periods.forEach(p => {
+                    const c = (r.cells && r.cells[p.key]) || { state: "none", amt: 0 };
+                    if (c.state === "paid") line.push(`Paid (${fmtAmt(c.amt)})`);
+                    else if (c.state === "unpaid") line.push(`Unpaid (${fmtAmt(c.amt)})`);
+                    else line.push("-");
+                });
+                line.push(fmtAmt(r.paid_total), fmtAmt(r.unpaid_total));
+                lines.push(line);
+            });
+            downloadCsv("donors_so_payment_matrix.csv", lines);
+        }
+
+        async function loadBanks() {
+            const res = await fetch("/api/reports/meta", { credentials: "same-origin" });
+            if (!res.ok) return;
+            const data = await res.json();
+            const sel = document.getElementById("mtx-bank");
+            sel.innerHTML = '<option value="">All Banks</option>';
+            (data.banks || []).forEach(b => {
+                const opt = document.createElement("option");
+                opt.value = b.bank_cd;
+                opt.textContent = b.bank_e_desc || b.bank_desc || ("Bank #" + b.bank_cd);
+                sel.appendChild(opt);
+            });
+        }
+
+        async function initMatrixPage() {
+            const btn = document.getElementById("btn-refresh-matrix");
+            if (!btn || btn.dataset.bound === "1") return;
+            btn.dataset.bound = "1";
+            renderYearTags();
+            await loadBanks();
+            btn.addEventListener("click", loadMatrices);
+            document.getElementById("mtx-bank").addEventListener("change", loadMatrices);
+            document.getElementById("mtx-search").addEventListener("keyup", (e) => { if (e.key === "Enter") loadMatrices(); });
+            document.getElementById("btn-export-banks-csv").addEventListener("click", exportBanksMatrixCsv);
+            document.getElementById("btn-export-so-csv").addEventListener("click", exportSoMatrixCsv);
+            await loadMatrices();
+        }
+
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initMatrixPage);
+        else initMatrixPage();
+    </script>
+</body>
+</html>

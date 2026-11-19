@@ -54,7 +54,7 @@
             </a>
             {% endif %}
 
-            {% set has_so_any = (perms.get('donors', 'none') != 'none') or (perms.get('audit', 'none') != 'none') or (perms.get('reconcile', 'none') != 'none') or (perms.get('followup', 'none') != 'none') %}
+            {% set has_so_any = (perms.get('donors', 'none') != 'none') or (perms.get('audit', 'none') != 'none') or (perms.get('reconcile', 'none') != 'none') or (perms.get('followup', 'none') != 'none') or (perms.get('reports', 'none') != 'none') %}
             {% if has_so_any %}
             <div class="pt-1">
                 <button type="button" onclick="toggleErpSubmenu('so-submenu', 'so-chevron')" title="Bank Standing Orders"
@@ -120,6 +120,28 @@
                             <span class="sidebar-text whitespace-nowrap">Donor Follow-up</span>
                         </span>
                         {% if perms.get('followup') == 'view' %}<span class="sidebar-badge text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">VIEW</span>{% endif %}
+                    </a>
+                    {% endif %}
+
+                    {% if perms.get('reports', 'none') != 'none' %}
+                    <a href="/reports" data-nav-path="/reports" data-page-key="reports" title="SO Reports"
+                       class="erp-nav-link flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">
+                        <span class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                            </svg>
+                            <span class="sidebar-text whitespace-nowrap">SO Reports</span>
+                        </span>
+                        {% if perms.get('reports') == 'view' %}<span class="sidebar-badge text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">VIEW</span>{% endif %}
+                    </a>
+                    <a href="/reports-matrix" data-nav-path="/reports-matrix" data-page-key="reports" title="Year & Matrix Reports"
+                       class="erp-nav-link flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">
+                        <span class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
+                            </svg>
+                            <span class="sidebar-text whitespace-nowrap">Year & Matrix Reports</span>
+                        </span>
                     </a>
                     {% endif %}
                 </div>

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Views & Export Center - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
+        @media print {
+            #erp-global-sidebar, .no-print { display: none !important; }
+            .erp-main-content { overflow: visible !important; background: white !important; }
+            .print-table-box { max-height: none !important; overflow: visible !important; border: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    {% include 'sidebar.html' %}
+
+    <div class="p-4 lg:p-6 max-w-[1600px] mx-auto w-full space-y-5">
+
+        <!-- 1. Top Header & Export Actions -->
+        <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-4">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Database Views Exporter
+                    </span>
+                    <span id="badge-db-view" class="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-slate-100 text-slate-700 border border-slate-200">
+                        vw_active_don_address
+                    </span>
+                </div>
+                <h1 id="hdr-view-title" class="text-base lg:text-lg font-extrabold text-slate-900 mt-1">
+                    Data Views & Export Center
+                </h1>
+                <p id="hdr-view-subtitle" class="text-xs text-slate-500">
+                    Browse curated PostgreSQL views and export directly to Excel-ready CSV or formatted PDF
+                </p>
+            </div>
+
+            <div class="no-print flex flex-wrap items-center gap-2.5">
+                <button id="btn-export-csv" type="button"
+                        class="h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-2xs transition flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <span>Export Excel / CSV</span>
+                </button>
+
+                <button id="btn-export-pdf" type="button"
+                        class="h-10 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-2xs transition flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                    </svg>
+                    <span>Download / Print PDF</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 2. Curated View Selector Cards (Group A + Unified Summary View) -->
+        <div class="no-print grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <button type="button" onclick="selectDataView('ACTIVE_DON_ADDRESS')" id="vcard-ACTIVE_DON_ADDRESS"
+                    class="view-card text-left p-3.5 rounded-xl border-2 border-blue-600 bg-blue-50/70 transition flex flex-col justify-between">
+                <div>
+                    <div class="text-[10px] font-mono font-bold text-blue-700 uppercase">1. ACTIVE_DON_ADDRESS</div>
+                    <div class="text-xs font-bold text-slate-900 mt-0.5">Active Donors — Street Address</div>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-2">Home/street address mailing list with Prefix, Care, Total Pay & SO count</div>
+            </button>
+
+            <button type="button" onclick="selectDataView('ACTIVE_DON_PBOX')" id="vcard-ACTIVE_DON_PBOX"
+                    class="view-card text-left p-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition flex flex-col justify-between">
+                <div>
+                    <div class="text-[10px] font-mono font-bold text-indigo-700 uppercase">2. ACTIVE_DON_PBOX</div>
+                    <div class="text-xs font-bold text-slate-900 mt-0.5">Donors — P.O. Box Mailing List</div>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-2">P.O. Box mailing list (`address_type = 2`) with Prefix, Care & Total Pay</div>
+            </button>
+
+            <button type="button" onclick="selectDataView('SMS_SUBSCRIPTIONS')" id="vcard-SMS_SUBSCRIPTIONS"
+                    class="view-card text-left p-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition flex flex-col justify-between">
+                <div>
+                    <div class="text-[10px] font-mono font-bold text-teal-700 uppercase">3. SMS_SUBSCRIPTIONS</div>
+                    <div class="text-xs font-bold text-slate-900 mt-0.5">SMS & Phone Directory</div>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-2">Donor names and mobile/telephone numbers for SMS broadcast campaigns</div>
+            </button>
+
+            <button type="button" onclick="selectDataView('UPTO_SPECIFIC_AMT')" id="vcard-UPTO_SPECIFIC_AMT"
+                    class="view-card text-left p-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition flex flex-col justify-between">
+                <div>
+                    <div class="text-[10px] font-mono font-bold text-amber-700 uppercase">4. UPTO_SPECIFIC_AMT</div>
+                    <div class="text-xs font-bold text-slate-900 mt-0.5">Donors by Min Monthly Amount</div>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-2">Replaces `UPTO5`, `UPTO10`, `UPTO25` & `UPTO_SPECIFIC_AMT` with dynamic threshold</div>
+            </button>
+
+            <button type="button" onclick="selectDataView('VW_STANDING_ORDERS_SUMMARY')" id="vcard-VW_STANDING_ORDERS_SUMMARY"
+                    class="view-card text-left p-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition flex flex-col justify-between">
+                <div>
+                    <div class="text-[10px] font-mono font-bold text-purple-700 uppercase">5. UNIFIED SO VIEW</div>
+                    <div class="text-xs font-bold text-slate-900 mt-0.5">Standing Orders & Delay Summary</div>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-2">Re-engineered unified view (`vw_standing_orders_summary`) with delay & follow-up</div>
+            </button>
+        </div>
+
+        <!-- 3. Filter & Summary Strip -->
+        <div class="no-print bg-white rounded-xl p-4 border border-slate-200 shadow-2xs flex flex-wrap items-end justify-between gap-4">
+            <div class="flex flex-wrap items-end gap-3">
+                <!-- Search Input -->
+                <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Quick Search</label>
+                    <input type="text" id="inp-search" placeholder="Search donor no, name, mobile, address..."
+                           class="h-9 w-64 px-3 rounded-lg border border-slate-300 text-xs focus:outline-none focus:border-blue-600">
+                </div>
+
+                <!-- Dynamic Min Amount Controls (shown for UPTO_SPECIFIC_AMT) -->
+                <div id="box-min-amt" class="hidden flex flex-wrap items-end gap-2">
+                    <div>
+                        <label class="block text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-1">Min Monthly Pay (BHD)</label>
+                        <input type="number" id="inp-min-amt" step="1" min="0" value="50"
+                               class="h-9 w-28 px-3 rounded-lg border border-amber-400 bg-amber-50/40 font-mono font-bold text-xs text-slate-900 focus:outline-none focus:border-amber-600">
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button type="button" onclick="setQuickMinAmt(5)" class="h-9 px-2.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[11px] font-mono font-bold">>= 5 (UPTO5)</button>
+                        <button type="button" onclick="setQuickMinAmt(10)" class="h-9 px-2.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[11px] font-mono font-bold">>= 10 (UPTO10)</button>
+                        <button type="button" onclick="setQuickMinAmt(25)" class="h-9 px-2.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[11px] font-mono font-bold">>= 25 (UPTO25)</button>
+                        <button type="button" onclick="setQuickMinAmt(50)" class="h-9 px-2.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-[11px] font-mono font-bold text-amber-900">>= 50 (SETUP)</button>
+                    </div>
+                </div>
+
+                <!-- Status Filter (shown for PBOX, SMS, Unified View) -->
+                <div id="box-status-filter" class="hidden">
+                    <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Status Filter</label>
+                    <select id="sel-status-filter" class="h-9 px-3 rounded-lg border border-slate-300 text-xs font-semibold bg-white">
+                        <option value="ACTIVE">Active Only</option>
+                        <option value="INACTIVE">Inactive Only</option>
+                        <option value="ALL">All Records</option>
+                    </select>
+                </div>
+
+                <!-- Contact Allowed Checkbox (shown for SMS and UPTO_SPECIFIC_AMT) -->
+                <div id="box-contact-only" class="hidden flex items-center h-9 px-2">
+                    <label class="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                        <input type="checkbox" id="chk-contact-only" class="rounded border-slate-300 text-blue-600">
+                        <span>Contact Allowed Only (`DONOR_CONTACT = 1`)</span>
+                    </label>
+                </div>
+
+                <button type="button" onclick="loadCurrentView()"
+                        class="h-9 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition">
+                    Apply Filter
+                </button>
+            </div>
+
+            <!-- Summary Totals -->
+            <div class="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 text-xs">
+                <div>
+                    <span class="text-slate-500">Rows:</span>
+                    <strong id="sum-rows" class="font-mono font-extrabold text-slate-900 ml-1">0</strong>
+                </div>
+                <div id="box-sum-amt" class="border-l border-slate-200 pl-4">
+                    <span class="text-slate-500">Total Monthly BHD:</span>
+                    <strong id="sum-amt" class="font-mono font-extrabold text-emerald-700 ml-1">0.000</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. Data Table Preview -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div class="print-table-box overflow-x-auto max-h-[650px]">
+                <table class="w-full text-left text-xs">
+                    <thead id="tbl-view-head" class="bg-slate-800 text-white uppercase text-[10px] sticky top-0 z-10"></thead>
+                    <tbody id="tbl-view-body" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        let currentViewKey = 'ACTIVE_DON_ADDRESS';
+        let latestViewData = null;
+
+        function fmtBhd(val) {
+            return Number(val || 0).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+        }
+
+        function updateFilterVisibility() {
+            const minBox = document.getElementById('box-min-amt');
+            const statBox = document.getElementById('box-status-filter');
+            const contactBox = document.getElementById('box-contact-only');
+
+            minBox.classList.toggle('hidden', currentViewKey !== 'UPTO_SPECIFIC_AMT');
+            statBox.classList.toggle('hidden', !['ACTIVE_DON_PBOX', 'SMS_SUBSCRIPTIONS', 'VW_STANDING_ORDERS_SUMMARY'].includes(currentViewKey));
+            contactBox.classList.toggle('hidden', !['SMS_SUBSCRIPTIONS', 'UPTO_SPECIFIC_AMT'].includes(currentViewKey));
+
+            document.querySelectorAll('.view-card').forEach(btn => {
+                if (btn.id === 'vcard-' + currentViewKey) {
+                    btn.className = 'view-card text-left p-3.5 rounded-xl border-2 border-blue-600 bg-blue-50/70 transition flex flex-col justify-between';
+                } else {
+                    btn.className = 'view-card text-left p-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition flex flex-col justify-between';
+                }
+            });
+        }
+
+        function selectDataView(vk) {
+            currentViewKey = vk;
+            updateFilterVisibility();
+            loadCurrentView();
+        }
+
+        function setQuickMinAmt(amt) {
+            document.getElementById('inp-min-amt').value = amt;
+            loadCurrentView();
+        }
+
+        async function loadCurrentView() {
+            const q = document.getElementById('inp-search').value || '';
+            const statusFilter = document.getElementById('sel-status-filter').value || 'ACTIVE';
+            const minAmt = document.getElementById('inp-min-amt').value;
+            const contactOnly = document.getElementById('chk-contact-only').checked;
+
+            const params = new URLSearchParams({
+                view_key: currentViewKey,
+                status_filter: statusFilter,
+                contact_only: contactOnly ? 'true' : 'false'
+            });
+            if (q.trim()) params.set('search_q', q.trim());
+            if (currentViewKey === 'UPTO_SPECIFIC_AMT' && minAmt !== '') {
+                params.set('min_amt', minAmt);
+            }
+
+            const res = await fetch('/api/reports/views?' + params.toString(), { credentials: 'same-origin' });
+            if (!res.ok) return;
+            const data = await res.json();
+            latestViewData = data;
+
+            document.getElementById('badge-db-view').textContent = data.db_view_name || currentViewKey;
+            document.getElementById('hdr-view-title').textContent = data.view_title_en;
+            document.getElementById('hdr-view-subtitle').textContent = data.view_title_ar;
+
+            const summary = data.summary || { total_rows: 0, total_amount: null };
+            document.getElementById('sum-rows').textContent = Number(summary.total_rows || 0).toLocaleString();
+            const amtBox = document.getElementById('box-sum-amt');
+            if (summary.total_amount !== null && summary.total_amount !== undefined) {
+                amtBox.classList.remove('hidden');
+                document.getElementById('sum-amt').textContent = fmtBhd(summary.total_amount);
+            } else {
+                amtBox.classList.add('hidden');
+            }
+
+            const thead = document.getElementById('tbl-view-head');
+            const headers = data.headers || [];
+            const cols = data.columns || [];
+            thead.innerHTML = `<tr><th class="py-2.5 px-3 text-slate-400">#</th>` +
+                headers.map(h => `<th class="py-2.5 px-3 whitespace-nowrap">${h}</th>`).join('') +
+                `</tr>`;
+
+            const tbody = document.getElementById('tbl-view-body');
+            const rows = data.rows || [];
+            if (rows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${cols.length + 1}" class="py-8 text-center text-slate-400">No matching rows found in this view.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = rows.map((r, idx) => {
+                const tds = cols.map(c => {
+                    const val = r[c] ?? '';
+                    if (c === 'sumpay' || c === 'monthly_pay') {
+                        return `<td class="py-2 px-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">${fmtBhd(val)}</td>`;
+                    }
+                    if (c === 'donor_no' || c === 'so_id' || c === 'st_no' || c === 'actual_delay_months') {
+                        return `<td class="py-2 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">${val}</td>`;
+                    }
+                    return `<td class="py-2 px-3 text-slate-700">${val}</td>`;
+                }).join('');
+                return `<tr class="hover:bg-slate-50"><td class="py-2 px-3 font-mono text-slate-400">${idx + 1}</td>${tds}</tr>`;
+            }).join('');
+        }
+
+        function exportCurrentViewCsv() {
+            if (!latestViewData || !latestViewData.rows) return;
+            const headers = latestViewData.headers || [];
+            const cols = latestViewData.columns || [];
+            const rows = latestViewData.rows || [];
+
+            const esc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+            const lines = [headers.map(esc).join(',')];
+            rows.forEach(r => {
+                lines.push(cols.map(c => esc(r[c])).join(','));
+            });
+
+            const csvContent = '\uFEFF' + lines.join('\r\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const dateStr = new Date().toISOString().slice(0, 10);
+            a.download = `${latestViewData.view_key.toLowerCase()}_${dateStr}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function exportCurrentViewPdf() {
+            if (!latestViewData || !latestViewData.rows) return;
+            const headers = latestViewData.headers || [];
+            const cols = latestViewData.columns || [];
+            const rows = latestViewData.rows || [];
+            const summary = latestViewData.summary || {};
+            const nowStr = new Date().toLocaleString('en-GB');
+
+            const printWin = window.open('', '_blank', 'width=1150,height=800');
+            if (!printWin) {
+                window.print();
+                return;
+            }
+
+            const rowsHtml = rows.map((r, i) => `
+                <tr>
+                    <td style="text-align:center;color:#64748b;">${i + 1}</td>
+                    ${cols.map(c => {
+                        const v = r[c] ?? '';
+                        if (c === 'sumpay' || c === 'monthly_pay') {
+                            return `<td style="text-align:right;font-family:monospace;font-weight:700;">${fmtBhd(v)}</td>`;
+                        }
+                        return `<td>${v}</td>`;
+                    }).join('')}
+                </tr>
+            `).join('');
+
+            printWin.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <title>${latestViewData.view_title_en}</title>
+                    <style>
+                        @page { size: A4 landscape; margin: 12mm; }
+                        body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; font-size: 11px; margin: 0; }
+                        .hdr { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 12px; }
+                        .hdr h1 { font-size: 15px; margin: 0 0 3px 0; }
+                        .hdr h2 { font-size: 13px; margin: 0; color: #334155; }
+                        .meta { text-align: right; font-size: 11px; color: #475569; }
+                        table { width: 100%; border-collapse: collapse; }
+                        th { background: #1e293b; color: white; text-align: left; padding: 6px 8px; font-size: 10px; text-transform: uppercase; }
+                        td { border-bottom: 1px solid #e2e8f0; padding: 5px 8px; }
+                        tr:nth-child(even) { background: #f8fafc; }
+                    </style>
+                </head>
+                <body>
+                    <div class="hdr">
+                        <div>
+                            <h1>DISCOVER ISLAM SOCIETY — BAHRAIN</h1>
+                            <h2>${latestViewData.view_title_en}</h2>
+                            <div style="font-size:12px;color:#475569;margin-top:2px;">${latestViewData.view_title_ar}</div>
+                        </div>
+                        <div class="meta">
+                            <div><strong>Generated:</strong> ${nowStr}</div>
+                            <div><strong>Total Records:</strong> ${Number(summary.total_rows || 0).toLocaleString()}</div>
+                            ${summary.total_amount !== null && summary.total_amount !== undefined ? `<div><strong>Total Monthly Pay:</strong> ${fmtBhd(summary.total_amount)} BHD</div>` : ''}
+                        </div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:32px;text-align:center;">#</th>
+                                ${headers.map(h => `<th>${h}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                    <script>
+                        window.onload = function() { setTimeout(function() { window.print(); }, 250); };
+                    <\/script>
+                </body>
+                </html>
+            `);
+            printWin.document.close();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            updateFilterVisibility();
+            document.getElementById('inp-search').addEventListener('keyup', e => {
+                if (e.key === 'Enter') loadCurrentView();
+            });
+            document.getElementById('sel-status-filter').addEventListener('change', loadCurrentView);
+            document.getElementById('chk-contact-only').addEventListener('change', loadCurrentView);
+            document.getElementById('btn-export-csv').addEventListener('click', exportCurrentViewCsv);
+            document.getElementById('btn-export-pdf').addEventListener('click', exportCurrentViewPdf);
+            loadCurrentView();
+        });
+    </script>
+</body>
+</html>

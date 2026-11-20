@@ -92,19 +92,19 @@
                                         <button type="button" @click="grp.expanded = !grp.expanded" class="flex items-center gap-2 text-left">
                                             <span class="font-mono text-xs text-slate-500" x-text="grp.expanded ? '▼' : '▶'"></span>
                                             <span class="text-xs font-bold text-slate-800" x-text="grp.group_label"></span>
-                                            <span class="text-[11px] text-slate-500" x-text="'(' + grp.pages.length + ' pages)'"></span>
+                                            <span class="text-[11px] text-slate-500" x-text="'(' + totalModulePagesCount(grp) + ' pages)'"></span>
                                         </button>
 
                                         <!-- Quick Bulk Set for Entire Module -->
                                         <div class="flex items-center gap-1.5 text-[11px]">
-                                            <span class="text-slate-500 mr-1">Set group:</span>
+                                            <span class="text-slate-500 mr-1">Set module:</span>
                                             <button type="button" @click="setGroupAccess(grp, 'none')" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-200 font-semibold">None</button>
                                             <button type="button" @click="setGroupAccess(grp, 'view')" class="px-2 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 font-semibold">View</button>
                                             <button type="button" @click="setGroupAccess(grp, 'edit')" class="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-300 text-emerald-900 hover:bg-emerald-100 font-semibold">Edit</button>
                                         </div>
                                     </div>
 
-                                    <!-- Child Pages -->
+                                    <!-- Child Pages & Nested Sub-Groups -->
                                     <div x-show="grp.expanded" class="divide-y divide-slate-100 bg-white">
                                         <template x-for="pg in grp.pages" :key="pg.key">
                                             <div class="px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50/70">
@@ -120,6 +120,44 @@
                                                     <option value="view">View (Read Only)</option>
                                                     <option value="edit">Edit (Read & Modify)</option>
                                                 </select>
+                                            </div>
+                                        </template>
+
+                                        <!-- Nested Parent Sub-Groups (e.g. Standing Orders Reports) -->
+                                        <template x-for="sub in (grp.sub_groups || [])" :key="sub.group_id">
+                                            <div class="bg-slate-50/60 border-t border-slate-200">
+                                                <div class="pl-6 pr-4 py-2 bg-indigo-50/60 flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100">
+                                                    <button type="button" @click="sub.expanded = !sub.expanded" class="flex items-center gap-2 text-left">
+                                                        <span class="font-mono text-xs text-indigo-600" x-text="sub.expanded ? '▼' : '▶'"></span>
+                                                        <span class="text-xs font-bold text-indigo-950" x-text="sub.group_label"></span>
+                                                        <span class="text-[11px] text-indigo-600 font-medium" x-text="'(' + sub.pages.length + ' report pages)'"></span>
+                                                    </button>
+                                                    <div class="flex items-center gap-1.5 text-[11px]">
+                                                        <span class="text-indigo-700 mr-1">Set group:</span>
+                                                        <button type="button" @click="setGroupAccess(sub, 'none')" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-200 font-semibold">None</button>
+                                                        <button type="button" @click="setGroupAccess(sub, 'view')" class="px-2 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 font-semibold">View</button>
+                                                        <button type="button" @click="setGroupAccess(sub, 'edit')" class="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-300 text-emerald-900 hover:bg-emerald-100 font-semibold">Edit</button>
+                                                    </div>
+                                                </div>
+
+                                                <div x-show="sub.expanded" class="divide-y divide-slate-100 bg-white">
+                                                    <template x-for="spg in sub.pages" :key="spg.key">
+                                                        <div class="pl-9 pr-4 py-2.5 flex items-center justify-between gap-3 hover:bg-indigo-50/30">
+                                                            <div class="pl-4 border-l-2 border-indigo-300">
+                                                                <div class="text-xs font-semibold text-slate-800" x-text="spg.label"></div>
+                                                                <div class="text-[11px] font-mono text-slate-400" x-text="spg.route"></div>
+                                                            </div>
+
+                                                            <select x-model="selectedUser.page_permissions[spg.key]"
+                                                                    :class="levelBadgeClass(selectedUser.page_permissions[spg.key])"
+                                                                    class="border rounded-lg px-3 py-1 text-xs font-bold">
+                                                                <option value="none">None (Hidden / Blocked)</option>
+                                                                <option value="view">View (Read Only)</option>
+                                                                <option value="edit">Edit (Read & Modify)</option>
+                                                            </select>
+                                                        </div>
+                                                    </template>
+                                                </div>
                                             </div>
                                         </template>
                                     </div>
@@ -166,6 +204,21 @@
                                 </select>
                             </div>
                         </template>
+                        <template x-for="sub in (grp.sub_groups || [])" :key="sub.group_id">
+                            <div class="pl-3 pt-1.5 border-t border-slate-200 space-y-1.5">
+                                <div class="text-[11px] font-bold text-indigo-800" x-text="'↳ ' + sub.group_label"></div>
+                                <template x-for="spg in sub.pages" :key="spg.key">
+                                    <div class="pl-3 flex items-center justify-between text-xs">
+                                        <span class="text-slate-700" x-text="spg.label"></span>
+                                        <select x-model="newUser.page_permissions[spg.key]" class="border border-slate-300 rounded px-2 py-0.5 text-xs font-bold bg-white">
+                                            <option value="none">None</option>
+                                            <option value="view">View</option>
+                                            <option value="edit">Edit</option>
+                                        </select>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
                     </div>
                 </template>
             </div>
@@ -183,40 +236,18 @@
                 users: [],
                 selectedUser: null,
                 showModal: false,
-                moduleHierarchy: [
-                    {
-                        group_id: 'general',
-                        group_label: 'General System',
-                        expanded: true,
-                        pages: [
-                            { key: 'about', label: 'About System', route: '/about' }
-                        ]
-                    },
-                    {
-                        group_id: 'standing_orders',
-                        group_label: 'Bank Standing Orders Module',
-                        expanded: true,
-                        pages: [
-                            { key: 'donors', label: 'Donors & Standing Orders', route: '/' },
-                            { key: 'audit', label: 'Bank Codes Audit', route: '/bank-codes-audit' },
-                            { key: 'reconcile', label: 'Bank Reconciliation', route: '/bank-reconcile' },
-                            { key: 'followup', label: 'Donor Follow-up', route: '/followup' }
-                        ]
-                    },
-                    {
-                        group_id: 'admin',
-                        group_label: 'Administration',
-                        expanded: true,
-                        pages: [
-                            { key: 'users', label: 'Users & Permissions', route: '/users' }
-                        ]
-                    }
-                ],
+                moduleHierarchy: [],
+                pageKeys: ['about', 'donors', 'audit', 'reconcile', 'followup', 'reports', 'reports_matrix', 'users'],
                 newUser: {
                     username: '',
                     full_name: '',
                     password: '',
-                    page_permissions: { about: 'view', donors: 'view', audit: 'view', reconcile: 'view', followup: 'view', users: 'none' }
+                    page_permissions: { about: 'view', donors: 'view', audit: 'view', reconcile: 'view', followup: 'view', reports: 'view', reports_matrix: 'view', users: 'none' }
+                },
+                totalModulePagesCount(grp) {
+                    let count = (grp.pages || []).length;
+                    (grp.sub_groups || []).forEach(sub => { count += (sub.pages || []).length; });
+                    return count;
                 },
                 levelBadgeClass(lvl) {
                     if (lvl === 'edit') return 'bg-emerald-50 text-emerald-800 border-emerald-300';
@@ -236,16 +267,23 @@
                 },
                 setGroupAccess(grp, level) {
                     if (!this.selectedUser || !this.selectedUser.page_permissions) return;
-                    grp.pages.forEach(pg => {
+                    (grp.pages || []).forEach(pg => {
                         this.selectedUser.page_permissions[pg.key] = level;
+                    });
+                    (grp.sub_groups || []).forEach(sub => {
+                        (sub.pages || []).forEach(spg => {
+                            this.selectedUser.page_permissions[spg.key] = level;
+                        });
                     });
                 },
                 openCreateModal() {
+                    const defaultPerms = {};
+                    this.pageKeys.forEach(k => { defaultPerms[k] = (k === 'users' ? 'none' : 'view'); });
                     this.newUser = {
                         username: '',
                         full_name: '',
                         password: '',
-                        page_permissions: { about: 'view', donors: 'view', audit: 'view', reconcile: 'view', followup: 'view', users: 'none' }
+                        page_permissions: defaultPerms
                     };
                     this.showModal = true;
                 },
@@ -255,6 +293,12 @@
                     if (res.ok) {
                         const data = await res.json();
                         this.users = data.users || [];
+                        if (data.module_hierarchy && data.module_hierarchy.length > 0) {
+                            this.moduleHierarchy = data.module_hierarchy;
+                        }
+                        if (data.page_keys && data.page_keys.length > 0) {
+                            this.pageKeys = data.page_keys;
+                        }
                         if (currentId) {
                             this.selectedUser = this.users.find(x => x.user_id === currentId) || this.users[0] || null;
                         } else {
@@ -270,7 +314,7 @@
                         body: JSON.stringify({ page_permissions: u.page_permissions })
                     });
                     if (res.ok) {
-                        alert(`Saved page permissions for ${u.username}. Sign out and back in to refresh the session cookie.`);
+                        alert(`Saved personal page permissions for ${u.username}.`);
                     } else {
                         const err = await res.json();
                         alert(err.detail || 'Failed to save page permissions');
@@ -285,22 +329,11 @@
                             username: this.newUser.username,
                             full_name: this.newUser.full_name,
                             password: this.newUser.password,
-                            role_id: 2
+                            role_id: 2,
+                            page_permissions: this.newUser.page_permissions
                         })
                     });
                     if (res.ok) {
-                        const createdRes = await fetch('/api/users');
-                        if (createdRes.ok) {
-                            const listData = await createdRes.json();
-                            const target = (listData.users || []).find(x => x.username.toUpperCase() === this.newUser.username.trim().toUpperCase());
-                            if (target) {
-                                await fetch(`/api/users/${target.user_id}/page-permissions`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ page_permissions: this.newUser.page_permissions })
-                                });
-                            }
-                        }
                         this.showModal = false;
                         await this.loadUsers();
                         alert('User created with hierarchical page permissions.');

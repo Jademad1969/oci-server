@@ -5,16 +5,16 @@ ON CONFLICT (setup_id) DO NOTHING;
 
 -- 2. الأدوار والمستخدمين (كلمة المرور الافتراضية لـ TAREK و HASAN هي: 123456)
 INSERT INTO sys_roles (role_id, role_code, role_name_ar, role_name_en, permissions) VALUES
-(1, 'ADMIN', 'مدير النظام', 'System Administrator', '{"all": true}'::jsonb),
-(2, 'DATA_ENTRY', 'مدخل بيانات ومطابقة', 'Data Entry & Reconciliation', '{"donors": true, "reconcile": true}'::jsonb),
-(3, 'FOLLOWUP', 'موظف متابعة', 'Follow-up Agent', '{"followup": true, "reports": true}'::jsonb)
-ON CONFLICT (role_code) DO NOTHING;
+(1, 'ADMIN', 'مدير النظام', 'System Administrator', '{"about": "edit", "donors": "edit", "audit": "edit", "reconcile": "edit", "followup": "edit", "reports": "edit", "users": "edit", "can_edit": true}'::jsonb),
+(2, 'DATA_ENTRY', 'مدخل بيانات ومطابقة', 'Data Entry & Reconciliation', '{"about": "view", "donors": "edit", "audit": "edit", "reconcile": "edit", "followup": "view", "reports": "view", "users": "none", "can_edit": true}'::jsonb),
+(3, 'FOLLOWUP', 'موظف متابعة', 'Follow-up Agent', '{"about": "view", "donors": "view", "audit": "view", "reconcile": "view", "followup": "view", "reports": "view", "users": "none", "can_edit": false}'::jsonb)
+ON CONFLICT (role_code) DO UPDATE SET permissions = EXCLUDED.permissions;
 
--- تشفير كلمة المرور '123456' باستخدام امتداد pgcrypto أو هاش Bcrypt قياسي
+-- تشفير كلمة المرور '123456' متوافقاً مع دالة hash_password في التطبيق (SHA-256 مع dic_salt_)
 INSERT INTO sys_users (username, password_hash, full_name_ar, full_name_en, role_id) VALUES
-('TAREK', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'طارق - مدير النظام', 'Tarek Admin', 1),
-('HASAN', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'حسن - متابعة المتبرعين', 'Hasan Followup', 3)
-ON CONFLICT (username) DO NOTHING;
+('TAREK', encode(sha256('dic_salt_123456'::bytea), 'hex'), 'طارق - مدير النظام', 'Tarek Admin', 1),
+('HASAN', encode(sha256('dic_salt_123456'::bytea), 'hex'), 'حسن - متابعة المتبرعين', 'Hasan Followup', 3)
+ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
 
 -- 3. البنوك البحرينية وإعدادات المطابقة الخاصة بها
 INSERT INTO lkp_banks (bank_cd, bank_desc, bank_e_desc, bank_type_islam, run_deactivate_delayed_so, auto_so_based_code, created_by) VALUES

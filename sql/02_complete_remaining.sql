@@ -1,4 +1,4 @@
-CREATE TRIGGER trg_rollback_money_trans_on_delete
+CREATE OR REPLACE TRIGGER trg_rollback_money_trans_on_delete
 BEFORE DELETE ON bank_statement_load
 FOR EACH ROW EXECUTE FUNCTION fn_rollback_money_trans_on_stmnt_delete();
 

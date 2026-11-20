@@ -20,9 +20,9 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
-DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "reports", "users")
+DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "users")
 
-def normalize_page_permissions(role_code: Optional[str], raw_perms: Any) -> dict:
+def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_keys: tuple = DEFAULT_PAGE_KEYS) -> dict:
     if isinstance(raw_perms, str):
         try:
             raw_perms = json.loads(raw_perms)
@@ -32,8 +32,14 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any) -> dict
         raw_perms = {}
 
     # If explicit page keys already exist in raw_perms, honor them
-    if any(k in raw_perms for k in DEFAULT_PAGE_KEYS):
-        base = {k: raw_perms.get(k, "none") for k in DEFAULT_PAGE_KEYS}
+    if any(k in raw_perms for k in valid_keys):
+        base = {k: raw_perms.get(k, "none") for k in valid_keys}
+        if "reports_matrix" not in raw_perms and "reports" in raw_perms:
+            base["reports_matrix"] = raw_perms.get("reports", "none")
+        if "so_dashboard" not in raw_perms and "reports" in raw_perms:
+            base["so_dashboard"] = raw_perms.get("reports", "none")
+        if "data_views_export" not in raw_perms and "reports" in raw_perms:
+            base["data_views_export"] = raw_perms.get("reports", "none")
         base["about"] = raw_perms.get("about", "view")
         for k, v in base.items():
             if v not in ("none", "view", "edit"):
@@ -43,20 +49,22 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any) -> dict
     # Fallback based on legacy role_code
     code = (role_code or "").upper()
     if code in ("READ_WRITE", "ADMIN"):
-        return {k: "edit" for k in DEFAULT_PAGE_KEYS}
+        return {k: "edit" for k in valid_keys}
     return {
-        "about": "view",
-        "donors": "view",
-        "audit": "view",
-        "reconcile": "view",
-        "followup": "view",
-        "users": "none",
+        k: ("none" if k == "users" else "view")
+        for k in valid_keys
     }
 
 def resolve_page_key(path: str) -> str:
     if path.startswith("/users") or path.startswith("/api/users"):
         return "users"
-    if path.startswith("/reports") or path.startswith("/reports-matrix") or path.startswith("/api/reports"):
+    if path.startswith("/reports-views") or path.startswith("/api/reports/views"):
+        return "data_views_export"
+    if path.startswith("/reports-dashboard") or path.startswith("/api/reports/dashboard"):
+        return "so_dashboard"
+    if path.startswith("/reports-matrix") or path.startswith("/api/reports/matrix"):
+        return "reports_matrix"
+    if path.startswith("/reports") or path.startswith("/api/reports"):
         return "reports"
     if path.startswith("/bank-codes-audit") or path.startswith("/api/bank-codes-audit"):
         return "audit"
@@ -106,6 +114,12 @@ async def auth_and_rbac_middleware(request: Request, call_next):
 
     page_perms = user.get("page_permissions") or normalize_page_permissions(user.get("role_code"), None)
     access_level = page_perms.get(page_key, "none")
+    if path.startswith("/api/reports/meta") and access_level == "none":
+        # Shared metadata endpoint used by /reports-dashboard, /reports, and /reports-matrix
+        if page_perms.get("reports_matrix", "none") != "none":
+            access_level = page_perms.get("reports_matrix", "view")
+        elif page_perms.get("so_dashboard", "none") != "none":
+            access_level = page_perms.get("so_dashboard", "view")
     request.state.current_page_access = access_level
 
     if access_level == "none":
@@ -1199,12 +1213,87 @@ class UserCreateSchema(BaseModel):
     full_name: str
     password: str
     role_id: int = 2
+    page_permissions: Optional[dict[str, str]] = None
 
 class UserRoleUpdateSchema(BaseModel):
     role_id: int
 
 class UserPasswordUpdateSchema(BaseModel):
     password: str
+
+async def get_active_page_keys(db: AsyncSession) -> tuple:
+    try:
+        res = await db.execute(text("SELECT page_key FROM sys_pages WHERE node_type = 'page' AND is_active = TRUE ORDER BY sort_order ASC, page_key ASC"))
+        keys = tuple(r.page_key for r in res)
+        return keys if keys else DEFAULT_PAGE_KEYS
+    except Exception:
+        return DEFAULT_PAGE_KEYS
+
+async def load_user_permissions_from_db(db: AsyncSession, user_id: int, role_code: Optional[str], fallback_perms: Any, valid_keys: tuple = DEFAULT_PAGE_KEYS) -> dict:
+    try:
+        res = await db.execute(
+            text("SELECT page_key, access_level FROM sys_user_permissions WHERE user_id = :uid"),
+            {"uid": user_id}
+        )
+        rows = res.fetchall()
+        if rows:
+            db_map = {r.page_key: r.access_level for r in rows}
+            return normalize_page_permissions(role_code, db_map, valid_keys)
+    except Exception:
+        pass
+    return normalize_page_permissions(role_code, fallback_perms, valid_keys)
+
+async def load_page_hierarchy_from_db(db: AsyncSession) -> list:
+    res = await db.execute(text("""
+        SELECT page_key, parent_key, node_type, title_en, title_ar, route_path, sort_order
+        FROM sys_pages
+        WHERE is_active = TRUE
+        ORDER BY sort_order ASC, page_key ASC
+    """))
+    all_nodes = [dict(r._mapping) for r in res]
+    by_parent: dict[Optional[str], list] = {}
+    for n in all_nodes:
+        by_parent.setdefault(n["parent_key"], []).append(n)
+
+    def build_module_node(mod: dict) -> dict:
+        direct_pages = []
+        sub_groups = []
+        for child in by_parent.get(mod["page_key"], []):
+            if child["node_type"] == "page":
+                direct_pages.append({
+                    "key": child["page_key"],
+                    "label": child["title_en"],
+                    "label_ar": child["title_ar"],
+                    "route": child["route_path"] or ""
+                })
+            elif child["node_type"] in ("group", "module"):
+                grp_pages = [
+                    {
+                        "key": leaf["page_key"],
+                        "label": leaf["title_en"],
+                        "label_ar": leaf["title_ar"],
+                        "route": leaf["route_path"] or ""
+                    }
+                    for leaf in by_parent.get(child["page_key"], [])
+                    if leaf["node_type"] == "page"
+                ]
+                sub_groups.append({
+                    "group_id": child["page_key"],
+                    "group_label": child["title_en"],
+                    "group_label_ar": child["title_ar"],
+                    "expanded": True,
+                    "pages": grp_pages
+                })
+        return {
+            "group_id": mod["page_key"],
+            "group_label": mod["title_en"],
+            "group_label_ar": mod["title_ar"],
+            "expanded": True,
+            "pages": direct_pages,
+            "sub_groups": sub_groups
+        }
+
+    return [build_module_node(m) for m in by_parent.get(None, []) if m["node_type"] == "module"]
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
@@ -1231,7 +1320,8 @@ async def login_submit(request: Request, username: str = Form(...), password: st
     await db.execute(text("UPDATE sys_users SET last_login = CURRENT_TIMESTAMP WHERE user_id = :uid"), {"uid": user_data["user_id"]})
     await db.commit()
 
-    page_perms = normalize_page_permissions(user_data.get("role_code"), user_data.get("permissions"))
+    valid_keys = await get_active_page_keys(db)
+    page_perms = await load_user_permissions_from_db(db, user_data["user_id"], user_data.get("role_code"), user_data.get("permissions"), valid_keys)
     token = create_session_token({
         "user_id": user_data["user_id"],
         "username": user_data["username"],
@@ -1264,54 +1354,96 @@ class UserPagePermissionsSchema(BaseModel):
 
 @app.get("/api/users")
 async def list_users(db: AsyncSession = Depends(get_db)):
+    valid_keys = await get_active_page_keys(db)
+    hierarchy = await load_page_hierarchy_from_db(db)
     res = await db.execute(text("""
         SELECT u.user_id, u.username, u.full_name_ar, u.full_name_en, u.role_id, u.is_active, r.role_code, r.role_name_en, r.permissions
         FROM sys_users u
         JOIN sys_roles r ON u.role_id = r.role_id
         ORDER BY u.user_id ASC
     """))
+    user_rows = [dict(r._mapping) for r in res]
     rows = []
-    for r in res:
-        item = dict(r._mapping)
-        item["page_permissions"] = normalize_page_permissions(item.get("role_code"), item.get("permissions"))
+    for item in user_rows:
+        item["page_permissions"] = await load_user_permissions_from_db(
+            db, item["user_id"], item.get("role_code"), item.get("permissions"), valid_keys
+        )
         item.pop("permissions", None)
         rows.append(item)
-    return {"users": rows}
+    return {"users": rows, "module_hierarchy": hierarchy, "page_keys": list(valid_keys)}
 
 @app.post("/api/users/{user_id}/page-permissions")
-async def update_user_page_permissions_api(user_id: int, payload: UserPagePermissionsSchema, db: AsyncSession = Depends(get_db)):
-    u_res = await db.execute(text("SELECT role_id FROM sys_users WHERE user_id = :uid"), {"uid": user_id})
+async def update_user_page_permissions_api(user_id: int, payload: UserPagePermissionsSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    u_res = await db.execute(text("""
+        SELECT u.user_id, u.username, u.full_name_en, u.full_name_ar, u.role_id, r.role_code, r.role_name_en
+        FROM sys_users u
+        JOIN sys_roles r ON u.role_id = r.role_id
+        WHERE u.user_id = :uid
+    """), {"uid": user_id})
     u_row = u_res.first()
     if not u_row:
         raise HTTPException(status_code=404, detail="User not found.")
+
+    valid_keys = await get_active_page_keys(db)
+    actor = (request.state.user or {}).get("username") or "ADMIN"
     cleaned = {}
-    for k in DEFAULT_PAGE_KEYS:
+    for k in valid_keys:
         val = payload.page_permissions.get(k, "none")
         cleaned[k] = val if val in ("none", "view", "edit") else "none"
-    cleaned["can_edit"] = any(v == "edit" for k, v in cleaned.items() if k != "users")
-    await db.execute(
-        text("UPDATE sys_roles SET permissions = CAST(:perms AS jsonb) WHERE role_id = :rid"),
-        {"perms": json.dumps(cleaned), "rid": u_row.role_id}
-    )
+        await db.execute(text("""
+            INSERT INTO sys_user_permissions (user_id, page_key, access_level, granted_by, granted_at)
+            VALUES (:uid, :pk, :lvl, :by, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, page_key) DO UPDATE SET
+                access_level = EXCLUDED.access_level,
+                granted_by = EXCLUDED.granted_by,
+                granted_at = CURRENT_TIMESTAMP
+        """), {"uid": user_id, "pk": k, "lvl": cleaned[k], "by": actor})
+
     await db.commit()
-    return {"status": "updated", "page_permissions": cleaned}
+    resp = JSONResponse(content={"status": "updated", "page_permissions": cleaned})
+    if request.state.user and request.state.user.get("user_id") == user_id:
+        new_token = create_session_token({
+            "user_id": u_row.user_id,
+            "username": u_row.username,
+            "full_name": u_row.full_name_en or u_row.full_name_ar,
+            "role_id": u_row.role_id,
+            "role_code": u_row.role_code,
+            "role_name": u_row.role_name_en,
+            "page_permissions": cleaned
+        })
+        resp.set_cookie(key="dic_session", value=new_token, httponly=True, max_age=86400 * 7)
+    return resp
 
 @app.post("/api/users/create")
-async def create_user_api(payload: UserCreateSchema, db: AsyncSession = Depends(get_db)):
+async def create_user_api(payload: UserCreateSchema, request: Request, db: AsyncSession = Depends(get_db)):
     uname = payload.username.strip().upper()
     if not uname or not payload.password:
         raise HTTPException(status_code=400, detail="Username and password are required.")
     pwd_hash = hash_password(payload.password.strip())
+    valid_keys = await get_active_page_keys(db)
+    actor = (request.state.user or {}).get("username") or "ADMIN"
     try:
-        await db.execute(text("""
+        ins_res = await db.execute(text("""
             INSERT INTO sys_users (username, password_hash, full_name_ar, full_name_en, role_id, is_active)
             VALUES (:u, :p, :fn, :fn, :rid, true)
+            RETURNING user_id
         """), {"u": uname, "p": pwd_hash, "fn": payload.full_name.strip() or uname, "rid": payload.role_id})
+        new_uid = ins_res.scalar()
+        raw_p = payload.page_permissions or {}
+        for k in valid_keys:
+            lvl = raw_p.get(k, "none" if k == "users" else "view")
+            if lvl not in ("none", "view", "edit"):
+                lvl = "none"
+            await db.execute(text("""
+                INSERT INTO sys_user_permissions (user_id, page_key, access_level, granted_by)
+                VALUES (:uid, :pk, :lvl, :by)
+                ON CONFLICT (user_id, page_key) DO UPDATE SET access_level = EXCLUDED.access_level
+            """), {"uid": new_uid, "pk": k, "lvl": lvl, "by": actor})
         await db.commit()
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Could not create user: {str(e)}")
-    return {"status": "created"}
+    return {"status": "created", "user_id": new_uid}
 
 @app.post("/api/users/{user_id}/role")
 async def update_user_role_api(user_id: int, payload: UserRoleUpdateSchema, db: AsyncSession = Depends(get_db)):
@@ -1858,3 +1990,762 @@ async def get_reports_matrix_api(
             "grand_total": {"paid": all_paid_sum, "unpaid": all_unpaid_sum}
         }
     }
+
+# ----------------- Executive Standing Orders Dashboard (/reports-dashboard) -----------------
+@app.get("/reports-dashboard", response_class=HTMLResponse)
+async def reports_dashboard_page(request: Request):
+    return templates.TemplateResponse("so_dashboard.html", {"request": request})
+
+@app.get("/api/reports/dashboard")
+async def get_so_executive_dashboard_api(
+    year: int = 2026,
+    bank_cd: Optional[int] = None,
+    item_no: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    prev_year = year - 1
+    yr_start = date(year, 1, 1)
+    yr_end = date(year, 12, 31)
+    prev_start = date(prev_year, 1, 1)
+    prev_end = date(prev_year, 12, 31)
+
+    # 1. Load Setup, Banks & Charity Items
+    setup_res = await db.execute(text("SELECT not_paid_month, not_paid_month2, so_min_amt, accepted_delayed_months, grace_period_months FROM sys_donor_setup LIMIT 1"))
+    setup_row = setup_res.first()
+    ref_month = (setup_row.not_paid_month2 or setup_row.not_paid_month or date(2026, 9, 1)) if setup_row else date(2026, 9, 1)
+    accepted_delay = int(setup_row.accepted_delayed_months or 6) if setup_row else 6
+    grace_months = int(setup_row.grace_period_months or 2) if setup_row else 2
+
+    banks_res = await db.execute(text("SELECT bank_cd, bank_desc, bank_e_desc FROM lkp_banks ORDER BY bank_cd"))
+    all_banks = [dict(r._mapping) for r in banks_res]
+
+    items_res = await db.execute(text("SELECT item_cd, item_desc, item_e_desc FROM lkp_charity_items ORDER BY item_cd"))
+    all_items = [dict(r._mapping) for r in items_res]
+
+    # Build dynamic filter clauses
+    di_filters = ["1=1"]
+    mt_filters = ["1=1"]
+    bsl_filters = ["1=1"]
+    params: dict[str, Any] = {
+        "yr_start": yr_start,
+        "yr_end": yr_end,
+        "prev_start": prev_start,
+        "prev_end": prev_end,
+        "ref_month": ref_month
+    }
+
+    if bank_cd and int(bank_cd) > 0:
+        params["bank_cd"] = int(bank_cd)
+        di_filters.append("i.bank2_cd = :bank_cd")
+        mt_filters.append("m.bank_cd = :bank_cd")
+        bsl_filters.append("b.bank_cd = :bank_cd")
+
+    if item_no and item_no.strip():
+        params["item_no"] = item_no.strip()
+        di_filters.append("i.item_no = :item_no")
+        mt_filters.append("m.item_no = :item_no")
+
+    di_where = " AND ".join(di_filters)
+    mt_where = " AND ".join(mt_filters)
+    bsl_where = " AND ".join(bsl_filters)
+
+    # 2. Donors & Standing Orders Portfolio Summary
+    donors_res = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE status_no = 1) AS active_donors,
+            COUNT(*) FILTER (WHERE status_no <> 1) AS inactive_donors,
+            COUNT(*) AS total_donors
+        FROM donor_master
+    """))
+    d_row = donors_res.first()
+
+    portfolio_res = await db.execute(text(f"""
+        SELECT
+            COUNT(*) FILTER (WHERE i.status_no = 1) AS active_so_count,
+            COUNT(*) FILTER (WHERE i.status_no <> 1) AS inactive_so_count,
+            COALESCE(SUM(i.monthly_pay) FILTER (WHERE i.status_no = 1), 0) AS expected_monthly_bhd,
+            COALESCE(AVG(i.monthly_pay) FILTER (WHERE i.status_no = 1), 0) AS avg_so_bhd,
+            COUNT(DISTINCT i.donor_no) FILTER (WHERE i.status_no = 1) AS active_so_donors,
+            COUNT(*) FILTER (WHERE i.donation_start_date >= :yr_start AND i.donation_start_date <= :yr_end) AS new_so_count,
+            COALESCE(SUM(i.monthly_pay) FILTER (WHERE i.donation_start_date >= :yr_start AND i.donation_start_date <= :yr_end), 0) AS new_so_bhd
+        FROM donor_item i
+        WHERE {di_where}
+    """), params)
+    p_row = portfolio_res.first()
+
+    expected_monthly_bhd = round(float(p_row.expected_monthly_bhd or 0), 3)
+    active_so_count = int(p_row.active_so_count or 0)
+    inactive_so_count = int(p_row.inactive_so_count or 0)
+    avg_so_bhd = round(float(p_row.avg_so_bhd or 0), 3)
+
+    # Deactivations in selected year
+    deact_where = "h.deactive_date >= :yr_start AND h.deactive_date <= :yr_end"
+    if bank_cd and int(bank_cd) > 0:
+        deact_where += " AND h.bank_cd = :bank_cd"
+    if item_no and item_no.strip():
+        deact_where += " AND CAST(h.item_no AS TEXT) = :item_no"
+
+    deact_res = await db.execute(text(f"""
+        SELECT
+            COUNT(*) AS deact_count,
+            COALESCE(SUM(COALESCE(i.monthly_pay, 0)), 0) AS deact_bhd
+        FROM donor_item_deactiv_hist h
+        LEFT JOIN donor_item i ON (
+            h.so_id = i.so_id
+            OR (h.so_id IS NULL AND h.donor_no = i.donor_no AND CAST(h.item_no AS TEXT) = i.item_no AND h.donation_start_date = i.donation_start_date)
+        )
+        WHERE {deact_where}
+    """), params)
+    deact_row = deact_res.first()
+    deact_count = int(deact_row.deact_count or 0)
+    deact_bhd = round(float(deact_row.deact_bhd or 0), 3)
+
+    # 3. Monthly Trend for Selected Year & Previous Year (from money_trans)
+    mt_trend_res = await db.execute(text(f"""
+        SELECT
+            EXTRACT(YEAR FROM m.month_year)::int AS yr,
+            EXTRACT(MONTH FROM m.month_year)::int AS mo,
+            COALESCE(SUM(m.paid_sum) FILTER (WHERE m.status_no = 1), 0) AS collected_bhd,
+            COUNT(*) FILTER (WHERE m.status_no = 1) AS paid_count,
+            COALESCE(SUM(m.paid_sum) FILTER (WHERE m.status_no <> 1), 0) AS unpaid_bhd,
+            COUNT(*) FILTER (WHERE m.status_no <> 1) AS unpaid_count
+        FROM money_trans m
+        WHERE m.month_year >= :prev_start AND m.month_year <= :yr_end
+          AND {mt_where}
+        GROUP BY EXTRACT(YEAR FROM m.month_year)::int, EXTRACT(MONTH FROM m.month_year)::int
+    """), params)
+
+    mt_by_ym: dict[tuple[int, int], dict] = {}
+    for r in mt_trend_res:
+        mt_by_ym[(int(r.yr), int(r.mo))] = {
+            "collected_bhd": round(float(r.collected_bhd or 0), 3),
+            "paid_count": int(r.paid_count or 0),
+            "unpaid_bhd": round(float(r.unpaid_bhd or 0), 3),
+            "unpaid_count": int(r.unpaid_count or 0)
+        }
+
+    # General / Fawri / Cash donations from bank_statement_load in Selected Year
+    bsl_trend_res = await db.execute(text(f"""
+        SELECT
+            EXTRACT(MONTH FROM b.money_trans_month)::int AS mo,
+            COALESCE(SUM(b.bank_stmnt_payamt) FILTER (WHERE COALESCE(b.cash_deposit, 2) <> 2), 0) AS general_bhd,
+            COUNT(*) AS total_rows,
+            COUNT(*) FILTER (WHERE b.sys_found = 1) AS matched_rows,
+            COUNT(*) FILTER (WHERE COALESCE(b.sys_found, 0) <> 1) AS unmatched_rows
+        FROM bank_statement_load b
+        WHERE b.money_trans_month >= :yr_start AND b.money_trans_month <= :yr_end
+          AND {bsl_where}
+        GROUP BY EXTRACT(MONTH FROM b.money_trans_month)::int
+    """), params)
+    bsl_by_mo: dict[int, dict] = {}
+    for r in bsl_trend_res:
+        bsl_by_mo[int(r.mo)] = {
+            "general_bhd": round(float(r.general_bhd or 0), 3),
+            "total_rows": int(r.total_rows or 0),
+            "matched_rows": int(r.matched_rows or 0),
+            "unmatched_rows": int(r.unmatched_rows or 0)
+        }
+
+    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    monthly_trend = []
+    ytd_collected_bhd = 0.0
+    ytd_paid_installments = 0
+    ytd_unpaid_bhd = 0.0
+    ytd_unpaid_installments = 0
+    prev_year_same_months_bhd = 0.0
+    prev_year_full_bhd = 0.0
+    ytd_general_bank_bhd = 0.0
+    stmnt_total_rows = 0
+    stmnt_matched_rows = 0
+    stmnt_unmatched_rows = 0
+    active_months_in_year = 0
+
+    for m_idx in range(1, 13):
+        cur_m = mt_by_ym.get((year, m_idx), {"collected_bhd": 0.0, "paid_count": 0, "unpaid_bhd": 0.0, "unpaid_count": 0})
+        prv_m = mt_by_ym.get((prev_year, m_idx), {"collected_bhd": 0.0, "paid_count": 0, "unpaid_bhd": 0.0, "unpaid_count": 0})
+        bsl_m = bsl_by_mo.get(m_idx, {"general_bhd": 0.0, "total_rows": 0, "matched_rows": 0, "unmatched_rows": 0})
+
+        col_val = cur_m["collected_bhd"]
+        unp_val = cur_m["unpaid_bhd"]
+        prv_val = prv_m["collected_bhd"]
+        gen_val = bsl_m["general_bhd"]
+        exp_val = round(col_val + unp_val, 3) if (col_val + unp_val) > 0 else expected_monthly_bhd
+
+        ytd_collected_bhd = round(ytd_collected_bhd + col_val, 3)
+        ytd_paid_installments += cur_m["paid_count"]
+        ytd_unpaid_bhd = round(ytd_unpaid_bhd + unp_val, 3)
+        ytd_unpaid_installments += cur_m["unpaid_count"]
+        prev_year_full_bhd = round(prev_year_full_bhd + prv_val, 3)
+        if col_val > 0 or unp_val > 0:
+            active_months_in_year += 1
+            prev_year_same_months_bhd = round(prev_year_same_months_bhd + prv_val, 3)
+
+        ytd_general_bank_bhd = round(ytd_general_bank_bhd + gen_val, 3)
+        stmnt_total_rows += bsl_m["total_rows"]
+        stmnt_matched_rows += bsl_m["matched_rows"]
+        stmnt_unmatched_rows += bsl_m["unmatched_rows"]
+
+        monthly_trend.append({
+            "month_num": m_idx,
+            "month_label": month_labels[m_idx - 1],
+            "month_key": f"{year}-{m_idx:02d}",
+            "expected_so_bhd": exp_val,
+            "collected_so_bhd": col_val,
+            "unpaid_so_bhd": unp_val,
+            "prev_year_so_bhd": prv_val,
+            "general_donations_bhd": gen_val,
+            "total_inflow_bhd": round(col_val + gen_val, 3)
+        })
+
+    ytd_billed_total = round(ytd_collected_bhd + ytd_unpaid_bhd, 3)
+    collection_efficiency_pct = round((ytd_collected_bhd / ytd_billed_total) * 100, 1) if ytd_billed_total > 0 else 0.0
+    cmp_base = prev_year_same_months_bhd if prev_year_same_months_bhd > 0 else prev_year_full_bhd
+    yoy_growth_pct = round(((ytd_collected_bhd - cmp_base) / cmp_base) * 100, 1) if cmp_base > 0 else 0.0
+    stmnt_match_rate_pct = round((stmnt_matched_rows / stmnt_total_rows) * 100, 1) if stmnt_total_rows > 0 else 0.0
+
+    # 4. Bank Performance & Statement Freshness Matrix
+    bank_perf_res = await db.execute(text(f"""
+        SELECT
+            b.bank_cd,
+            b.bank_desc,
+            b.bank_e_desc,
+            COALESCE(di.active_so_count, 0) AS active_so_count,
+            COALESCE(di.expected_monthly_bhd, 0) AS expected_monthly_bhd,
+            COALESCE(mt.collected_bhd, 0) AS ytd_collected_bhd,
+            COALESCE(mt.unpaid_bhd, 0) AS ytd_unpaid_bhd,
+            COALESCE(bsl.general_bhd, 0) AS ytd_general_bhd,
+            COALESCE(bsl.matched_rows, 0) AS stmnt_matched,
+            COALESCE(bsl.unmatched_rows, 0) AS stmnt_unmatched,
+            TO_CHAR(bsl_max.last_stmnt_month, 'YYYY-MM') AS last_stmnt_month,
+            upd.updated_by AS last_updated_by,
+            COALESCE(upd.updated_amt, 0) AS last_updated_amt
+        FROM lkp_banks b
+        LEFT JOIN (
+            SELECT bank2_cd AS bank_cd,
+                   COUNT(*) FILTER (WHERE status_no = 1) AS active_so_count,
+                   SUM(monthly_pay) FILTER (WHERE status_no = 1) AS expected_monthly_bhd
+            FROM donor_item i
+            WHERE {di_where}
+            GROUP BY bank2_cd
+        ) di ON b.bank_cd = di.bank_cd
+        LEFT JOIN (
+            SELECT bank_cd,
+                   SUM(paid_sum) FILTER (WHERE status_no = 1) AS collected_bhd,
+                   SUM(paid_sum) FILTER (WHERE status_no <> 1) AS unpaid_bhd
+            FROM money_trans m
+            WHERE m.month_year >= :yr_start AND m.month_year <= :yr_end
+              AND {mt_where}
+            GROUP BY bank_cd
+        ) mt ON b.bank_cd = mt.bank_cd
+        LEFT JOIN (
+            SELECT bank_cd,
+                   SUM(bank_stmnt_payamt) FILTER (WHERE COALESCE(cash_deposit, 2) <> 2) AS general_bhd,
+                   COUNT(*) FILTER (WHERE sys_found = 1) AS matched_rows,
+                   COUNT(*) FILTER (WHERE COALESCE(sys_found, 0) <> 1) AS unmatched_rows
+            FROM bank_statement_load b
+            WHERE b.money_trans_month >= :yr_start AND b.money_trans_month <= :yr_end
+              AND {bsl_where}
+            GROUP BY bank_cd
+        ) bsl ON b.bank_cd = bsl.bank_cd
+        LEFT JOIN (
+            SELECT bank_cd, MAX(money_trans_month) AS last_stmnt_month
+            FROM bank_statement_load
+            GROUP BY bank_cd
+        ) bsl_max ON b.bank_cd = bsl_max.bank_cd
+        LEFT JOIN (
+            SELECT DISTINCT ON (bank_cd) bank_cd, month_year, updated_by, updated_amt
+            FROM bankmonthly_stmntupd
+            ORDER BY bank_cd, month_year DESC
+        ) upd ON b.bank_cd = upd.bank_cd
+        WHERE (COALESCE(di.active_so_count, 0) > 0 OR COALESCE(mt.collected_bhd, 0) > 0 OR COALESCE(bsl.general_bhd, 0) > 0)
+        ORDER BY COALESCE(mt.collected_bhd, 0) DESC, COALESCE(di.expected_monthly_bhd, 0) DESC
+    """), params)
+
+    banks_performance = []
+    latest_overall_stmnt = None
+    for r in bank_perf_res:
+        col_b = round(float(r.ytd_collected_bhd or 0), 3)
+        unp_b = round(float(r.ytd_unpaid_bhd or 0), 3)
+        tot_b = round(col_b + unp_b, 3)
+        rate_b = round((col_b / tot_b) * 100, 1) if tot_b > 0 else 0.0
+        l_mo = r.last_stmnt_month
+        if l_mo and (not latest_overall_stmnt or l_mo > latest_overall_stmnt):
+            latest_overall_stmnt = l_mo
+        banks_performance.append({
+            "bank_cd": int(r.bank_cd),
+            "bank_name_en": r.bank_e_desc or r.bank_desc,
+            "bank_name_ar": r.bank_desc,
+            "active_so_count": int(r.active_so_count or 0),
+            "expected_monthly_bhd": round(float(r.expected_monthly_bhd or 0), 3),
+            "ytd_collected_bhd": col_b,
+            "ytd_unpaid_bhd": unp_b,
+            "collection_rate_pct": rate_b,
+            "ytd_general_bhd": round(float(r.ytd_general_bhd or 0), 3),
+            "last_reconciled_month": l_mo or "None",
+            "last_updated_by": r.last_updated_by or "-",
+            "last_updated_amt": round(float(r.last_updated_amt or 0), 3),
+            "stmnt_matched": int(r.stmnt_matched or 0),
+            "stmnt_unmatched": int(r.stmnt_unmatched or 0)
+        })
+
+    # 5. Delinquency Aging & Risk Funnel across Active Standing Orders
+    aging_res = await db.execute(text(f"""
+        WITH active_so_delays AS (
+            SELECT
+                i.so_id,
+                i.monthly_pay,
+                GREATEST(0, (
+                    EXTRACT(YEAR FROM AGE(DATE_TRUNC('month', CAST(:ref_month AS DATE)), DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date)))) * 12 +
+                    EXTRACT(MONTH FROM AGE(DATE_TRUNC('month', CAST(:ref_month AS DATE)), DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))))
+                )::int) AS delay_months
+            FROM donor_item i
+            LEFT JOIN (
+                SELECT so_id, MAX(month_year) AS last_paid_month
+                FROM money_trans
+                WHERE status_no = 1
+                GROUP BY so_id
+            ) lp ON i.so_id = lp.so_id
+            WHERE i.status_no = 1 AND {di_where}
+        )
+        SELECT
+            CASE
+                WHEN delay_months <= 0 THEN 'on_time'
+                WHEN delay_months BETWEEN 1 AND 2 THEN 'grace_period'
+                WHEN delay_months BETWEEN 3 AND 5 THEN 'followup_needed'
+                ELSE 'critical_risk'
+            END AS bucket,
+            COUNT(*) AS so_count,
+            COALESCE(SUM(monthly_pay), 0) AS monthly_bhd
+        FROM active_so_delays
+        GROUP BY 1
+    """), params)
+
+    aging_map = {
+        "on_time": {"label": "On-Time (0 Months Delay)", "count": 0, "monthly_bhd": 0.0, "pct": 0.0},
+        "grace_period": {"label": "Grace Period (1–2 Months)", "count": 0, "monthly_bhd": 0.0, "pct": 0.0},
+        "followup_needed": {"label": "Follow-up Required (3–5 Months)", "count": 0, "monthly_bhd": 0.0, "pct": 0.0},
+        "critical_risk": {"label": "Critical / Auto-Deact Risk (6+ Months)", "count": 0, "monthly_bhd": 0.0, "pct": 0.0}
+    }
+    for r in aging_res:
+        b_key = r.bucket
+        if b_key in aging_map:
+            cnt = int(r.so_count or 0)
+            amt = round(float(r.monthly_bhd or 0), 3)
+            aging_map[b_key]["count"] = cnt
+            aging_map[b_key]["monthly_bhd"] = amt
+            aging_map[b_key]["pct"] = round((cnt / active_so_count) * 100, 1) if active_so_count > 0 else 0.0
+
+    # 6. Charity Funds Breakdown
+    funds_res = await db.execute(text(f"""
+        SELECT
+            c.item_cd,
+            c.item_desc,
+            COALESCE(c.item_e_desc, c.item_desc) AS item_e_desc,
+            COUNT(i.so_id) FILTER (WHERE i.status_no = 1) AS active_so_count,
+            COALESCE(SUM(i.monthly_pay) FILTER (WHERE i.status_no = 1), 0) AS monthly_portfolio_bhd,
+            COALESCE(mt.collected_bhd, 0) AS ytd_collected_bhd
+        FROM lkp_charity_items c
+        LEFT JOIN donor_item i ON c.item_cd = i.item_no AND ({di_where})
+        LEFT JOIN (
+            SELECT m.item_no, SUM(m.paid_sum) FILTER (WHERE m.status_no = 1) AS collected_bhd
+            FROM money_trans m
+            WHERE m.month_year >= :yr_start AND m.month_year <= :yr_end
+              AND {mt_where}
+            GROUP BY m.item_no
+        ) mt ON c.item_cd = mt.item_no
+        GROUP BY c.item_cd, c.item_desc, c.item_e_desc, mt.collected_bhd
+        HAVING COUNT(i.so_id) FILTER (WHERE i.status_no = 1) > 0 OR COALESCE(mt.collected_bhd, 0) > 0
+        ORDER BY COALESCE(SUM(i.monthly_pay) FILTER (WHERE i.status_no = 1), 0) DESC
+    """), params)
+
+    charity_funds = []
+    for r in funds_res:
+        m_bhd = round(float(r.monthly_portfolio_bhd or 0), 3)
+        charity_funds.append({
+            "item_cd": r.item_cd,
+            "item_name_ar": r.item_desc,
+            "item_name_en": r.item_e_desc,
+            "active_so_count": int(r.active_so_count or 0),
+            "monthly_portfolio_bhd": m_bhd,
+            "ytd_collected_bhd": round(float(r.ytd_collected_bhd or 0), 3),
+            "portfolio_share_pct": round((m_bhd / expected_monthly_bhd) * 100, 1) if expected_monthly_bhd > 0 else 0.0
+        })
+
+    # 7. High-Value At-Risk Watchlist (Top 25 active SOs delayed >= 2 months ordered by monthly_pay DESC)
+    watchlist_res = await db.execute(text(f"""
+        SELECT
+            i.so_id,
+            i.donor_no,
+            COALESCE(d.donor_ename, d.donor_name) AS donor_name_en,
+            d.donor_name AS donor_name_ar,
+            COALESCE(d.donor_mobile, d.donor_tel2, d.donor_tel1, '-') AS mobile,
+            COALESCE(b.bank_e_desc, b.bank_desc) AS bank_name,
+            i.monthly_pay,
+            TO_CHAR(lp.last_paid_month, 'YYYY-MM') AS last_paid_month,
+            GREATEST(0, (
+                EXTRACT(YEAR FROM AGE(DATE_TRUNC('month', CAST(:ref_month AS DATE)), DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date)))) * 12 +
+                EXTRACT(MONTH FROM AGE(DATE_TRUNC('month', CAST(:ref_month AS DATE)), DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))))
+            )::int) AS delay_months,
+            TO_CHAR(lf.call_date, 'YYYY-MM-DD') AS last_call_date,
+            COALESCE(lf.result_enm, lf.result_nm, 'No Follow-up') AS last_followup_result
+        FROM donor_item i
+        JOIN donor_master d ON i.donor_no = d.donor_no
+        LEFT JOIN lkp_banks b ON i.bank2_cd = b.bank_cd
+        LEFT JOIN (
+            SELECT so_id, MAX(month_year) AS last_paid_month
+            FROM money_trans
+            WHERE status_no = 1
+            GROUP BY so_id
+        ) lp ON i.so_id = lp.so_id
+        LEFT JOIN (
+            SELECT DISTINCT ON (f.donor_no) f.donor_no, f.call_date, r.result_nm, r.result_enm
+            FROM donor_followup f
+            LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
+            ORDER BY f.donor_no, f.call_date DESC, f.trans_id DESC
+        ) lf ON i.donor_no = lf.donor_no
+        WHERE i.status_no = 1 AND {di_where}
+          AND GREATEST(0, (
+                EXTRACT(YEAR FROM AGE(DATE_TRUNC('month', CAST(:ref_month AS DATE)), DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date)))) * 12 +
+                EXTRACT(MONTH FROM AGE(DATE_TRUNC('month', CAST(:ref_month AS DATE)), DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))))
+              )::int) >= 2
+        ORDER BY i.monthly_pay DESC, delay_months DESC
+        LIMIT 25
+    """), params)
+
+    high_value_at_risk = [
+        {
+            "so_id": int(r.so_id),
+            "donor_no": int(r.donor_no),
+            "donor_name_en": r.donor_name_en,
+            "donor_name_ar": r.donor_name_ar,
+            "mobile": r.mobile,
+            "bank_name": r.bank_name,
+            "monthly_pay": round(float(r.monthly_pay or 0), 3),
+            "last_paid_month": r.last_paid_month or "Never Paid",
+            "delay_months": int(r.delay_months or 0),
+            "at_risk_bhd": round(float(r.monthly_pay or 0) * int(r.delay_months or 0), 3),
+            "last_call_date": r.last_call_date or "-",
+            "last_followup_result": r.last_followup_result
+        }
+        for r in watchlist_res
+    ]
+
+    # 8. Follow-up Outcomes & Delay Reasons Intelligence
+    outcomes_res = await db.execute(text("""
+        SELECT
+            r.result_cd,
+            r.result_nm,
+            COALESCE(r.result_enm, r.result_nm) AS result_enm,
+            COALESCE(df.cnt, 0) + COALESCE(dif.cnt, 0) AS total_calls
+        FROM lkp_follow_results r
+        LEFT JOIN (SELECT call_result_cd, COUNT(*) AS cnt FROM donor_followup GROUP BY call_result_cd) df ON r.result_cd = df.call_result_cd
+        LEFT JOIN (SELECT call_result_cd, COUNT(*) AS cnt FROM donor_item_followup GROUP BY call_result_cd) dif ON r.result_cd = dif.call_result_cd
+        ORDER BY total_calls DESC
+    """))
+    followup_outcomes = [
+        {
+            "result_cd": int(r.result_cd),
+            "result_ar": r.result_nm,
+            "result_en": r.result_enm,
+            "total_calls": int(r.total_calls or 0)
+        }
+        for r in outcomes_res
+    ]
+
+    reasons_res = await db.execute(text("""
+        SELECT
+            dr.reason_cd,
+            dr.reason_nm,
+            COALESCE(dr.reason_enm, dr.reason_nm) AS reason_enm,
+            COALESCE(dif.cnt, 0) AS cases_count
+        FROM lkp_delay_reasons dr
+        LEFT JOIN (SELECT delay_reason_cd, COUNT(*) AS cnt FROM donor_item_followup WHERE delay_reason_cd IS NOT NULL GROUP BY delay_reason_cd) dif ON dr.reason_cd = dif.delay_reason_cd
+        ORDER BY cases_count DESC
+    """))
+    delay_reasons = [
+        {
+            "reason_cd": int(r.reason_cd),
+            "reason_ar": r.reason_nm,
+            "reason_en": r.reason_enm,
+            "cases_count": int(r.cases_count or 0)
+        }
+        for r in reasons_res
+    ]
+
+    delayed_over_2_count = aging_map["followup_needed"]["count"] + aging_map["critical_risk"]["count"]
+    delayed_over_2_bhd = round(aging_map["followup_needed"]["monthly_bhd"] + aging_map["critical_risk"]["monthly_bhd"], 3)
+
+    return {
+        "meta": {
+            "year": year,
+            "prev_year": prev_year,
+            "reference_billing_month": str(ref_month)[:7],
+            "accepted_delayed_months": accepted_delay,
+            "grace_period_months": grace_months,
+            "available_years": list(range(2026, 2014, -1)),
+            "banks": all_banks,
+            "charity_items": all_items
+        },
+        "kpis": {
+            "active_donors": int(d_row.active_donors or 0),
+            "inactive_donors": int(d_row.inactive_donors or 0),
+            "total_donors": int(d_row.total_donors or 0),
+            "active_so_donors": int(p_row.active_so_donors or 0),
+            "active_so_count": active_so_count,
+            "inactive_so_count": inactive_so_count,
+            "expected_monthly_bhd": expected_monthly_bhd,
+            "expected_annual_bhd": round(expected_monthly_bhd * 12, 3),
+            "avg_so_bhd": avg_so_bhd,
+            "ytd_collected_bhd": ytd_collected_bhd,
+            "ytd_paid_installments": ytd_paid_installments,
+            "ytd_unpaid_bhd": ytd_unpaid_bhd,
+            "ytd_unpaid_installments": ytd_unpaid_installments,
+            "collection_efficiency_pct": collection_efficiency_pct,
+            "prev_year_collected_bhd": cmp_base,
+            "yoy_growth_pct": yoy_growth_pct,
+            "ytd_general_bank_bhd": ytd_general_bank_bhd,
+            "ytd_total_inflow_bhd": round(ytd_collected_bhd + ytd_general_bank_bhd, 3),
+            "delayed_over_grace_count": delayed_over_2_count,
+            "delayed_over_grace_monthly_bhd": delayed_over_2_bhd,
+            "critical_risk_count": aging_map["critical_risk"]["count"],
+            "critical_risk_monthly_bhd": aging_map["critical_risk"]["monthly_bhd"],
+            "new_so_in_year_count": int(p_row.new_so_count or 0),
+            "new_so_in_year_bhd": round(float(p_row.new_so_bhd or 0), 3),
+            "deactivated_in_year_count": deact_count,
+            "deactivated_in_year_bhd": deact_bhd,
+            "net_so_movement_count": int(p_row.new_so_count or 0) - deact_count,
+            "net_so_movement_bhd": round(float(p_row.new_so_bhd or 0) - deact_bhd, 3),
+            "stmnt_total_rows": stmnt_total_rows,
+            "stmnt_matched_rows": stmnt_matched_rows,
+            "stmnt_unmatched_rows": stmnt_unmatched_rows,
+            "stmnt_match_rate_pct": stmnt_match_rate_pct,
+            "latest_stmnt_month": latest_overall_stmnt or "N/A"
+        },
+        "monthly_trend": monthly_trend,
+        "banks_performance": banks_performance,
+        "delinquency_aging": aging_map,
+        "charity_funds": charity_funds,
+        "watchlists": {
+            "high_value_at_risk": high_value_at_risk,
+            "followup_outcomes": followup_outcomes,
+            "delay_reasons": delay_reasons
+        }
+    }
+
+# ----------------- Data Views & Export Center (/reports-views) -----------------
+@app.get("/reports-views", response_class=HTMLResponse)
+async def data_views_export_page(request: Request):
+    return templates.TemplateResponse("data_views_export.html", {"request": request})
+
+@app.get("/api/reports/views")
+async def get_data_view_export_api(
+    view_key: str = "ACTIVE_DON_ADDRESS",
+    search_q: Optional[str] = None,
+    min_amt: Optional[float] = None,
+    status_filter: Optional[str] = "ACTIVE",
+    contact_only: Optional[bool] = False,
+    db: AsyncSession = Depends(get_db)
+):
+    setup_res = await db.execute(text("SELECT so_min_amt FROM sys_donor_setup LIMIT 1"))
+    setup_row = setup_res.first()
+    default_min_amt = float(setup_row.so_min_amt or 10.0) if setup_row else 10.0
+
+    vk = (view_key or "ACTIVE_DON_ADDRESS").strip().upper()
+    params: dict[str, Any] = {}
+    q_str = (search_q or "").strip()
+
+    if vk == "ACTIVE_DON_ADDRESS":
+        where_parts = ["1=1"]
+        if q_str:
+            where_parts.append("(CAST(donor_no AS TEXT) ILIKE :q OR donor_name ILIKE :q OR donor_ename ILIKE :q OR address ILIKE :q OR donor_tel2 ILIKE :q)")
+            params["q"] = f"%{q_str}%"
+        sql = text(f"""
+            SELECT donor_no, prefix_name, donor_name, carenm, address, sumpay, st_no, donor_tel2, donor_ename
+            FROM vw_active_don_address
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY sumpay DESC, donor_no ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = []
+        total_amt = 0.0
+        for r in res:
+            m = dict(r._mapping)
+            m["sumpay"] = round(float(m["sumpay"] or 0), 3)
+            total_amt = round(total_amt + m["sumpay"], 3)
+            rows.append(m)
+        return {
+            "view_key": vk,
+            "view_title_en": "Active Donors — Street Address Mailing List (ACTIVE_DON_ADDRESS)",
+            "view_title_ar": "قائمة المتبرعين الفعالين بعناوين المنازل",
+            "db_view_name": "vw_active_don_address",
+            "default_min_amt": default_min_amt,
+            "columns": ["donor_no", "prefix_name", "donor_name", "carenm", "address", "sumpay", "st_no", "donor_tel2", "donor_ename"],
+            "headers": ["Donor No", "Prefix", "Donor Name (AR)", "Care", "Street Address", "Total Monthly (BHD)", "SO Count", "Mobile / Tel 2", "Donor Name (EN)"],
+            "rows": rows,
+            "summary": {"total_rows": len(rows), "total_amount": total_amt}
+        }
+
+    elif vk == "ACTIVE_DON_PBOX":
+        where_parts = ["1=1"]
+        if status_filter == "ACTIVE":
+            where_parts.append("so_status_group = 1")
+        elif status_filter == "INACTIVE":
+            where_parts.append("so_status_group = 2")
+        if q_str:
+            where_parts.append("(CAST(donor_no AS TEXT) ILIKE :q OR donor_name ILIKE :q OR donor_ename ILIKE :q OR p_box ILIKE :q OR donor_tel2 ILIKE :q)")
+            params["q"] = f"%{q_str}%"
+        sql = text(f"""
+            SELECT donor_no, prefix_name, donor_name, carenm, p_box, sumpay, st_no, donor_tel2, donor_ename,
+                   CASE WHEN so_status_group = 1 THEN 'Active' ELSE 'Inactive' END AS status_label
+            FROM vw_active_don_pbox
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY sumpay DESC, donor_no ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = []
+        total_amt = 0.0
+        for r in res:
+            m = dict(r._mapping)
+            m["sumpay"] = round(float(m["sumpay"] or 0), 3)
+            total_amt = round(total_amt + m["sumpay"], 3)
+            rows.append(m)
+        return {
+            "view_key": vk,
+            "view_title_en": "Donors — P.O. Box Mailing List (ACTIVE_DON_PBOX)",
+            "view_title_ar": "قائمة المتبرعين بصناديق البريد (P.O. Box)",
+            "db_view_name": "vw_active_don_pbox",
+            "default_min_amt": default_min_amt,
+            "columns": ["donor_no", "prefix_name", "donor_name", "carenm", "p_box", "sumpay", "st_no", "donor_tel2", "donor_ename", "status_label"],
+            "headers": ["Donor No", "Prefix", "Donor Name (AR)", "Care", "P.O. Box", "Total Monthly (BHD)", "SO Count", "Mobile / Tel 2", "Donor Name (EN)", "SO Status"],
+            "rows": rows,
+            "summary": {"total_rows": len(rows), "total_amount": total_amt}
+        }
+
+    elif vk == "SMS_SUBSCRIPTIONS":
+        where_parts = ["1=1"]
+        if status_filter == "ACTIVE":
+            where_parts.append("status_no = 1")
+        elif status_filter == "INACTIVE":
+            where_parts.append("status_no <> 1")
+        if contact_only:
+            where_parts.append("donor_contact = 1")
+        if q_str:
+            where_parts.append("(CAST(donor_no AS TEXT) ILIKE :q OR donor_name ILIKE :q OR donor_ename ILIKE :q OR donor_mobile ILIKE :q OR donor_tel1 ILIKE :q OR donor_tel2 ILIKE :q)")
+            params["q"] = f"%{q_str}%"
+        sql = text(f"""
+            SELECT donor_no, donor_name, donor_ename, donor_mobile, donor_tel1, donor_tel2,
+                   CASE WHEN status_no = 1 THEN 'Active' ELSE 'Inactive' END AS donor_status
+            FROM vw_sms_subscriptions
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY donor_no ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = [dict(r._mapping) for r in res]
+        return {
+            "view_key": vk,
+            "view_title_en": "Donor SMS & Phone Subscriptions List (SMS_SUBSCRIPTIONS)",
+            "view_title_ar": "دليل أرقام الهواتف والرسائل النصية للمتبرعين",
+            "db_view_name": "vw_sms_subscriptions",
+            "default_min_amt": default_min_amt,
+            "columns": ["donor_no", "donor_name", "donor_ename", "donor_mobile", "donor_tel1", "donor_tel2", "donor_status"],
+            "headers": ["Donor No", "Donor Name (AR)", "Donor Name (EN)", "Mobile", "Tel 1 (Home/Office)", "Tel 2 (Mobile 2)", "Status"],
+            "rows": rows,
+            "summary": {"total_rows": len(rows), "total_amount": None}
+        }
+
+    elif vk == "UPTO_SPECIFIC_AMT":
+        eff_min = float(min_amt) if (min_amt is not None and min_amt >= 0) else default_min_amt
+        params["min_amt"] = eff_min
+        where_parts = ["a.status_no = 1", "a.monthly_pay >= :min_amt"]
+        if contact_only:
+            where_parts.append("COALESCE(b.donor_contact, 1) = 1")
+        if q_str:
+            where_parts.append("(CAST(a.donor_no AS TEXT) ILIKE :q OR CAST(a.so_id AS TEXT) ILIKE :q OR b.donor_name ILIKE :q OR COALESCE(b.donor_ename, '') ILIKE :q OR COALESCE(b.donor_tel2, '') ILIKE :q)")
+            params["q"] = f"%{q_str}%"
+        sql = text(f"""
+            SELECT
+                a.donor_no,
+                a.so_id,
+                a.monthly_pay,
+                COALESCE(b.donor_ename, '') AS donor_ename,
+                b.donor_name,
+                COALESCE(b.donor_tel2, b.donor_mobile, '') AS mobile,
+                CASE WHEN b.donor_p_box IS NOT NULL THEN 'P.BOX: ' || b.donor_p_box::text ELSE '' END AS p_box,
+                'FLAT:' || COALESCE(b.donor_flat::text, '') ||
+                ' BLD: ' || COALESCE(b.donor_building, '') ||
+                ' ROAD: ' || COALESCE(b.donor_road, '') ||
+                ' BLOCK: ' || COALESCE(b.donor_block::text, '') AS address
+            FROM donor_item a
+            JOIN donor_master b ON a.donor_no = b.donor_no
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY a.monthly_pay DESC, a.donor_no ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = []
+        total_amt = 0.0
+        for r in res:
+            m = dict(r._mapping)
+            m["monthly_pay"] = round(float(m["monthly_pay"] or 0), 3)
+            total_amt = round(total_amt + m["monthly_pay"], 3)
+            rows.append(m)
+        return {
+            "view_key": vk,
+            "view_title_en": f"Active Standing Orders >= {eff_min:.3f} BHD (UPTO_SPECIFIC_AMT / UPTO5 / UPTO10 / UPTO25)",
+            "view_title_ar": f"الاستقطاعات الفعالة بقيمة {eff_min:.3f} د.ب فأكثر",
+            "db_view_name": "vw_upto_specific_amt",
+            "default_min_amt": default_min_amt,
+            "applied_min_amt": eff_min,
+            "columns": ["donor_no", "so_id", "monthly_pay", "donor_ename", "donor_name", "mobile", "p_box", "address"],
+            "headers": ["Donor No", "SO ID", "Monthly Pay (BHD)", "Donor Name (EN)", "Donor Name (AR)", "Mobile / Tel 2", "P.O. Box", "Street Address"],
+            "rows": rows,
+            "summary": {"total_rows": len(rows), "total_amount": total_amt}
+        }
+
+    elif vk == "VW_STANDING_ORDERS_SUMMARY":
+        where_parts = ["1=1"]
+        if status_filter == "ACTIVE":
+            where_parts.append("status_no = 1")
+        elif status_filter == "INACTIVE":
+            where_parts.append("status_no <> 1")
+        if q_str:
+            where_parts.append("(CAST(so_id AS TEXT) ILIKE :q OR CAST(donor_no AS TEXT) ILIKE :q OR donor_name ILIKE :q OR COALESCE(donor_ename, '') ILIKE :q OR COALESCE(bank_e_desc, '') ILIKE :q OR COALESCE(sort_field, '') ILIKE :q)")
+            params["q"] = f"%{q_str}%"
+        sql = text(f"""
+            SELECT
+                so_id, donor_no, donor_name, COALESCE(donor_ename, '') AS donor_ename,
+                COALESCE(donor_mobile, donor_tel2, donor_tel1, '') AS mobile,
+                COALESCE(bank_e_desc, bank_desc, '') AS bank_name,
+                COALESCE(sort_field, '') AS sort_field,
+                monthly_pay,
+                TO_CHAR(donation_start_date, 'YYYY-MM-DD') AS start_date,
+                COALESCE(TO_CHAR(last_paid_month, 'YYYY-MM'), 'Never Paid') AS last_paid_month,
+                actual_delay_months,
+                CASE WHEN status_no = 1 THEN 'Active' ELSE 'Inactive' END AS so_status,
+                last_followup_summary
+            FROM vw_standing_orders_summary
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY monthly_pay DESC, so_id ASC
+        """)
+        res = await db.execute(sql, params)
+        rows = []
+        total_amt = 0.0
+        for r in res:
+            m = dict(r._mapping)
+            m["monthly_pay"] = round(float(m["monthly_pay"] or 0), 3)
+            total_amt = round(total_amt + m["monthly_pay"], 3)
+            rows.append(m)
+        return {
+            "view_key": vk,
+            "view_title_en": "Unified Standing Orders & Delay Summary (vw_standing_orders_summary)",
+            "view_title_ar": "العرض الموحد للاستقطاعات وأشهر التأخير والمتابعة",
+            "db_view_name": "vw_standing_orders_summary",
+            "default_min_amt": default_min_amt,
+            "columns": ["so_id", "donor_no", "donor_name", "donor_ename", "mobile", "bank_name", "sort_field", "monthly_pay", "start_date", "last_paid_month", "actual_delay_months", "so_status", "last_followup_summary"],
+            "headers": ["SO ID", "Donor No", "Donor Name (AR)", "Donor Name (EN)", "Mobile", "Bank", "Bank Code", "Monthly (BHD)", "Start Date", "Last Paid", "Delay (Mo)", "Status", "Last Follow-up"],
+            "rows": rows,
+            "summary": {"total_rows": len(rows), "total_amount": total_amt}
+        }
+
+    raise HTTPException(status_code=400, detail=f"Unknown view_key: {view_key}")
+
+

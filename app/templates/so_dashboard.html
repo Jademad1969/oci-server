@@ -436,7 +436,7 @@
             (meta.banks || []).forEach(b => {
                 const opt = document.createElement('option');
                 opt.value = b.bank_cd;
-                opt.textContent = `${b.bank_e_desc || b.bank_desc} (#${b.bank_cd})`;
+                opt.textContent = b.bank_e_desc || b.bank_desc;
                 bankSel.appendChild(opt);
             });
 
@@ -444,7 +444,7 @@
             (meta.charity_items || []).forEach(it => {
                 const opt = document.createElement('option');
                 opt.value = it.item_cd;
-                opt.textContent = `${it.item_e_desc || it.item_desc} (${it.item_desc})`;
+                opt.textContent = it.item_e_desc || it.item_desc;
                 itemSel.appendChild(opt);
             });
             filtersInitialized = true;
@@ -689,7 +689,7 @@
                     <tr class="hover:bg-slate-50">
                         <td class="py-2.5 px-3">
                             <div class="font-bold text-slate-900">${b.bank_name_en}</div>
-                            <div class="text-[11px] text-slate-500">${b.bank_name_ar} (#${b.bank_cd})</div>
+                            <div class="text-[11px] text-slate-500">Bank #${b.bank_cd}</div>
                         </td>
                         <td class="py-2.5 px-3 text-right font-mono font-semibold">${fmtInt(b.active_so_count)}</td>
                         <td class="py-2.5 px-3 text-right font-mono font-bold text-slate-900">${fmtBhd(b.expected_monthly_bhd)}</td>
@@ -722,7 +722,7 @@
             fundsDoughnutChart = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
-                    labels: funds.map(f => `${f.item_name_en} (${f.item_name_ar})`),
+                    labels: funds.map(f => f.item_name_en),
                     datasets: [{
                         data: funds.map(f => f.monthly_portfolio_bhd),
                         backgroundColor: funds.map((_, idx) => colors[idx % colors.length]),
@@ -752,7 +752,7 @@
                             <span class="w-2.5 h-2.5 rounded-xs shrink-0" style="background-color: ${colors[idx % colors.length]}"></span>
                             <div>
                                 <div class="font-bold text-slate-800">${f.item_name_en}</div>
-                                <div class="text-[10px] text-slate-500">${f.item_name_ar} (${f.portfolio_share_pct}%)</div>
+                                <div class="text-[10px] text-slate-500">${f.portfolio_share_pct}% Share</div>
                             </div>
                         </div>
                     </td>
@@ -778,7 +778,6 @@
                             <td class="py-2 px-3 font-mono font-bold text-blue-700">#${r.so_id}</td>
                             <td class="py-2 px-3">
                                 <div class="font-bold text-slate-900">#${r.donor_no} — ${r.donor_name_en}</div>
-                                <div class="text-[11px] text-slate-500">${r.donor_name_ar}</div>
                             </td>
                             <td class="py-2 px-3 font-mono text-slate-700">${r.mobile}</td>
                             <td class="py-2 px-3 text-slate-700">${r.bank_name}</td>
@@ -807,7 +806,7 @@
                 return `
                     <div class="space-y-1">
                         <div class="flex justify-between text-xs">
-                            <span class="font-semibold text-slate-800">${o.result_en} <span class="text-slate-400">(${o.result_ar})</span></span>
+                            <span class="font-semibold text-slate-800">${o.result_en}</span>
                             <span class="font-mono font-bold text-slate-900">${fmtInt(o.total_calls)} calls</span>
                         </div>
                         <div class="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -824,7 +823,7 @@
                 return `
                     <div class="space-y-1">
                         <div class="flex justify-between text-xs">
-                            <span class="font-semibold text-slate-800">${r.reason_en} <span class="text-slate-400">(${r.reason_ar})</span></span>
+                            <span class="font-semibold text-slate-800">${r.reason_en}</span>
                             <span class="font-mono font-bold text-rose-700">${fmtInt(r.cases_count)} cases</span>
                         </div>
                         <div class="w-full h-2 bg-slate-100 rounded-full overflow-hidden">

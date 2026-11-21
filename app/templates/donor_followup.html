@@ -118,13 +118,9 @@
                         <label class="block text-[11px] font-bold text-rose-700 mb-1">Donor No</label>
                         <input type="text" :value="currentDonor.donor_no" readonly class="w-full h-8 bg-slate-100 border border-slate-300 rounded px-2 font-mono font-bold text-center text-sm">
                     </div>
-                    <div class="sm:col-span-4">
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">Donor Name (Arabic)</label>
-                        <input type="text" :value="currentDonor.donor_name" readonly class="ar-text w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 font-bold text-slate-900">
-                    </div>
-                    <div class="sm:col-span-4">
-                        <label class="block text-[11px] font-semibold text-rose-700 mb-1">Donor Name (English)</label>
-                        <input type="text" dir="ltr" :value="currentDonor.donor_ename" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2 text-xs font-mono font-bold text-rose-700">
+                    <div class="sm:col-span-8">
+                        <label class="block text-[11px] font-semibold text-rose-700 mb-1">Donor Name</label>
+                        <input type="text" dir="ltr" :value="currentDonor.donor_ename || currentDonor.donor_name" readonly class="w-full h-8 bg-slate-50 border border-slate-300 rounded px-2.5 text-xs font-mono font-bold text-slate-900">
                     </div>
                     <div class="sm:col-span-2">
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">CPR / ID No.</label>
@@ -137,9 +133,9 @@
                     <div class="sm:col-span-2">
                         <label class="block text-[11px] font-bold text-blue-900 mb-1">Address Type</label>
                         <select x-model.number="currentDonor.address_type" class="w-full h-8 bg-white border border-blue-300 focus:border-blue-600 rounded px-1.5 font-bold text-slate-800">
-                            <option :value="1">Home (منزل)</option>
-                            <option :value="2">Work (عمل)</option>
-                            <option :value="3">P.O. Box (ص.ب)</option>
+                            <option :value="1">Home</option>
+                            <option :value="2">P.O. Box</option>
+                            <option :value="3">Work</option>
                         </select>
                     </div>
                     <div class="sm:col-span-1">
@@ -160,7 +156,7 @@
                     </div>
                     <div class="sm:col-span-3">
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Town / Area</label>
-                        <input type="text" :value="(townsMap && townsMap[currentDonor.donor_block]) ? townsMap[currentDonor.donor_block] : (currentDonor.town_name || '-')" readonly class="ar-text w-full h-8 bg-slate-100 border border-slate-300 rounded px-2 font-bold text-blue-900 text-center">
+                        <input type="text" :value="(townsMap && townsMap[currentDonor.donor_block]) ? townsMap[currentDonor.donor_block] : (currentDonor.town_name || '-')" readonly class="w-full h-8 bg-slate-100 border border-slate-300 rounded px-2 font-bold text-blue-900 text-center">
                     </div>
                 </div>
             </section>
@@ -247,7 +243,7 @@
                                 <td class="py-2 px-3 text-center font-mono font-semibold" x-text="so.donation_start_date"></td>
                                 <td class="py-2 px-3 text-center font-mono text-slate-500" x-text="so.donation_expected_edate || '-'"></td>
                                 <td class="py-2 px-3 text-center font-mono font-extrabold text-sm text-blue-900" x-text="so.monthly_pay"></td>
-                                <td class="py-2 px-3 font-bold text-slate-800" x-text="so.bank_desc"></td>
+                                <td class="py-2 px-3 font-bold text-slate-800" x-text="so.bank_e_desc || so.bank_desc"></td>
                                 <td class="py-2 px-3 text-center font-mono font-semibold" x-text="so.donor_acc_no"></td>
                                 <td class="py-2 px-3 text-center font-mono font-bold bg-slate-100/70" x-text="so.sort_field"></td>
                                 <td class="py-2 px-3 text-center font-mono font-bold text-emerald-700" x-text="so.alt_so_code || ''"></td>
@@ -370,7 +366,7 @@
                                     class="w-full h-9 bg-white border border-emerald-300 focus:border-emerald-600 rounded-lg px-2 font-bold text-emerald-900">
                                 <option value="">-- Select Result --</option>
                                 <template x-for="res in followResults" :key="res.result_cd">
-                                    <option :value="res.result_cd" x-text="res.result_nm"></option>
+                                    <option :value="res.result_cd" x-text="res.result_enm || res.result_nm"></option>
                                 </template>
                             </select>
                         </div>
@@ -383,7 +379,7 @@
                                     class="w-full h-9 bg-white border border-rose-300 focus:border-rose-600 rounded-lg px-2 font-bold text-rose-900">
                                 <option value="">-- Select Reason --</option>
                                 <template x-for="dr in delayReasons" :key="dr.reason_cd">
-                                    <option :value="dr.reason_cd" x-text="dr.reason_nm"></option>
+                                    <option :value="dr.reason_cd" x-text="dr.reason_enm || dr.reason_nm"></option>
                                 </template>
                             </select>
                         </div>
@@ -473,7 +469,7 @@
                                     class="w-full h-9 bg-white border border-emerald-300 focus:border-emerald-600 rounded-lg px-2 font-bold text-emerald-900">
                                 <option value="">-- Select Result --</option>
                                 <template x-for="res in followResults" :key="res.result_cd">
-                                    <option :value="res.result_cd" x-text="res.result_nm"></option>
+                                    <option :value="res.result_cd" x-text="res.result_enm || res.result_nm"></option>
                                 </template>
                             </select>
                         </div>
@@ -486,7 +482,7 @@
                                     class="w-full h-9 bg-white border border-rose-300 focus:border-rose-600 rounded-lg px-2 font-bold text-rose-900">
                                 <option value="">-- Select Reason --</option>
                                 <template x-for="dr in delayReasons" :key="dr.reason_cd">
-                                    <option :value="dr.reason_cd" x-text="dr.reason_nm"></option>
+                                    <option :value="dr.reason_cd" x-text="dr.reason_enm || dr.reason_nm"></option>
                                 </template>
                             </select>
                         </div>

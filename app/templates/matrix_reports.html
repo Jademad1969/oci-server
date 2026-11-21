@@ -9,6 +9,10 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
         .sticky-col { position: sticky; left: 0; z-index: 10; }
+        .sticky-head-col { position: sticky; left: 0; top: 0; z-index: 30; }
+        .sticky-foot-col { position: sticky; left: 0; bottom: 0; z-index: 30; }
+        .top-hscroll { overflow-x: auto; overflow-y: hidden; height: 14px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; }
+        .top-hscroll > div { height: 1px; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -71,8 +75,9 @@
                 </div>
                 <div id="banks-grand-summary" class="text-xs font-mono font-semibold text-slate-700"></div>
             </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-[11px] text-left border-collapse">
+            <div id="banks-top-scroll" class="top-hscroll"><div id="banks-top-scroll-inner"></div></div>
+            <div id="banks-table-scroll" class="overflow-x-auto">
+                <table id="banks-mtx-table" class="w-full text-[11px] text-left border-collapse">
                     <thead id="banks-mtx-thead"></thead>
                     <tbody id="banks-mtx-tbody" class="divide-y divide-slate-200"></tbody>
                 </table>
@@ -85,17 +90,19 @@
                 <div>
                     <h2 class="text-sm font-bold text-slate-900">2. Donors & Standing Orders Payment Matrix</h2>
                     <p class="text-[11px] text-slate-500">
-                        Rows show Donor Name + SO ID across selected months:
+                        Rows show Donor Name + SO ID across selected months (inactive SOs with no paid transactions are excluded):
                         <span class="inline-block px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">Green = Paid</span>
                         <span class="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-semibold">Red = Unpaid</span>
                     </p>
                 </div>
                 <div id="so-grand-summary" class="text-xs font-mono font-semibold text-slate-700"></div>
             </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-[11px] text-left border-collapse">
-                    <thead id="so-mtx-thead"></thead>
+            <div id="so-top-scroll" class="top-hscroll"><div id="so-top-scroll-inner"></div></div>
+            <div id="so-table-scroll" class="overflow-auto max-h-[65vh]">
+                <table id="so-mtx-table" class="w-full text-[11px] text-left border-collapse">
+                    <thead id="so-mtx-thead" class="sticky top-0 z-20"></thead>
                     <tbody id="so-mtx-tbody" class="divide-y divide-slate-200"></tbody>
+                    <tfoot id="so-mtx-tfoot" class="sticky bottom-0 z-20"></tfoot>
                 </table>
             </div>
         </section>
@@ -140,6 +147,33 @@
             });
         }
 
+        function syncTopScrollWidth(tableId, innerId) {
+            const tbl = document.getElementById(tableId);
+            const inner = document.getElementById(innerId);
+            if (tbl && inner) {
+                inner.style.width = tbl.scrollWidth + "px";
+            }
+        }
+
+        function bindSyncedScroll(topId, boxId) {
+            const topEl = document.getElementById(topId);
+            const boxEl = document.getElementById(boxId);
+            if (!topEl || !boxEl || topEl.dataset.synced === "1") return;
+            topEl.dataset.synced = "1";
+            let syncingTop = false;
+            let syncingBox = false;
+            topEl.addEventListener("scroll", () => {
+                if (syncingTop) { syncingTop = false; return; }
+                syncingBox = true;
+                boxEl.scrollLeft = topEl.scrollLeft;
+            });
+            boxEl.addEventListener("scroll", () => {
+                if (syncingBox) { syncingBox = false; return; }
+                syncingTop = true;
+                topEl.scrollLeft = boxEl.scrollLeft;
+            });
+        }
+
         function renderBanksMatrix(data) {
             const thead = document.getElementById("banks-mtx-thead");
             const tbody = document.getElementById("banks-mtx-tbody");
@@ -150,7 +184,7 @@
             summaryEl.textContent = `Grand Total -> General: ${fmtAmt(bm.grand_total?.general)} BHD | SO: ${fmtAmt(bm.grand_total?.so)} BHD`;
 
             let h1 = `<tr class="bg-slate-800 text-slate-100">
-                <th rowspan="2" class="py-2.5 px-3 font-semibold border-r border-slate-700 sticky-col bg-slate-800 min-w-[210px]">Bank</th>`;
+                <th rowspan="2" class="py-2 px-2 font-semibold border-r border-slate-700 sticky-col bg-slate-800 w-[160px] max-w-[160px]">Bank</th>`;
             periods.forEach(p => {
                 h1 += `<th colspan="2" class="py-2 px-2 text-center font-semibold border-r border-slate-700 whitespace-nowrap">${p.label}</th>`;
             });
@@ -167,11 +201,12 @@
 
             if (!bm.rows || bm.rows.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="${periods.length * 2 + 3}" class="py-6 text-center text-slate-400">No bank rows found.</td></tr>`;
+                syncTopScrollWidth("banks-mtx-table", "banks-top-scroll-inner");
                 return;
             }
 
             let bodyHtml = bm.rows.map(r => {
-                let rowCells = `<td class="py-2 px-3 font-semibold text-slate-800 border-r border-slate-200 sticky-col bg-white whitespace-nowrap">${r.bank_name}</td>`;
+                let rowCells = `<td class="py-1.5 px-2 font-semibold text-slate-800 border-r border-slate-200 sticky-col bg-white w-[160px] max-w-[160px] truncate" title="${r.bank_name}">${r.bank_name}</td>`;
                 periods.forEach(p => {
                     const c = (r.cells && r.cells[p.key]) || { general: 0, so: 0 };
                     rowCells += `
@@ -200,66 +235,70 @@
             `;
             bodyHtml += `<tr class="border-t-2 border-slate-300">${totRow}</tr>`;
             tbody.innerHTML = bodyHtml;
+            syncTopScrollWidth("banks-mtx-table", "banks-top-scroll-inner");
         }
 
         function renderSoMatrix(data) {
             const thead = document.getElementById("so-mtx-thead");
             const tbody = document.getElementById("so-mtx-tbody");
+            const tfoot = document.getElementById("so-mtx-tfoot");
             const summaryEl = document.getElementById("so-grand-summary");
             const periods = data.periods || [];
             const sm = data.so_matrix || { rows: [], period_totals: {}, grand_total: { paid: 0, unpaid: 0 } };
 
-            summaryEl.innerHTML = `Total Paid: <span class="text-emerald-700">${fmtAmt(sm.grand_total?.paid)} BHD</span> | Total Unpaid: <span class="text-rose-700">${fmtAmt(sm.grand_total?.unpaid)} BHD</span>`;
+            summaryEl.innerHTML = `Rows: <span class="text-slate-900">${(sm.rows || []).length}</span> | Total Paid: <span class="text-emerald-700">${fmtAmt(sm.grand_total?.paid)} BHD</span> | Total Unpaid: <span class="text-rose-700">${fmtAmt(sm.grand_total?.unpaid)} BHD</span>`;
 
             let headHtml = `<tr class="bg-slate-800 text-slate-100">
-                <th class="py-2.5 px-3 font-semibold border-r border-slate-700 sticky-col bg-slate-800 min-w-[240px]">Donor & SO ID</th>
-                <th class="py-2.5 px-2 font-semibold border-r border-slate-700 whitespace-nowrap">Bank</th>`;
+                <th class="py-2 px-2 font-semibold border-r border-slate-700 sticky-head-col bg-slate-800 w-[190px] max-w-[190px]">Donor - Bank</th>`;
             periods.forEach(p => {
-                headHtml += `<th class="py-2.5 px-2 text-center font-semibold border-r border-slate-700 whitespace-nowrap">${p.label}</th>`;
+                headHtml += `<th class="py-2 px-1.5 text-center font-semibold border-r border-slate-700 bg-slate-800 whitespace-nowrap">${p.label}</th>`;
             });
-            headHtml += `<th class="py-2.5 px-2 text-right font-semibold bg-emerald-900 text-emerald-100 border-r border-slate-700 whitespace-nowrap">Paid Total</th>
-                         <th class="py-2.5 px-2 text-right font-semibold bg-rose-900 text-rose-100 whitespace-nowrap">Unpaid Total</th></tr>`;
+            headHtml += `<th class="py-2 px-2 text-right font-semibold bg-emerald-900 text-emerald-100 border-r border-slate-700 whitespace-nowrap">Paid Total</th>
+                         <th class="py-2 px-2 text-right font-semibold bg-rose-900 text-rose-100 whitespace-nowrap">Unpaid Total</th></tr>`;
             thead.innerHTML = headHtml;
 
             if (!sm.rows || sm.rows.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="${periods.length + 4}" class="py-6 text-center text-slate-400">No standing orders found for selected filters.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="${periods.length + 3}" class="py-6 text-center text-slate-400">No standing orders found for selected filters.</td></tr>`;
+                if (tfoot) tfoot.innerHTML = "";
+                syncTopScrollWidth("so-mtx-table", "so-top-scroll-inner");
                 return;
             }
 
             let html = sm.rows.map(r => {
+                const fullLabel = `${r.donor_name}${r.bank_name ? ' - ' + r.bank_name : ''}`;
                 let rowHtml = `
-                    <td class="py-2 px-3 border-r border-slate-200 sticky-col bg-white whitespace-nowrap">
+                    <td class="py-1.5 px-2 border-r border-slate-200 sticky-col bg-white w-[190px] max-w-[190px] truncate"
+                        title="#${r.so_id} | ${fullLabel}">
                         <span class="font-mono font-bold text-slate-900">#${r.so_id}</span>
-                        <span class="text-slate-400 mx-1">|</span>
-                        <span class="font-semibold text-slate-800">${r.donor_name}</span>
+                        <span class="text-slate-400 mx-0.5">|</span>
+                        <span class="font-semibold text-slate-800">${r.donor_name}</span><span class="text-slate-500 font-medium">${r.bank_name ? ' - ' + r.bank_name : ''}</span>
                     </td>
-                    <td class="py-2 px-2 text-slate-600 border-r border-slate-200 whitespace-nowrap">${r.bank_name || "-"}</td>
                 `;
 
                 periods.forEach(p => {
                     const c = (r.cells && r.cells[p.key]) || { state: "none", amt: 0 };
                     if (c.state === "paid") {
-                        rowHtml += `<td class="py-1.5 px-1.5 text-center font-mono font-semibold bg-emerald-100 text-emerald-900 border-r border-emerald-200 whitespace-nowrap" title="Paid">${fmtAmt(c.amt)}</td>`;
+                        rowHtml += `<td class="py-1.5 px-1 text-center font-mono font-semibold bg-emerald-100 text-emerald-900 border-r border-emerald-200 whitespace-nowrap" title="Paid">${fmtAmt(c.amt)}</td>`;
                     } else if (c.state === "unpaid") {
-                        rowHtml += `<td class="py-1.5 px-1.5 text-center font-mono font-semibold bg-rose-100 text-rose-900 border-r border-rose-200 whitespace-nowrap" title="Unpaid">${fmtAmt(c.amt)}</td>`;
+                        rowHtml += `<td class="py-1.5 px-1 text-center font-mono font-semibold bg-rose-100 text-rose-900 border-r border-rose-200 whitespace-nowrap" title="Unpaid">${fmtAmt(c.amt)}</td>`;
                     } else {
-                        rowHtml += `<td class="py-1.5 px-1.5 text-center text-slate-300 border-r border-slate-100">-</td>`;
+                        rowHtml += `<td class="py-1.5 px-1 text-center text-slate-300 border-r border-slate-100">-</td>`;
                     }
                 });
 
                 rowHtml += `
-                    <td class="py-2 px-2 text-right font-mono font-bold bg-emerald-50 text-emerald-800 border-r border-slate-200 whitespace-nowrap">${fmtAmt(r.paid_total)}</td>
-                    <td class="py-2 px-2 text-right font-mono font-bold bg-rose-50 text-rose-800 whitespace-nowrap">${fmtAmt(r.unpaid_total)}</td>
+                    <td class="py-1.5 px-2 text-right font-mono font-bold bg-emerald-50 text-emerald-800 border-r border-slate-200 whitespace-nowrap">${fmtAmt(r.paid_total)}</td>
+                    <td class="py-1.5 px-2 text-right font-mono font-bold bg-rose-50 text-rose-800 whitespace-nowrap">${fmtAmt(r.unpaid_total)}</td>
                 `;
                 return `<tr class="hover:bg-slate-50">${rowHtml}</tr>`;
             }).join("");
+            tbody.innerHTML = html;
 
-            let footHtml = `<td class="py-2.5 px-3 font-bold text-slate-900 bg-slate-100 border-r border-slate-300 sticky-col">Monthly Totals (Paid / Unpaid)</td>
-                            <td class="py-2.5 px-2 bg-slate-100 border-r border-slate-300"></td>`;
+            let footHtml = `<td class="py-2 px-2 font-bold text-slate-900 bg-slate-100 border-r border-slate-300 sticky-foot-col w-[190px] max-w-[190px] truncate" title="Monthly Totals (Paid / Unpaid)">Totals (Paid / Unpaid)</td>`;
             periods.forEach(p => {
                 const pt = (sm.period_totals && sm.period_totals[p.key]) || { paid: 0, unpaid: 0 };
                 footHtml += `
-                    <td class="py-1.5 px-1.5 text-center font-mono bg-slate-100 border-r border-slate-200 whitespace-nowrap">
+                    <td class="py-1.5 px-1 text-center font-mono bg-slate-100 border-r border-slate-200 whitespace-nowrap">
                         <div class="text-emerald-700 font-bold">${fmtAmt(pt.paid)}</div>
                         <div class="text-rose-700 font-semibold">${fmtAmt(pt.unpaid)}</div>
                     </td>
@@ -269,8 +308,10 @@
                 <td class="py-2.5 px-2 text-right font-mono font-bold bg-emerald-100 text-emerald-900 border-r border-slate-200">${fmtAmt(sm.grand_total?.paid)}</td>
                 <td class="py-2.5 px-2 text-right font-mono font-bold bg-rose-100 text-rose-900">${fmtAmt(sm.grand_total?.unpaid)}</td>
             `;
-            html += `<tr class="border-t-2 border-slate-300">${footHtml}</tr>`;
-            tbody.innerHTML = html;
+            if (tfoot) {
+                tfoot.innerHTML = `<tr class="border-t-2 border-slate-300 shadow-inner">${footHtml}</tr>`;
+            }
+            syncTopScrollWidth("so-mtx-table", "so-top-scroll-inner");
         }
 
         async function loadMatrices() {
@@ -364,6 +405,12 @@
             const btn = document.getElementById("btn-refresh-matrix");
             if (!btn || btn.dataset.bound === "1") return;
             btn.dataset.bound = "1";
+            bindSyncedScroll("banks-top-scroll", "banks-table-scroll");
+            bindSyncedScroll("so-top-scroll", "so-table-scroll");
+            window.addEventListener("resize", () => {
+                syncTopScrollWidth("banks-mtx-table", "banks-top-scroll-inner");
+                syncTopScrollWidth("so-mtx-table", "so-top-scroll-inner");
+            });
             renderYearTags();
             await loadBanks();
             btn.addEventListener("click", loadMatrices);

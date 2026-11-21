@@ -29,16 +29,12 @@
             </div>
         </div>
 
-        <div class="flex items-center gap-2 text-xs">
-            <a href="/bank-codes-audit" class="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 px-3 py-1 rounded-lg font-semibold transition">
-                Bank Codes Audit
-            </a>
-            <a href="/bank-reconcile" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 px-3 py-1 rounded-lg font-semibold transition">
-                Bank Reconciliation CSV
-            </a>
-            <a href="/followup" class="bg-rose-700 hover:bg-rose-600 text-white border border-rose-600 px-3 py-1 rounded-lg font-semibold transition">
-                Delayed Follow-up
-            </a>
+        <div class="flex items-center gap-3 text-xs">
+            <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span class="text-slate-400">USER:</span>
+                <span class="font-bold text-emerald-400 font-mono" x-text="(window.ERP_USER && window.ERP_USER.username) || 'TAREK'"></span>
+            </div>
         </div>
     </header>
 
@@ -179,40 +175,39 @@
                     </div>
                     <div>
                         <label class="block text-[11px] font-bold text-rose-700 mb-1">Title / Prefix</label>
-                        <select x-model="currentDonor.name_prefix" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
-                            <option value="1">Mr. (حضرة الفاضل)</option>
-                            <option value="2">Ms./Mrs. (حضرة الفاضلة)</option>
-                            <option value="3">Sheikh (سعادة الشيخ)</option>
-                            <option value="4">Dr. (الدكتور)</option>
+                        <select x-model.number="currentDonor.name_prefix" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <template x-for="p in prefixes" :key="p.prefix_cd">
+                                <option :value="p.prefix_cd" x-text="p.prefix_ename"></option>
+                            </template>
                         </select>
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Salutation</label>
                         <select x-model="currentDonor.care" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
-                            <option value="1">حفظه الله</option>
-                            <option value="2">حفظها الله</option>
-                            <option value="3">المحترم</option>
+                            <template x-for="c in cares" :key="c.care_cd">
+                                <option :value="String(c.care_cd)" x-text="c.care_enm"></option>
+                            </template>
                         </select>
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Gender</label>
-                        <select x-model="currentDonor.gen_cd" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
-                            <option value="1">Male (ذكر)</option>
-                            <option value="2">Female (أنثى)</option>
+                        <select x-model.number="currentDonor.gen_cd" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option :value="1">Male</option>
+                            <option :value="2">Female</option>
                         </select>
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Language</label>
-                        <select x-model="currentDonor.lang_cd" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
-                            <option value="1">Arabic (عربي)</option>
-                            <option value="2">English (إنجليزي)</option>
+                        <select x-model.number="currentDonor.lang_cd" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option :value="1">Arabic</option>
+                            <option :value="2">English</option>
                         </select>
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Receive Mail?</label>
-                        <select x-model="currentDonor.donor_contact" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
-                            <option value="1">Yes (نعم)</option>
-                            <option value="2">No (لا)</option>
+                        <select x-model.number="currentDonor.donor_contact" class="w-full bg-white border border-slate-300 focus:border-blue-600 rounded px-2 py-1 text-xs">
+                            <option :value="1">Yes</option>
+                            <option :value="2">No</option>
                         </select>
                     </div>
                 </div>
@@ -237,8 +232,8 @@
                             <select x-model.number="currentDonor.status_no" @change="checkDonorStatusChange()"
                                     :class="currentDonor.status_no === 1 ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300'"
                                     class="w-full border rounded px-2 py-1.5 text-xs font-bold text-center">
-                                <option :value="1">Active (فعال)</option>
-                                <option :value="2">Inactive (غير فعال)</option>
+                                <option :value="1">Active</option>
+                                <option :value="2">Inactive</option>
                             </select>
                         </div>
                     </div>
@@ -293,13 +288,13 @@
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Block No.</label>
-                        <input type="number" x-model="currentDonor.donor_block"
+                        <input type="number" x-model="currentDonor.donor_block" @input="updateTownFromBlock()"
                                class="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs font-mono text-center font-bold">
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">City / Town</label>
-                        <input type="text" x-model="currentDonor.town_name" readonly
-                               class="ar-input w-full bg-slate-100 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600">
+                        <input type="text" :value="(townsMap && townsMap[currentDonor.donor_block]) ? townsMap[currentDonor.donor_block] : (currentDonor.town_name || '')" readonly
+                               class="w-full bg-slate-100 border border-slate-200 rounded px-2 py-1 text-xs font-semibold text-slate-700">
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">P.O. Box</label>
@@ -326,10 +321,10 @@
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Address Type</label>
-                        <select x-model="currentDonor.address_type" class="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs">
-                            <option value="1">Home (منزل)</option>
-                            <option value="2">P.O. Box (صندوق بريد)</option>
-                            <option value="3">Work (عمل)</option>
+                        <select x-model.number="currentDonor.address_type" class="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs">
+                            <option :value="1">Home</option>
+                            <option :value="2">P.O. Box</option>
+                            <option :value="3">Work</option>
                         </select>
                     </div>
                 </div>
@@ -347,13 +342,10 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2.5">
                     <div>
                         <label class="block text-[11px] font-bold text-rose-700 mb-1">Donor Bank</label>
-                        <select x-model="currentDonor.bank2_cd" class="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs font-semibold">
-                            <option value="1">Bahrain Islamic Bank (بنك البحرين الإسلامي)</option>
-                            <option value="2">National Bank of Bahrain (بنك البحرين الوطني)</option>
-                            <option value="3">Al Salam Bank (مصرف السلام)</option>
-                            <option value="4">BBK (بنك البحرين والكويت)</option>
-                            <option value="5">Kuwait Finance House (بيت التمويل الكويتي)</option>
-                            <option value="7">Ithmaar Bank (بنك إثمار)</option>
+                        <select x-model.number="currentDonor.bank2_cd" class="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs font-semibold">
+                            <template x-for="b in banks" :key="b.bank_cd">
+                                <option :value="b.bank_cd" x-text="b.bank_e_desc"></option>
+                            </template>
                         </select>
                     </div>
                     <div>
@@ -366,10 +358,10 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Account Type</label>
-                        <select x-model="currentDonor.acc_type_no" class="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs">
-                            <option value="1">Savings (توفير)</option>
-                            <option value="2">Current (جاري)</option>
-                            <option value="3">Investment (استثمار)</option>
+                        <select x-model.number="currentDonor.acc_type_no" class="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs">
+                            <template x-for="a in accTypes" :key="a.acc_type_no">
+                                <option :value="a.acc_type_no" x-text="a.acc_type_e_desc"></option>
+                            </template>
                         </select>
                     </div>
                     <div>
@@ -427,11 +419,10 @@
                                 class="transition cursor-pointer">
                                 <td class="py-2 px-2.5 text-center font-mono font-bold text-slate-600" x-text="item.so_id"></td>
                                 <td class="py-2 px-2.5">
-                                    <select x-model="item.item_desc" class="bg-transparent border border-slate-200 rounded px-2 py-0.5 text-xs font-semibold w-full">
-                                        <option value="صدقة">صدقة (Sadaqah)</option>
-                                        <option value="زكاة">زكاة (Zakat)</option>
-                                        <option value="دعوة">دعوة (Dawah)</option>
-                                        <option value="مساهمة عامة">مساهمة عامة (General)</option>
+                                    <select x-model="item.item_no" class="bg-transparent border border-slate-200 rounded px-2 py-0.5 text-xs font-semibold w-full">
+                                        <template x-for="ci in charityItems" :key="ci.item_cd">
+                                            <option :value="String(ci.item_cd)" x-text="ci.item_e_desc"></option>
+                                        </template>
                                     </select>
                                 </td>
                                 <td class="py-2 px-2.5 text-center font-mono font-semibold" x-text="item.donation_start_date"></td>
@@ -440,7 +431,7 @@
                                 <td class="py-2 px-2.5 text-center">
                                     <input type="checkbox" x-model="item.through_form" class="w-3.5 h-3.5 accent-blue-600 rounded cursor-pointer">
                                 </td>
-                                <td class="py-2 px-2.5 font-semibold text-blue-900" x-text="item.bank_desc"></td>
+                                <td class="py-2 px-2.5 font-semibold text-blue-900" x-text="item.bank_e_desc || item.bank_desc"></td>
                                 <td class="py-2 px-2.5 text-center font-mono font-semibold" x-text="item.donor_acc_no"></td>
                                 <td class="py-2 px-2.5 text-center font-mono font-bold text-slate-900 bg-slate-100/70" x-text="item.sort_field"></td>
                                 <td class="py-2 px-2.5 text-center font-mono font-bold text-emerald-800" x-text="item.alt_so_code || '0'"></td>
@@ -491,17 +482,17 @@
     <div x-show="showAddSoModal" style="display: none;" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-5" @click.away="showAddSoModal = false">
             <div class="flex items-center justify-between border-b pb-3 mb-4">
-                <h3 class="font-bold text-sm text-slate-800">Add New Standing Order for: <span class="text-blue-700" x-text="currentDonor.donor_name"></span></h3>
+                <h3 class="font-bold text-sm text-slate-800">Add New Standing Order for: <span class="text-blue-700" x-text="currentDonor.donor_ename || currentDonor.donor_name"></span></h3>
                 <button @click="showAddSoModal = false" class="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
             </div>
 
             <div class="grid grid-cols-2 gap-3 text-xs mb-4">
                 <div>
                     <label class="block font-semibold text-slate-600 mb-1">Charity Item</label>
-                    <select x-model="newSo.item_desc" class="w-full border border-slate-300 rounded px-2.5 py-1.5">
-                        <option value="صدقة">صدقة (Sadaqah)</option>
-                        <option value="زكاة">زكاة (Zakat)</option>
-                        <option value="دعوة">دعوة (Dawah)</option>
+                    <select x-model="newSo.item_no" class="w-full border border-slate-300 rounded px-2.5 py-1.5">
+                        <template x-for="ci in charityItems" :key="ci.item_cd">
+                            <option :value="String(ci.item_cd)" x-text="ci.item_e_desc"></option>
+                        </template>
                     </select>
                 </div>
                 <div>
@@ -514,11 +505,10 @@
                 </div>
                 <div>
                     <label class="block font-semibold text-slate-600 mb-1">Bank</label>
-                    <select x-model="newSo.bank_desc" class="w-full border border-slate-300 rounded px-2.5 py-1.5">
-                        <option value="البحرين الإسلامي">Bahrain Islamic Bank</option>
-                        <option value="البحرين الوطني">National Bank of Bahrain</option>
-                        <option value="السلام">Al Salam Bank</option>
-                        <option value="البحرين والكويت">BBK</option>
+                    <select x-model.number="newSo.bank2_cd" class="w-full border border-slate-300 rounded px-2.5 py-1.5">
+                        <template x-for="b in banks" :key="b.bank_cd">
+                            <option :value="b.bank_cd" x-text="b.bank_e_desc"></option>
+                        </template>
                     </select>
                 </div>
                 <div>
@@ -552,7 +542,11 @@
                 showAddSoModal: false,
                 banks: [],
                 charityItems: [],
-                newSo: { item_desc: 'صدقة', monthly_pay: 10, start_date: '2026-06-01', bank_desc: 'البحرين الإسلامي', bank2_cd: 1, donor_acc_no: '', sort_field: '' },
+                prefixes: [],
+                cares: [],
+                accTypes: [],
+                townsMap: {},
+                newSo: { item_no: '1', monthly_pay: 10, start_date: '2026-06-01', bank2_cd: 1, donor_acc_no: '', sort_field: '' },
                 donors: [{
                     donor_no: 1, f_nm: '', s_nm: '', t_nm: '', l_nm: '',
                     donor_name: 'Loading...', donor_ename: '', donor_cpr: '',
@@ -569,6 +563,10 @@
                         const data = await res.json();
                         this.banks = data.banks || [];
                         this.charityItems = data.charity_items || [];
+                        this.prefixes = data.prefixes || [];
+                        this.cares = data.cares || [];
+                        this.accTypes = data.acc_types || [];
+                        this.townsMap = data.towns_map || {};
                         if (data.donors && data.donors.length > 0) {
                             this.donors = data.donors;
                             if (keepDonorNo) {
@@ -582,6 +580,11 @@
                     } catch (e) {
                         console.error('Error loading initial data:', e);
                     }
+                },
+                updateTownFromBlock() {
+                    if (!this.currentDonor) return;
+                    const blk = this.currentDonor.donor_block;
+                    this.currentDonor.town_name = (blk && this.townsMap[blk]) ? this.townsMap[blk] : '';
                 },
                 get filteredDonors() {
                     return this.donors.filter(d => {
@@ -634,8 +637,9 @@
                     this.currentDonor.donor_name = parts.join(' ');
                 },
                 openAddSoModal() {
+                    this.newSo.item_no = (this.charityItems.length > 0 ? String(this.charityItems[0].item_cd) : '1');
                     this.newSo.donor_acc_no = this.currentDonor.donor_acc_no;
-                    this.newSo.bank2_cd = this.currentDonor.bank2_cd || 1;
+                    this.newSo.bank2_cd = Number(this.currentDonor.bank2_cd || 1);
                     this.newSo.sort_field = String(Math.floor(Math.random() * 8999) + 1000);
                     this.showAddSoModal = true;
                 },
@@ -645,7 +649,7 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             donor_no: Number(this.currentDonor.donor_no),
-                            item_no: '1',
+                            item_no: String(this.newSo.item_no || '1'),
                             monthly_pay: Number(this.newSo.monthly_pay),
                             donation_start_date: this.newSo.start_date,
                             bank2_cd: Number(this.newSo.bank2_cd || 1),

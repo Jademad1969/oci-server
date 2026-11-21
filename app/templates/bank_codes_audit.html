@@ -52,7 +52,7 @@
                     <select x-model.number="selectedBank" @change="loadAuditData()"
                             class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-1.5 text-xs font-bold text-blue-900 min-w-[260px] shadow-2xs">
                         <template x-for="b in banks" :key="b.bank_cd">
-                            <option :value="b.bank_cd" x-text="b.bank_e_desc + ' (' + b.bank_desc + ')'"></option>
+                            <option :value="b.bank_cd" x-text="b.bank_e_desc || b.bank_desc"></option>
                         </template>
                     </select>
                 </div>
@@ -190,7 +190,7 @@
                             <template x-for="so in soList" :key="so.so_id">
                                 <tr class="hover:bg-slate-50">
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-blue-700 text-sm" x-text="so.donor_no"></td>
-                                    <td class="py-2 px-2.5 font-bold text-slate-800 truncate max-w-[180px]" x-text="so.donor_name"></td>
+                                    <td class="py-2 px-2.5 font-bold text-slate-800 truncate max-w-[180px]" x-text="so.donor_ename || so.donor_name"></td>
                                     <td class="py-2 px-2.5 text-center font-mono" x-text="so.donation_start_date"></td>
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-sm text-blue-900" x-text="so.monthly_pay"></td>
                                     <td class="py-2 px-2.5 text-center font-mono" x-text="so.donor_acc_no"></td>
@@ -238,7 +238,7 @@
                             <template x-for="tr in moneyTransList" :key="tr.so_id + '_' + tr.month_year">
                                 <tr :class="!tr.is_code_matched ? 'bg-rose-50' : 'hover:bg-slate-50'">
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-blue-700 text-sm" x-text="tr.donor_no"></td>
-                                    <td class="py-2 px-2.5 font-bold text-slate-800 truncate max-w-[180px]" x-text="tr.donor_name"></td>
+                                    <td class="py-2 px-2.5 font-bold text-slate-800 truncate max-w-[180px]" x-text="tr.donor_ename || tr.donor_name"></td>
                                     <td class="py-2 px-2.5 text-center font-mono" x-text="tr.donation_start_date"></td>
                                     <td class="py-2 px-2.5 text-center font-mono" x-text="tr.month_year"></td>
                                     <td class="py-2 px-2.5 text-center font-mono font-bold text-sm text-blue-900" x-text="tr.paid_sum"></td>

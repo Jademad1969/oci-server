@@ -86,7 +86,7 @@
 
         <!-- 2. DONORS & STANDING ORDERS MATRIX -->
         <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50">
+            <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50">
                 <div>
                     <h2 class="text-sm font-bold text-slate-900">2. Donors & Standing Orders Payment Matrix</h2>
                     <p class="text-[11px] text-slate-500">
@@ -95,7 +95,23 @@
                         <span class="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-semibold">Red = Unpaid</span>
                     </p>
                 </div>
-                <div id="so-grand-summary" class="text-xs font-mono font-semibold text-slate-700"></div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <div id="so-grand-summary" class="text-xs font-mono font-semibold text-slate-700"></div>
+                    <div class="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200 text-xs">
+                        <span class="text-[11px] text-slate-500">Per page:</span>
+                        <select id="so-page-size" class="font-mono font-bold text-slate-800 bg-transparent focus:outline-none">
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                            <option value="250">250</option>
+                        </select>
+                        <div class="h-4 w-px bg-slate-200 mx-1"></div>
+                        <button type="button" id="so-page-first" class="px-1.5 py-0.5 rounded hover:bg-slate-100 font-bold text-slate-700" title="First Page">|&lt;</button>
+                        <button type="button" id="so-page-prev" class="px-1.5 py-0.5 rounded hover:bg-slate-100 font-bold text-slate-700" title="Previous Page">&lt;</button>
+                        <span id="so-page-info" class="px-2 font-mono font-bold text-slate-700">1 / 1</span>
+                        <button type="button" id="so-page-next" class="px-1.5 py-0.5 rounded hover:bg-slate-100 font-bold text-slate-700" title="Next Page">&gt;</button>
+                        <button type="button" id="so-page-last" class="px-1.5 py-0.5 rounded hover:bg-slate-100 font-bold text-slate-700" title="Last Page">&gt;|</button>
+                    </div>
+                </div>
             </div>
             <div id="so-top-scroll" class="top-hscroll"><div id="so-top-scroll-inner"></div></div>
             <div id="so-table-scroll" class="overflow-auto max-h-[65vh]">
@@ -114,6 +130,8 @@
         let selectedYears = new Set([2025, 2026].filter(y => LAST_FIVE_YEARS.includes(y)));
         if (selectedYears.size === 0) selectedYears.add(CURRENT_YEAR);
         let latestMatrixData = null;
+        let currentSoPage = 1;
+        let currentSoTotalPages = 1;
 
         function showAlert(msg) {
             const el = document.getElementById("mtx-alert");
@@ -244,9 +262,15 @@
             const tfoot = document.getElementById("so-mtx-tfoot");
             const summaryEl = document.getElementById("so-grand-summary");
             const periods = data.periods || [];
-            const sm = data.so_matrix || { rows: [], period_totals: {}, grand_total: { paid: 0, unpaid: 0 } };
+            const sm = data.so_matrix || { rows: [], period_totals: {}, grand_total: { paid: 0, unpaid: 0 }, pagination: {} };
+            const pg = sm.pagination || { page: 1, page_size: 100, total_rows: (sm.rows || []).length, total_pages: 1 };
+            currentSoPage = pg.page || 1;
+            currentSoTotalPages = pg.total_pages || 1;
 
-            summaryEl.innerHTML = `Rows: <span class="text-slate-900">${(sm.rows || []).length}</span> | Total Paid: <span class="text-emerald-700">${fmtAmt(sm.grand_total?.paid)} BHD</span> | Total Unpaid: <span class="text-rose-700">${fmtAmt(sm.grand_total?.unpaid)} BHD</span>`;
+            const pageInfoEl = document.getElementById("so-page-info");
+            if (pageInfoEl) pageInfoEl.textContent = `Page ${currentSoPage} / ${currentSoTotalPages}`;
+
+            summaryEl.innerHTML = `Total SOs: <span class="text-slate-900">${pg.total_rows ?? (sm.rows || []).length}</span> | Total Paid: <span class="text-emerald-700">${fmtAmt(sm.grand_total?.paid)} BHD</span> | Total Unpaid: <span class="text-rose-700">${fmtAmt(sm.grand_total?.unpaid)} BHD</span>`;
 
             let headHtml = `<tr class="bg-slate-800 text-slate-100">
                 <th class="py-2 px-2 font-semibold border-r border-slate-700 sticky-head-col bg-slate-800 w-[190px] max-w-[190px]">Donor - Bank</th>`;
@@ -314,12 +338,18 @@
             syncTopScrollWidth("so-mtx-table", "so-top-scroll-inner");
         }
 
-        async function loadMatrices() {
+        async function loadMatrices(resetPage = false) {
             showAlert("");
+            if (resetPage) currentSoPage = 1;
             const yrsParam = Array.from(selectedYears).sort().join(",");
             const bankVal = document.getElementById("mtx-bank").value;
             const qVal = document.getElementById("mtx-search").value;
-            const params = new URLSearchParams({ years: yrsParam });
+            const pageSizeVal = document.getElementById("so-page-size")?.value || "100";
+            const params = new URLSearchParams({
+                years: yrsParam,
+                page: String(currentSoPage),
+                page_size: String(pageSizeVal)
+            });
             if (bankVal) params.set("bank_cd", bankVal);
             if (qVal) params.set("search_q", qVal);
 
@@ -365,10 +395,23 @@
             downloadCsv("banks_matrix_general_so.csv", lines);
         }
 
-        function exportSoMatrixCsv() {
-            if (!latestMatrixData) return;
-            const periods = latestMatrixData.periods || [];
-            const sm = latestMatrixData.so_matrix || { rows: [] };
+        async function exportSoMatrixCsv() {
+            const yrsParam = Array.from(selectedYears).sort().join(",");
+            const bankVal = document.getElementById("mtx-bank").value;
+            const qVal = document.getElementById("mtx-search").value;
+            const params = new URLSearchParams({ years: yrsParam, export_all: "true" });
+            if (bankVal) params.set("bank_cd", bankVal);
+            if (qVal) params.set("search_q", qVal);
+
+            let exportData = latestMatrixData;
+            try {
+                const res = await fetch("/api/reports/matrix?" + params.toString(), { credentials: "same-origin" });
+                if (res.ok) exportData = await res.json();
+            } catch (e) {}
+
+            if (!exportData) return;
+            const periods = exportData.periods || [];
+            const sm = exportData.so_matrix || { rows: [] };
             const header = ["SO ID", "Donor No", "Donor Name", "Bank"];
             periods.forEach(p => header.push(`${p.label} Status & Amt`));
             header.push("Paid Total", "Unpaid Total");
@@ -413,12 +456,17 @@
             });
             renderYearTags();
             await loadBanks();
-            btn.addEventListener("click", loadMatrices);
-            document.getElementById("mtx-bank").addEventListener("change", loadMatrices);
-            document.getElementById("mtx-search").addEventListener("keyup", (e) => { if (e.key === "Enter") loadMatrices(); });
+            btn.addEventListener("click", () => loadMatrices(true));
+            document.getElementById("mtx-bank").addEventListener("change", () => loadMatrices(true));
+            document.getElementById("mtx-search").addEventListener("keyup", (e) => { if (e.key === "Enter") loadMatrices(true); });
+            document.getElementById("so-page-size").addEventListener("change", () => loadMatrices(true));
+            document.getElementById("so-page-first").addEventListener("click", () => { if (currentSoPage > 1) { currentSoPage = 1; loadMatrices(false); } });
+            document.getElementById("so-page-prev").addEventListener("click", () => { if (currentSoPage > 1) { currentSoPage--; loadMatrices(false); } });
+            document.getElementById("so-page-next").addEventListener("click", () => { if (currentSoPage < currentSoTotalPages) { currentSoPage++; loadMatrices(false); } });
+            document.getElementById("so-page-last").addEventListener("click", () => { if (currentSoPage < currentSoTotalPages) { currentSoPage = currentSoTotalPages; loadMatrices(false); } });
             document.getElementById("btn-export-banks-csv").addEventListener("click", exportBanksMatrixCsv);
             document.getElementById("btn-export-so-csv").addEventListener("click", exportSoMatrixCsv);
-            await loadMatrices();
+            await loadMatrices(true);
         }
 
         if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initMatrixPage);

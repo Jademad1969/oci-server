@@ -51,22 +51,22 @@
                 <button @click="setFilter('DELAYED')"
                         :class="filterMode === 'DELAYED' ? 'bg-rose-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
                         class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
-                    Delayed (&gt; 2 Months) (<span x-text="donors.filter(d => d.max_delay > 2).length"></span>)
+                    Delayed (&gt; 2 Months) (<span x-text="counts.DELAYED"></span>)
                 </button>
                 <button @click="setFilter('INACTIVE')"
                         :class="filterMode === 'INACTIVE' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
                         class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
-                    Inactive Donors (<span x-text="donors.filter(d => Number(d.status_no) === 2).length"></span>)
+                    Inactive Donors (<span x-text="counts.INACTIVE"></span>)
                 </button>
                 <button @click="setFilter('ALL')"
                         :class="filterMode === 'ALL' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'"
                         class="px-3.5 py-1.5 rounded-md transition whitespace-nowrap">
-                    All Subscribers (<span x-text="donors.length"></span>)
+                    All Subscribers (<span x-text="counts.ALL"></span>)
                 </button>
             </div>
 
             <div class="flex-1 max-w-md relative">
-                <input type="text" x-model="searchQuery" @input="currentIndex = 0; selectedSoIndex = 0; resetFollowForms()"
+                <input type="text" x-model="searchQuery" @input.debounce.250ms="handleSearch()"
                        placeholder="Search by Donor No, Name, CPR, or Mobile Phone..."
                        class="w-full h-9 bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg pl-9 pr-3 text-xs">
                 <svg class="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -76,13 +76,13 @@
 
             <div class="flex items-center gap-2.5">
                 <div class="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-xs h-9">
-                    <button @click="currentIndex = 0; selectedSoIndex = 0; resetFollowForms()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="First">|&lt;</button>
-                    <button @click="if(currentIndex > 0) { currentIndex--; selectedSoIndex = 0; resetFollowForms(); }" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Previous">&lt;</button>
+                    <button @click="firstDonor()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="First">|&lt;</button>
+                    <button @click="prevDonor()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Previous">&lt;</button>
                     <span class="px-3 font-mono font-bold text-slate-700 whitespace-nowrap">
-                        <span x-text="filteredDonors.length ? currentIndex + 1 : 0"></span> / <span x-text="filteredDonors.length"></span>
+                        <span x-text="donorNos.length ? currentIndex + 1 : 0"></span> / <span x-text="donorNos.length"></span>
                     </span>
-                    <button @click="if(currentIndex < filteredDonors.length - 1) { currentIndex++; selectedSoIndex = 0; resetFollowForms(); }" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Next">&gt;</button>
-                    <button @click="currentIndex = Math.max(0, filteredDonors.length - 1); selectedSoIndex = 0; resetFollowForms()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Last">&gt;|</button>
+                    <button @click="nextDonor()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Next">&gt;</button>
+                    <button @click="lastDonor()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Last">&gt;|</button>
                 </div>
 
                 <a href="/api/followup/export-csv" target="_blank"
@@ -512,7 +512,10 @@
                 searchQuery: '',
                 currentIndex: 0,
                 selectedSoIndex: 0,
-                donors: [],
+                lookupsLoaded: false,
+                counts: { ALL: 0, DELAYED: 0, INACTIVE: 0 },
+                donorNos: [],
+                currentDonor: { items: [], followups: [] },
                 allItemFollowups: [],
                 followResults: [],
                 delayReasons: [],
@@ -556,40 +559,53 @@
                     await this.loadFollowupData();
                 },
                 async loadFollowupData(keepDonorNo = null) {
-                    const res = await fetch('/api/followup/data');
+                    const params = new URLSearchParams({
+                        filter_mode: this.filterMode,
+                        search_q: this.searchQuery.trim(),
+                        include_lookups: this.lookupsLoaded ? 'false' : 'true'
+                    });
+                    if (keepDonorNo) params.set('donor_no', String(keepDonorNo));
+                    const res = await fetch('/api/followup/data?' + params.toString());
                     if (res.ok) {
                         const data = await res.json();
-                        this.donors = data.donors || [];
+                        if (!this.lookupsLoaded) {
+                            this.followResults = data.follow_results || [];
+                            this.delayReasons = data.delay_reasons || [];
+                            this.townsMap = data.towns_map || {};
+                            this.lookupsLoaded = true;
+                        }
+                        if (data.counts) this.counts = data.counts;
+                        this.donorNos = data.donor_nos || [];
+                        this.currentIndex = Number(data.current_index || 0);
+                        this.currentDonor = data.current_donor || (data.donors && data.donors[0]) || { items: [], followups: [] };
                         this.allItemFollowups = data.all_item_followups || [];
-                        this.followResults = data.follow_results || [];
-                        this.delayReasons = data.delay_reasons || [];
-                        this.townsMap = data.towns_map || {};
-                        if (keepDonorNo) {
-                            const idx = this.filteredDonors.findIndex(d => Number(d.donor_no) === Number(keepDonorNo));
-                            if (idx !== -1) this.currentIndex = idx;
+                    }
+                },
+                async loadDonorByIndex(idx) {
+                    if (!this.donorNos.length) return;
+                    const clamped = Math.max(0, Math.min(idx, this.donorNos.length - 1));
+                    this.currentIndex = clamped;
+                    this.selectedSoIndex = 0;
+                    this.resetFollowForms();
+                    const dno = this.donorNos[clamped];
+                    const res = await fetch(`/api/followup/record?donor_no=${dno}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.donor) {
+                            this.currentDonor = data.donor;
+                            this.allItemFollowups = data.all_item_followups || [];
                         }
                     }
                 },
-                get filteredDonors() {
-                    return this.donors.filter(d => {
-                        const matchMode =
-                            this.filterMode === 'ALL' ||
-                            (this.filterMode === 'DELAYED' && d.max_delay > 2) ||
-                            (this.filterMode === 'INACTIVE' && Number(d.status_no) === 2);
-
-                        const q = this.searchQuery.trim().toLowerCase();
-                        const matchSearch = !q ||
-                            String(d.donor_no).includes(q) ||
-                            (d.donor_name && d.donor_name.toLowerCase().includes(q)) ||
-                            (d.donor_ename && d.donor_ename.toLowerCase().includes(q)) ||
-                            (d.donor_cpr && d.donor_cpr.includes(q)) ||
-                            (d.donor_tel2 && d.donor_tel2.includes(q));
-
-                        return matchMode && matchSearch;
-                    });
-                },
-                get currentDonor() {
-                    return this.filteredDonors[this.currentIndex] || this.donors[0] || { items: [], followups: [] };
+                async firstDonor() { await this.loadDonorByIndex(0); },
+                async prevDonor() { if (this.currentIndex > 0) await this.loadDonorByIndex(this.currentIndex - 1); },
+                async nextDonor() { if (this.currentIndex < this.donorNos.length - 1) await this.loadDonorByIndex(this.currentIndex + 1); },
+                async lastDonor() { if (this.donorNos.length > 0) await this.loadDonorByIndex(this.donorNos.length - 1); },
+                async handleSearch() {
+                    this.currentIndex = 0;
+                    this.selectedSoIndex = 0;
+                    this.resetFollowForms();
+                    await this.loadFollowupData();
                 },
                 get currentSoFollowups() {
                     const so = this.currentSo;
@@ -600,11 +616,12 @@
                     const items = this.currentDonor.items || [];
                     return items[this.selectedSoIndex] || items[0] || { item_followups: [] };
                 },
-                setFilter(m) {
+                async setFilter(m) {
                     this.filterMode = m;
                     this.currentIndex = 0;
                     this.selectedSoIndex = 0;
                     this.resetFollowForms();
+                    await this.loadFollowupData();
                 },
                 async saveItemFollowup() {
                     const so = this.currentSo;

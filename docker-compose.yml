@@ -42,10 +42,12 @@ services:
       - "8001:8000"
     volumes:
       - ./:/code
-    command: sh -c "pip install --no-cache-dir -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: sh -c "pip install --no-cache-dir -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     depends_on:
       - db_test
 
 volumes:
   pgdata_test:
+    name: oci-server_pgdata_test
   pgdata_prod:
+    name: oci-server_pgdata_prod

@@ -110,19 +110,37 @@
 
         <section id="rep-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"></section>
 
-        <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table class="w-full text-xs text-left border-collapse">
-                <thead>
-                    <tr id="rep-thead" class="bg-slate-800 text-slate-100">
-                        <th class="py-3 px-3 font-semibold">Report Results</th>
-                    </tr>
-                </thead>
-                <tbody id="rep-tbody" class="divide-y divide-slate-200">
-                    <tr>
-                        <td class="py-8 text-center text-slate-400">Loading report data...</td>
-                    </tr>
-                </tbody>
-            </table>
+        <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span id="rep-page-range" class="font-semibold text-slate-600">Showing 0–0 of 0 records</span>
+                <div class="flex items-center gap-1.5">
+                    <span class="text-slate-500 font-semibold">Per page:</span>
+                    <select id="rep-page-size" class="border border-slate-300 rounded px-1.5 py-0.5 font-mono font-bold text-slate-800 bg-white">
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="250">250</option>
+                    </select>
+                    <button type="button" id="rep-page-first" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-100 font-bold text-slate-700">|&lt;</button>
+                    <button type="button" id="rep-page-prev" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-100 font-bold text-slate-700">&lt;</button>
+                    <span id="rep-page-info" class="px-2 font-mono font-bold text-slate-700">Page 1 / 1</span>
+                    <button type="button" id="rep-page-next" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-100 font-bold text-slate-700">&gt;</button>
+                    <button type="button" id="rep-page-last" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-100 font-bold text-slate-700">&gt;|</button>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs text-left border-collapse">
+                    <thead>
+                        <tr id="rep-thead" class="bg-slate-800 text-slate-100">
+                            <th class="py-3 px-3 font-semibold">Report Results</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rep-tbody" class="divide-y divide-slate-200">
+                        <tr>
+                            <td class="py-8 text-center text-slate-400">Loading report data...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </section>
     </div>
 
@@ -130,6 +148,8 @@
         let currentColumns = [];
         let currentHeaders = [];
         let currentRows = [];
+        let repCurrentPage = 1;
+        let repTotalPages = 1;
 
         function showRepAlert(msg) {
             const box = document.getElementById("rep-alert");
@@ -180,19 +200,37 @@
             const thead = document.getElementById("rep-thead");
             const tbody = document.getElementById("rep-tbody");
             const exportBtn = document.getElementById("btn-export-csv");
+            const pageSize = Math.max(10, Number(document.getElementById("rep-page-size")?.value || 100));
 
             thead.innerHTML = (headers.length ? headers : ["Results"]).map(h =>
                 `<th class="py-3 px-3 font-semibold whitespace-nowrap">${h}</th>`
             ).join("");
 
-            if (!rows || rows.length === 0) {
+            const totalRows = rows ? rows.length : 0;
+            repTotalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+            if (repCurrentPage > repTotalPages) repCurrentPage = repTotalPages;
+            if (repCurrentPage < 1) repCurrentPage = 1;
+
+            document.getElementById("rep-page-info").textContent = `Page ${repCurrentPage} / ${repTotalPages}`;
+            document.getElementById("rep-page-first").disabled = repCurrentPage <= 1;
+            document.getElementById("rep-page-prev").disabled = repCurrentPage <= 1;
+            document.getElementById("rep-page-next").disabled = repCurrentPage >= repTotalPages;
+            document.getElementById("rep-page-last").disabled = repCurrentPage >= repTotalPages;
+
+            if (!rows || totalRows === 0) {
+                document.getElementById("rep-page-range").textContent = "Showing 0–0 of 0 records";
                 tbody.innerHTML = `<tr><td colspan="${Math.max(headers.length, 1)}" class="py-8 text-center text-slate-400">No rows returned for the selected criteria.</td></tr>`;
                 exportBtn.disabled = true;
                 exportBtn.classList.add("opacity-40", "cursor-not-allowed");
                 return;
             }
 
-            tbody.innerHTML = rows.map(r => `
+            const startIdx = (repCurrentPage - 1) * pageSize;
+            const endIdx = Math.min(totalRows, startIdx + pageSize);
+            const pagedRows = rows.slice(startIdx, endIdx);
+            document.getElementById("rep-page-range").textContent = `Showing ${startIdx + 1}–${endIdx} of ${totalRows.toLocaleString()} records`;
+
+            tbody.innerHTML = pagedRows.map(r => `
                 <tr class="hover:bg-slate-50">
                     ${columns.map(col => `<td class="py-2.5 px-3 whitespace-nowrap">${r[col] ?? ""}</td>`).join("")}
                 </tr>
@@ -200,6 +238,12 @@
 
             exportBtn.disabled = false;
             exportBtn.classList.remove("opacity-40", "cursor-not-allowed");
+        }
+
+        function changeRepPage(newPage) {
+            if (newPage < 1 || newPage > repTotalPages || newPage === repCurrentPage) return;
+            repCurrentPage = newPage;
+            renderReportTable(currentHeaders, currentColumns, currentRows);
         }
 
         async function loadBanksMeta() {
@@ -254,6 +298,7 @@
                 currentHeaders = data.headers || [];
                 currentColumns = data.columns || [];
                 currentRows = data.rows || [];
+                repCurrentPage = 1;
                 renderSummaryCards(data.summary || {});
                 renderReportTable(currentHeaders, currentColumns, currentRows);
             } catch (e) { showRepAlert("Network or server error while loading report."); }
@@ -282,6 +327,14 @@
             typeSel.addEventListener("change", () => { updateReportFormVisibility(); runSelectedReport(); });
             document.getElementById("btn-run-report").addEventListener("click", runSelectedReport);
             document.getElementById("btn-export-csv").addEventListener("click", exportCurrentCsv);
+            document.getElementById("rep-page-size").addEventListener("change", () => {
+                repCurrentPage = 1;
+                renderReportTable(currentHeaders, currentColumns, currentRows);
+            });
+            document.getElementById("rep-page-first").addEventListener("click", () => changeRepPage(1));
+            document.getElementById("rep-page-prev").addEventListener("click", () => changeRepPage(repCurrentPage - 1));
+            document.getElementById("rep-page-next").addEventListener("click", () => changeRepPage(repCurrentPage + 1));
+            document.getElementById("rep-page-last").addEventListener("click", () => changeRepPage(repTotalPages));
             updateReportFormVisibility();
             await loadBanksMeta();
             await runSelectedReport();

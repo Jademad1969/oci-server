@@ -149,21 +149,38 @@
                     </label>
                 </div>
 
-                <button type="button" onclick="loadCurrentView()"
+                <button type="button" onclick="applyViewFilter()"
                         class="h-9 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition">
                     Apply Filter
                 </button>
             </div>
 
-            <!-- Summary Totals -->
-            <div class="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 text-xs">
-                <div>
-                    <span class="text-slate-500">Rows:</span>
-                    <strong id="sum-rows" class="font-mono font-extrabold text-slate-900 ml-1">0</strong>
+            <!-- Summary Totals & Pagination -->
+            <div class="flex flex-wrap items-center gap-3">
+                <div class="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 text-xs">
+                    <div>
+                        <span class="text-slate-500">Rows:</span>
+                        <strong id="sum-rows" class="font-mono font-extrabold text-slate-900 ml-1">0</strong>
+                    </div>
+                    <div id="box-sum-amt" class="border-l border-slate-200 pl-4">
+                        <span class="text-slate-500">Total Monthly BHD:</span>
+                        <strong id="sum-amt" class="font-mono font-extrabold text-emerald-700 ml-1">0.000</strong>
+                    </div>
                 </div>
-                <div id="box-sum-amt" class="border-l border-slate-200 pl-4">
-                    <span class="text-slate-500">Total Monthly BHD:</span>
-                    <strong id="sum-amt" class="font-mono font-extrabold text-emerald-700 ml-1">0.000</strong>
+
+                <!-- Pagination Controls -->
+                <div class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-300 shadow-2xs text-xs">
+                    <span class="text-slate-500 font-semibold">Per page:</span>
+                    <select id="sel-page-size" onchange="applyViewFilter()" class="border border-slate-300 rounded px-1.5 py-0.5 font-mono font-bold text-slate-800 bg-white">
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="250">250</option>
+                    </select>
+                    <button type="button" id="btn-page-first" onclick="changeViewPage(1)" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 font-bold text-slate-700" title="First Page">|&lt;</button>
+                    <button type="button" id="btn-page-prev" onclick="changeViewPage(currentPage - 1)" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 font-bold text-slate-700" title="Previous Page">&lt;</button>
+                    <span id="lbl-page-info" class="px-2 font-mono font-bold text-slate-700">Page 1 / 1</span>
+                    <button type="button" id="btn-page-next" onclick="changeViewPage(currentPage + 1)" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 font-bold text-slate-700" title="Next Page">&gt;</button>
+                    <button type="button" id="btn-page-last" onclick="changeViewPage(totalPages)" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 font-bold text-slate-700" title="Last Page">&gt;|</button>
                 </div>
             </div>
         </div>
@@ -183,6 +200,8 @@
     <script>
         let currentViewKey = 'ACTIVE_DON_ADDRESS';
         let latestViewData = null;
+        let currentPage = 1;
+        let totalPages = 1;
 
         function fmtBhd(val) {
             return Number(val || 0).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
@@ -208,31 +227,52 @@
 
         function selectDataView(vk) {
             currentViewKey = vk;
+            currentPage = 1;
             updateFilterVisibility();
             loadCurrentView();
         }
 
         function setQuickMinAmt(amt) {
             document.getElementById('inp-min-amt').value = amt;
+            currentPage = 1;
             loadCurrentView();
         }
 
-        async function loadCurrentView() {
+        function applyViewFilter() {
+            currentPage = 1;
+            loadCurrentView();
+        }
+
+        function changeViewPage(p) {
+            if (p < 1 || p > totalPages || p === currentPage) return;
+            currentPage = p;
+            loadCurrentView();
+        }
+
+        function buildViewParams(exportAll = false) {
             const q = document.getElementById('inp-search').value || '';
             const statusFilter = document.getElementById('sel-status-filter').value || 'ACTIVE';
             const minAmt = document.getElementById('inp-min-amt').value;
             const contactOnly = document.getElementById('chk-contact-only').checked;
+            const pageSize = document.getElementById('sel-page-size').value || '100';
 
             const params = new URLSearchParams({
                 view_key: currentViewKey,
                 status_filter: statusFilter,
-                contact_only: contactOnly ? 'true' : 'false'
+                contact_only: contactOnly ? 'true' : 'false',
+                page: String(currentPage),
+                page_size: String(pageSize)
             });
+            if (exportAll) params.set('export_all', 'true');
             if (q.trim()) params.set('search_q', q.trim());
             if (currentViewKey === 'UPTO_SPECIFIC_AMT' && minAmt !== '') {
                 params.set('min_amt', minAmt);
             }
+            return params;
+        }
 
+        async function loadCurrentView() {
+            const params = buildViewParams(false);
             const res = await fetch('/api/reports/views?' + params.toString(), { credentials: 'same-origin' });
             if (!res.ok) return;
             const data = await res.json();
@@ -252,6 +292,15 @@
                 amtBox.classList.add('hidden');
             }
 
+            const pg = data.pagination || { page: 1, page_size: 100, total_rows: (data.rows || []).length, total_pages: 1, offset: 0 };
+            currentPage = pg.page;
+            totalPages = pg.total_pages;
+            document.getElementById('lbl-page-info').textContent = `Page ${pg.page} / ${pg.total_pages}`;
+            document.getElementById('btn-page-first').disabled = pg.page <= 1;
+            document.getElementById('btn-page-prev').disabled = pg.page <= 1;
+            document.getElementById('btn-page-next').disabled = pg.page >= pg.total_pages;
+            document.getElementById('btn-page-last').disabled = pg.page >= pg.total_pages;
+
             const thead = document.getElementById('tbl-view-head');
             const headers = data.headers || [];
             const cols = data.columns || [];
@@ -266,6 +315,7 @@
                 return;
             }
 
+            const rowOffset = Number(pg.offset || 0);
             tbody.innerHTML = rows.map((r, idx) => {
                 const tds = cols.map(c => {
                     const val = r[c] ?? '';
@@ -277,15 +327,19 @@
                     }
                     return `<td class="py-2 px-3 text-slate-700">${val}</td>`;
                 }).join('');
-                return `<tr class="hover:bg-slate-50"><td class="py-2 px-3 font-mono text-slate-400">${idx + 1}</td>${tds}</tr>`;
+                return `<tr class="hover:bg-slate-50"><td class="py-2 px-3 font-mono text-slate-400">${rowOffset + idx + 1}</td>${tds}</tr>`;
             }).join('');
         }
 
-        function exportCurrentViewCsv() {
-            if (!latestViewData || !latestViewData.rows) return;
-            const headers = latestViewData.headers || [];
-            const cols = latestViewData.columns || [];
-            const rows = latestViewData.rows || [];
+        async function exportCurrentViewCsv() {
+            const params = buildViewParams(true);
+            const res = await fetch('/api/reports/views?' + params.toString(), { credentials: 'same-origin' });
+            if (!res.ok) return;
+            const exportData = await res.json();
+            if (!exportData || !exportData.rows) return;
+            const headers = exportData.headers || [];
+            const cols = exportData.columns || [];
+            const rows = exportData.rows || [];
 
             const esc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
             const lines = [headers.map(esc).join(',')];
@@ -299,17 +353,21 @@
             const a = document.createElement('a');
             a.href = url;
             const dateStr = new Date().toISOString().slice(0, 10);
-            a.download = `${latestViewData.view_key.toLowerCase()}_${dateStr}.csv`;
+            a.download = `${exportData.view_key.toLowerCase()}_${dateStr}.csv`;
             a.click();
             URL.revokeObjectURL(url);
         }
 
-        function exportCurrentViewPdf() {
-            if (!latestViewData || !latestViewData.rows) return;
-            const headers = latestViewData.headers || [];
-            const cols = latestViewData.columns || [];
-            const rows = latestViewData.rows || [];
-            const summary = latestViewData.summary || {};
+        async function exportCurrentViewPdf() {
+            const params = buildViewParams(true);
+            const res = await fetch('/api/reports/views?' + params.toString(), { credentials: 'same-origin' });
+            if (!res.ok) return;
+            const exportData = await res.json();
+            if (!exportData || !exportData.rows) return;
+            const headers = exportData.headers || [];
+            const cols = exportData.columns || [];
+            const rows = exportData.rows || [];
+            const summary = exportData.summary || {};
             const nowStr = new Date().toLocaleString('en-GB');
 
             const printWin = window.open('', '_blank', 'width=1150,height=800');
@@ -336,7 +394,7 @@
                 <html>
                 <head>
                     <meta charset="UTF-8">
-                    <title>${latestViewData.view_title_en}</title>
+                    <title>${exportData.view_title_en}</title>
                     <style>
                         @page { size: A4 landscape; margin: 12mm; }
                         body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; font-size: 11px; margin: 0; }
@@ -354,8 +412,8 @@
                     <div class="hdr">
                         <div>
                             <h1>DISCOVER ISLAM SOCIETY — BAHRAIN</h1>
-                            <h2>${latestViewData.view_title_en}</h2>
-                            <div style="font-size:12px;color:#475569;margin-top:2px;">${latestViewData.view_title_ar}</div>
+                            <h2>${exportData.view_title_en}</h2>
+                            <div style="font-size:12px;color:#475569;margin-top:2px;">${exportData.view_title_ar}</div>
                         </div>
                         <div class="meta">
                             <div><strong>Generated:</strong> ${nowStr}</div>
@@ -384,10 +442,10 @@
         document.addEventListener('DOMContentLoaded', () => {
             updateFilterVisibility();
             document.getElementById('inp-search').addEventListener('keyup', e => {
-                if (e.key === 'Enter') loadCurrentView();
+                if (e.key === 'Enter') applyViewFilter();
             });
-            document.getElementById('sel-status-filter').addEventListener('change', loadCurrentView);
-            document.getElementById('chk-contact-only').addEventListener('change', loadCurrentView);
+            document.getElementById('sel-status-filter').addEventListener('change', applyViewFilter);
+            document.getElementById('chk-contact-only').addEventListener('change', applyViewFilter);
             document.getElementById('btn-export-csv').addEventListener('click', exportCurrentViewCsv);
             document.getElementById('btn-export-pdf').addEventListener('click', exportCurrentViewPdf);
             loadCurrentView();

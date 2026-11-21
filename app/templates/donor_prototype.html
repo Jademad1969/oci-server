@@ -48,31 +48,31 @@
                         :class="currentFilter === 'ALL' ? 'bg-slate-800 text-white shadow-xs font-bold' : 'text-slate-600 hover:bg-slate-200'"
                         class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
                     <span>All Donors</span>
-                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-white/20" x-text="donors.length"></span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-white/20" x-text="counts.ALL"></span>
                 </button>
                 <button @click="setFilter('ACTIVE')"
                         :class="currentFilter === 'ACTIVE' ? 'bg-emerald-600 text-white shadow-xs font-bold' : 'text-slate-600 hover:bg-slate-200'"
                         class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
                     <span>Active SO</span>
-                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="donors.filter(d => d.items.some(i => i.status_no === 1)).length"></span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="counts.ACTIVE"></span>
                 </button>
                 <button @click="setFilter('INACTIVE')"
                         :class="currentFilter === 'INACTIVE' ? 'bg-amber-600 text-white shadow-xs font-bold' : 'text-slate-600 hover:bg-slate-200'"
                         class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
                     <span>Inactive Only</span>
-                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="donors.filter(d => d.items.length > 0 && d.items.every(i => i.status_no === 2)).length"></span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="counts.INACTIVE"></span>
                 </button>
                 <button @click="setFilter('NO_ITEMS')"
                         :class="currentFilter === 'NO_ITEMS' ? 'bg-rose-600 text-white shadow-xs font-bold' : 'text-slate-600 hover:bg-slate-200'"
                         class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
                     <span>No Standing Orders</span>
-                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="donors.filter(d => d.items.length === 0).length"></span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[11px] bg-black/10" x-text="counts.NO_ITEMS"></span>
                 </button>
             </div>
 
             <!-- Instant Search -->
             <div class="flex-1 max-w-md relative">
-                <input type="text" x-model="searchQuery" @input="handleSearch()"
+                <input type="text" x-model="searchQuery" @input.debounce.250ms="handleSearch()"
                        placeholder="Instant search by Donor ID, Name, CPR, Phone, or Bank Code..."
                        class="w-full bg-slate-50 border border-slate-300 focus:border-emerald-600 focus:bg-white rounded-lg pl-9 pr-3 py-1.5 text-xs transition">
                 <svg class="w-4 h-4 text-slate-400 absolute left-3 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -86,7 +86,7 @@
                     <button @click="firstDonor()" class="px-2.5 py-1 hover:bg-white rounded text-slate-700 font-bold" title="First Record">|&lt;</button>
                     <button @click="prevDonor()" class="px-2.5 py-1 hover:bg-white rounded text-slate-700 font-bold" title="Previous">&lt;</button>
                     <span class="px-3 text-slate-600 font-mono text-xs">
-                        <span x-text="filteredDonors.length ? currentIndex + 1 : 0"></span> / <span x-text="filteredDonors.length"></span>
+                        <span x-text="donorNos.length ? currentIndex + 1 : 0"></span> / <span x-text="donorNos.length"></span>
                     </span>
                     <button @click="nextDonor()" class="px-2.5 py-1 hover:bg-white rounded text-slate-700 font-bold" title="Next">&gt;</button>
                     <button @click="lastDonor()" class="px-2.5 py-1 hover:bg-white rounded text-slate-700 font-bold" title="Last Record">&gt;|</button>
@@ -540,14 +540,18 @@
                 currentIndex: 0,
                 selectedSoId: null,
                 showAddSoModal: false,
+                lookupsLoaded: false,
                 banks: [],
                 charityItems: [],
                 prefixes: [],
                 cares: [],
                 accTypes: [],
                 townsMap: {},
+                counts: { ALL: 0, ACTIVE: 0, INACTIVE: 0, NO_ITEMS: 0 },
+                maxDonorNo: 0,
+                donorNos: [],
                 newSo: { item_no: '1', monthly_pay: 10, start_date: '2026-06-01', bank2_cd: 1, donor_acc_no: '', sort_field: '' },
-                donors: [{
+                currentDonor: {
                     donor_no: 1, f_nm: '', s_nm: '', t_nm: '', l_nm: '',
                     donor_name: 'Loading...', donor_ename: '', donor_cpr: '',
                     name_prefix: 1, care: '1', gen_cd: 1, lang_cd: 1, donor_contact: 1,
@@ -555,30 +559,67 @@
                     donor_tel1: '', donor_tel2: '', donor_mobile: '', address_type: 1,
                     bank2_cd: 1, donor_acc_no: '', acc_type_no: 1, donor_name_acc: '',
                     append_date: '', status_no: 1, user_id: '', items: []
-                }],
+                },
 
                 async loadFromDatabase(keepDonorNo = null) {
                     try {
-                        const res = await fetch('/api/init-data');
+                        const params = new URLSearchParams({
+                            filter_mode: this.currentFilter,
+                            search_q: this.searchQuery.trim(),
+                            include_lookups: this.lookupsLoaded ? 'false' : 'true'
+                        });
+                        if (keepDonorNo) params.set('donor_no', String(keepDonorNo));
+                        const res = await fetch('/api/init-data?' + params.toString());
                         const data = await res.json();
-                        this.banks = data.banks || [];
-                        this.charityItems = data.charity_items || [];
-                        this.prefixes = data.prefixes || [];
-                        this.cares = data.cares || [];
-                        this.accTypes = data.acc_types || [];
-                        this.townsMap = data.towns_map || {};
-                        if (data.donors && data.donors.length > 0) {
-                            this.donors = data.donors;
-                            if (keepDonorNo) {
-                                const idx = this.filteredDonors.findIndex(d => d.donor_no === keepDonorNo);
-                                this.currentIndex = idx >= 0 ? idx : 0;
-                            } else {
-                                this.currentIndex = 0;
-                            }
-                            this.syncSelectedSo();
+                        if (!this.lookupsLoaded) {
+                            this.banks = data.banks || [];
+                            this.charityItems = data.charity_items || [];
+                            this.prefixes = data.prefixes || [];
+                            this.cares = data.cares || [];
+                            this.accTypes = data.acc_types || [];
+                            this.townsMap = data.towns_map || {};
+                            this.lookupsLoaded = true;
                         }
+                        if (data.counts) this.counts = data.counts;
+                        if (data.max_donor_no !== undefined) this.maxDonorNo = Number(data.max_donor_no || 0);
+                        this.donorNos = data.donor_nos || [];
+                        this.currentIndex = Number(data.current_index || 0);
+                        if (data.current_donor) {
+                            this.currentDonor = data.current_donor;
+                        } else if (data.donors && data.donors.length > 0) {
+                            this.currentDonor = data.donors[0];
+                        } else {
+                            this.currentDonor = {
+                                donor_no: 0, f_nm: '', s_nm: '', t_nm: '', l_nm: '',
+                                donor_name: '', donor_ename: '', donor_cpr: '',
+                                name_prefix: 1, care: '1', gen_cd: 1, lang_cd: 1, donor_contact: 1,
+                                donor_flat: null, donor_building: '', donor_road: '', donor_block: null, town_name: '', donor_p_box: null,
+                                donor_tel1: '', donor_tel2: '', donor_mobile: '', address_type: 1,
+                                bank2_cd: 1, donor_acc_no: '', acc_type_no: 1, donor_name_acc: '',
+                                append_date: '', status_no: 1, user_id: '', items: []
+                            };
+                        }
+                        this.syncSelectedSo();
                     } catch (e) {
                         console.error('Error loading initial data:', e);
+                    }
+                },
+                async loadDonorByIndex(idx) {
+                    if (!this.donorNos.length) return;
+                    const clamped = Math.max(0, Math.min(idx, this.donorNos.length - 1));
+                    this.currentIndex = clamped;
+                    const dno = this.donorNos[clamped];
+                    try {
+                        const res = await fetch(`/api/donors/record?donor_no=${dno}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.donor) {
+                                this.currentDonor = data.donor;
+                                this.syncSelectedSo();
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Error loading donor record:', e);
                     }
                 },
                 updateTownFromBlock() {
@@ -586,47 +627,21 @@
                     const blk = this.currentDonor.donor_block;
                     this.currentDonor.town_name = (blk && this.townsMap[blk]) ? this.townsMap[blk] : '';
                 },
-                get filteredDonors() {
-                    return this.donors.filter(d => {
-                        if (this.currentFilter === 'ACTIVE' && !d.items.some(i => i.status_no === 1)) return false;
-                        if (this.currentFilter === 'INACTIVE' && !(d.items.length > 0 && d.items.every(i => i.status_no === 2))) return false;
-                        if (this.currentFilter === 'NO_ITEMS' && d.items.length > 0) return false;
-
-                        if (this.searchQuery.trim() !== '') {
-                            const q = this.searchQuery.trim().toLowerCase();
-                            const matchDonor = String(d.donor_no).includes(q) ||
-                                               (d.donor_name || '').toLowerCase().includes(q) ||
-                                               (d.donor_ename || '').toLowerCase().includes(q) ||
-                                               (d.donor_cpr || '').includes(q) ||
-                                               (d.donor_tel1 || '').includes(q) ||
-                                               (d.donor_tel2 || '').includes(q) ||
-                                               (d.donor_mobile || '').includes(q);
-                            const matchSo = d.items.some(i => (i.sort_field || '').toLowerCase().includes(q) || (i.donor_acc_no || '').toLowerCase().includes(q));
-                            return matchDonor || matchSo;
-                        }
-                        return true;
-                    });
-                },
-                get currentDonor() {
-                    if (this.filteredDonors.length === 0) return this.donors[0];
-                    if (this.currentIndex >= this.filteredDonors.length) this.currentIndex = 0;
-                    return this.filteredDonors[this.currentIndex];
-                },
-                setFilter(f) {
+                async setFilter(f) {
                     this.currentFilter = f;
                     this.currentIndex = 0;
-                    this.syncSelectedSo();
+                    await this.loadFromDatabase();
                 },
-                handleSearch() {
+                async handleSearch() {
                     this.currentIndex = 0;
-                    this.syncSelectedSo();
+                    await this.loadFromDatabase();
                 },
-                firstDonor() { this.currentIndex = 0; this.syncSelectedSo(); },
-                prevDonor() { if (this.currentIndex > 0) { this.currentIndex--; this.syncSelectedSo(); } },
-                nextDonor() { if (this.currentIndex < this.filteredDonors.length - 1) { this.currentIndex++; this.syncSelectedSo(); } },
-                lastDonor() { this.currentIndex = Math.max(0, this.filteredDonors.length - 1); this.syncSelectedSo(); },
+                async firstDonor() { await this.loadDonorByIndex(0); },
+                async prevDonor() { if (this.currentIndex > 0) await this.loadDonorByIndex(this.currentIndex - 1); },
+                async nextDonor() { if (this.currentIndex < this.donorNos.length - 1) await this.loadDonorByIndex(this.currentIndex + 1); },
+                async lastDonor() { if (this.donorNos.length > 0) await this.loadDonorByIndex(this.donorNos.length - 1); },
                 syncSelectedSo() {
-                    if (this.currentDonor && this.currentDonor.items.length > 0) {
+                    if (this.currentDonor && this.currentDonor.items && this.currentDonor.items.length > 0) {
                         this.selectedSoId = this.currentDonor.items[0].so_id;
                     } else {
                         this.selectedSoId = null;
@@ -687,8 +702,9 @@
                     }
                 },
                 newDonor() {
-                    const nextNo = this.donors.length ? Math.max(...this.donors.map(d => Number(d.donor_no))) + 1 : 1;
-                    this.donors.push({
+                    const nextNo = Math.max(this.maxDonorNo, ...(this.donorNos.length ? [this.donorNos[this.donorNos.length - 1]] : [0])) + 1;
+                    this.maxDonorNo = nextNo;
+                    this.currentDonor = {
                         donor_no: nextNo, f_nm: '', s_nm: '', t_nm: '', l_nm: '',
                         donor_name: '', donor_ename: '', donor_cpr: '',
                         name_prefix: 1, care: '1', gen_cd: 1, lang_cd: 1, donor_contact: 1,
@@ -698,9 +714,8 @@
                         append_date: new Date().toISOString().slice(0, 10), status_no: 1,
                         user_id: (window.ERP_USER && window.ERP_USER.username) || 'TAREK',
                         items: [], isNew: true
-                    });
-                    this.currentFilter = 'ALL';
-                    this.currentIndex = this.filteredDonors.length - 1;
+                    };
+                    this.selectedSoId = null;
                 },
                 async saveDonor() {
                     const d = { ...this.currentDonor };
@@ -729,8 +744,7 @@
                     if (!confirm(`Are you sure you want to delete Donor #(${dno}) - ${dname}?`)) return;
 
                     if (this.currentDonor.isNew) {
-                        this.donors = this.donors.filter(d => d.donor_no !== dno);
-                        this.currentIndex = Math.max(0, this.filteredDonors.length - 1);
+                        await this.loadFromDatabase();
                         return;
                     }
 

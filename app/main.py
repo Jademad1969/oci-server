@@ -203,56 +203,10 @@ async def health_check():
 async def main_donor_screen(request: Request):
     return templates.TemplateResponse("donor_prototype.html", {"request": request})
 
-@app.get("/api/init-data")
-async def get_initial_screen_data(db: AsyncSession = Depends(get_db)):
-    banks_res = await db.execute(text("""
-        SELECT bank_cd, bank_desc,
-               COALESCE(NULLIF(TRIM(bank_e_desc), ''), bank_desc) AS bank_e_desc,
-               auto_so_based_code, run_deactivate_delayed_so
-        FROM lkp_banks
-        ORDER BY bank_cd
-    """))
-    banks = [dict(r._mapping) for r in banks_res]
-
-    items_lkp_res = await db.execute(text("""
-        SELECT item_cd, item_desc,
-               COALESCE(NULLIF(TRIM(item_e_desc), ''), item_desc) AS item_e_desc
-        FROM lkp_charity_items
-        ORDER BY item_cd
-    """))
-    charity_items = [dict(r._mapping) for r in items_lkp_res]
-
-    prefixes_res = await db.execute(text("""
-        SELECT prefix_cd, prefix_name,
-               COALESCE(NULLIF(TRIM(prefix_ename), ''), prefix_name) AS prefix_ename
-        FROM lkp_name_prefixes
-        ORDER BY prefix_cd
-    """))
-    prefixes = [dict(r._mapping) for r in prefixes_res]
-
-    cares_res = await db.execute(text("""
-        SELECT care_cd, care_nm,
-               COALESCE(NULLIF(TRIM(care_enm), ''), care_nm) AS care_enm
-        FROM lkp_cares
-        ORDER BY care_cd
-    """))
-    cares = [dict(r._mapping) for r in cares_res]
-
-    acc_types_res = await db.execute(text("""
-        SELECT acc_type_no, acc_type_desc,
-               COALESCE(NULLIF(TRIM(acc_type_e_desc), ''), acc_type_desc) AS acc_type_e_desc
-        FROM lkp_acc_types
-        ORDER BY acc_type_no
-    """))
-    acc_types = [dict(r._mapping) for r in acc_types_res]
-
-    towns_res = await db.execute(text("""
-        SELECT block_cd, COALESCE(NULLIF(TRIM(etown_nm), ''), town_nm, '') AS town_enm
-        FROM lkp_towns
-    """))
-    towns_map = {str(r.block_cd): r.town_enm for r in towns_res}
-
-    donors_query = text("""
+async def _fetch_single_donor_with_items(db: AsyncSession, donor_no: Optional[int]) -> Optional[dict]:
+    if not donor_no:
+        return None
+    d_res = await db.execute(text("""
         SELECT d.donor_no,
                COALESCE(d.name_prefix, 1) AS name_prefix,
                COALESCE(d.f_nm, '') AS f_nm,
@@ -285,19 +239,17 @@ async def get_initial_screen_data(db: AsyncSession = Depends(get_db)):
                COALESCE(TO_CHAR(d.last_update, 'YYYY-MM-DD'), '') AS last_update,
                COALESCE(TO_CHAR(d.call_date, 'YYYY-MM-DD'), '') AS call_date,
                COALESCE(NULLIF(TRIM(t.etown_nm), ''), t.town_nm, '') AS town_name,
-               COALESCE(fc.cnt, 0) AS donor_followup_count
+               (SELECT COUNT(*) FROM donor_followup f WHERE f.donor_no = d.donor_no) AS donor_followup_count
         FROM donor_master d
         LEFT JOIN lkp_towns t ON d.donor_block = t.block_cd
-        LEFT JOIN (
-            SELECT donor_no, COUNT(*) AS cnt
-            FROM donor_followup
-            GROUP BY donor_no
-        ) fc ON d.donor_no = fc.donor_no
-        ORDER BY d.donor_no ASC
-    """)
-    donors_res = await db.execute(donors_query)
+        WHERE d.donor_no = :dno
+    """), {"dno": int(donor_no)})
+    d_row = d_res.first()
+    if not d_row:
+        return None
+    d = dict(d_row._mapping)
 
-    so_query = text("""
+    so_res = await db.execute(text("""
         SELECT so_id,
                donor_no,
                item_no,
@@ -322,19 +274,161 @@ async def get_initial_screen_data(db: AsyncSession = Depends(get_db)):
                last_followup_summary,
                has_followup
         FROM vw_standing_orders_summary
+        WHERE donor_no = :dno
         ORDER BY so_id ASC
-    """)
-    so_res = await db.execute(so_query)
-    so_by_donor: dict[int, list] = {}
-    for row in so_res:
-        item = dict(row._mapping)
-        so_by_donor.setdefault(item["donor_no"], []).append(item)
+    """), {"dno": int(donor_no)})
+    d["items"] = [dict(r._mapping) for r in so_res]
+    return d
 
-    donors_list = []
-    for d_row in donors_res:
-        d = dict(d_row._mapping)
-        d["items"] = so_by_donor.get(d["donor_no"], [])
-        donors_list.append(d)
+@app.get("/api/donors/record")
+async def get_single_donor_record_api(donor_no: int, db: AsyncSession = Depends(get_db)):
+    donor = await _fetch_single_donor_with_items(db, donor_no)
+    if not donor:
+        raise HTTPException(status_code=404, detail="Donor not found")
+    return {"donor": donor}
+
+@app.get("/api/init-data")
+async def get_initial_screen_data(
+    filter_mode: str = "ALL",
+    search_q: str = "",
+    donor_no: Optional[int] = None,
+    include_lookups: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    banks = []
+    charity_items = []
+    prefixes = []
+    cares = []
+    acc_types = []
+    towns_map = {}
+
+    if include_lookups:
+        banks_res = await db.execute(text("""
+            SELECT bank_cd, bank_desc,
+                   COALESCE(NULLIF(TRIM(bank_e_desc), ''), bank_desc) AS bank_e_desc,
+                   auto_so_based_code, run_deactivate_delayed_so
+            FROM lkp_banks
+            ORDER BY bank_cd
+        """))
+        banks = [dict(r._mapping) for r in banks_res]
+
+        items_lkp_res = await db.execute(text("""
+            SELECT item_cd, item_desc,
+                   COALESCE(NULLIF(TRIM(item_e_desc), ''), item_desc) AS item_e_desc
+            FROM lkp_charity_items
+            ORDER BY item_cd
+        """))
+        charity_items = [dict(r._mapping) for r in items_lkp_res]
+
+        prefixes_res = await db.execute(text("""
+            SELECT prefix_cd, prefix_name,
+                   COALESCE(NULLIF(TRIM(prefix_ename), ''), prefix_name) AS prefix_ename
+            FROM lkp_name_prefixes
+            ORDER BY prefix_cd
+        """))
+        prefixes = [dict(r._mapping) for r in prefixes_res]
+
+        cares_res = await db.execute(text("""
+            SELECT care_cd, care_nm,
+                   COALESCE(NULLIF(TRIM(care_enm), ''), care_nm) AS care_enm
+            FROM lkp_cares
+            ORDER BY care_cd
+        """))
+        cares = [dict(r._mapping) for r in cares_res]
+
+        acc_types_res = await db.execute(text("""
+            SELECT acc_type_no, acc_type_desc,
+                   COALESCE(NULLIF(TRIM(acc_type_e_desc), ''), acc_type_desc) AS acc_type_e_desc
+            FROM lkp_acc_types
+            ORDER BY acc_type_no
+        """))
+        acc_types = [dict(r._mapping) for r in acc_types_res]
+
+        towns_res = await db.execute(text("""
+            SELECT block_cd, COALESCE(NULLIF(TRIM(etown_nm), ''), town_nm, '') AS town_enm
+            FROM lkp_towns
+        """))
+        towns_map = {str(r.block_cd): r.town_enm for r in towns_res}
+
+    counts_res = await db.execute(text("""
+        SELECT
+            COUNT(*) AS total_all,
+            COUNT(*) FILTER (WHERE COALESCE(ic.active_cnt, 0) > 0) AS total_active,
+            COUNT(*) FILTER (WHERE COALESCE(ic.total_cnt, 0) > 0 AND COALESCE(ic.active_cnt, 0) = 0) AS total_inactive,
+            COUNT(*) FILTER (WHERE COALESCE(ic.total_cnt, 0) = 0) AS total_no_items,
+            COALESCE(MAX(d.donor_no), 0) AS max_donor_no
+        FROM donor_master d
+        LEFT JOIN (
+            SELECT donor_no,
+                   COUNT(*) AS total_cnt,
+                   COUNT(*) FILTER (WHERE status_no = 1) AS active_cnt
+            FROM donor_item
+            GROUP BY donor_no
+        ) ic ON d.donor_no = ic.donor_no
+    """))
+    c_row = counts_res.first()
+    counts = {
+        "ALL": int(c_row.total_all or 0) if c_row else 0,
+        "ACTIVE": int(c_row.total_active or 0) if c_row else 0,
+        "INACTIVE": int(c_row.total_inactive or 0) if c_row else 0,
+        "NO_ITEMS": int(c_row.total_no_items or 0) if c_row else 0,
+    }
+    max_donor_no = int(c_row.max_donor_no or 0) if c_row else 0
+
+    where_clauses = ["1=1"]
+    params: dict[str, Any] = {}
+    fm = (filter_mode or "ALL").upper()
+    if fm == "ACTIVE":
+        where_clauses.append("COALESCE(ic.active_cnt, 0) > 0")
+    elif fm == "INACTIVE":
+        where_clauses.append("COALESCE(ic.total_cnt, 0) > 0 AND COALESCE(ic.active_cnt, 0) = 0")
+    elif fm == "NO_ITEMS":
+        where_clauses.append("COALESCE(ic.total_cnt, 0) = 0")
+
+    q_clean = (search_q or "").strip()
+    if q_clean:
+        params["q"] = f"%{q_clean}%"
+        where_clauses.append("""
+            (CAST(d.donor_no AS TEXT) ILIKE :q
+             OR COALESCE(d.donor_name, '') ILIKE :q
+             OR COALESCE(d.donor_ename, '') ILIKE :q
+             OR COALESCE(d.donor_cpr, '') ILIKE :q
+             OR COALESCE(d.donor_tel1, '') ILIKE :q
+             OR COALESCE(d.donor_tel2, '') ILIKE :q
+             OR COALESCE(d.donor_mobile, '') ILIKE :q
+             OR EXISTS (
+                 SELECT 1 FROM donor_item si
+                 WHERE si.donor_no = d.donor_no
+                   AND (COALESCE(si.sort_field, '') ILIKE :q OR COALESCE(si.donor_acc_no, '') ILIKE :q)
+             ))
+        """)
+
+    ids_res = await db.execute(text(f"""
+        SELECT d.donor_no
+        FROM donor_master d
+        LEFT JOIN (
+            SELECT donor_no,
+                   COUNT(*) AS total_cnt,
+                   COUNT(*) FILTER (WHERE status_no = 1) AS active_cnt
+            FROM donor_item
+            GROUP BY donor_no
+        ) ic ON d.donor_no = ic.donor_no
+        WHERE {' AND '.join(where_clauses)}
+        ORDER BY d.donor_no ASC
+    """), params)
+    donor_nos = [int(r[0]) for r in ids_res.fetchall()]
+
+    target_dno = None
+    current_index = 0
+    if donor_nos:
+        if donor_no and int(donor_no) in donor_nos:
+            target_dno = int(donor_no)
+            current_index = donor_nos.index(target_dno)
+        else:
+            target_dno = donor_nos[0]
+            current_index = 0
+
+    current_donor = await _fetch_single_donor_with_items(db, target_dno)
 
     return {
         "banks": banks,
@@ -343,7 +437,12 @@ async def get_initial_screen_data(db: AsyncSession = Depends(get_db)):
         "cares": cares,
         "acc_types": acc_types,
         "towns_map": towns_map,
-        "donors": donors_list
+        "counts": counts,
+        "max_donor_no": max_donor_no,
+        "donor_nos": donor_nos,
+        "current_index": current_index,
+        "current_donor": current_donor,
+        "donors": [current_donor] if current_donor else []
     }
 
 @app.post("/api/donors/save")
@@ -1046,96 +1145,35 @@ class FollowupContactUpdateSchema(BaseModel):
 async def donor_followup_screen(request: Request):
     return templates.TemplateResponse("donor_followup.html", {"request": request})
 
-@app.get("/api/followup/data")
-async def get_followup_screen_data(db: AsyncSession = Depends(get_db)):
-    res_lkp = await db.execute(text("""
-        SELECT result_cd,
-               COALESCE(NULLIF(TRIM(result_enm), ''), result_nm) AS result_enm,
-               COALESCE(NULLIF(TRIM(result_enm), ''), result_nm) AS result_nm
-        FROM lkp_follow_results
-        ORDER BY result_cd
-    """))
-    follow_results = [dict(r._mapping) for r in res_lkp]
+async def _fetch_single_followup_donor(db: AsyncSession, donor_no: Optional[int]) -> Optional[dict]:
+    if not donor_no:
+        return None
+    d_res = await db.execute(text("""
+        SELECT d.donor_no,
+               COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name) AS donor_ename,
+               COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name) AS donor_name,
+               COALESCE(d.donor_cpr, '') AS donor_cpr,
+               COALESCE(d.gen_cd, 1) AS gen_cd,
+               COALESCE(d.status_no, 1) AS status_no,
+               COALESCE(d.address_type, 1) AS address_type,
+               d.donor_flat,
+               COALESCE(d.donor_building, '') AS donor_building,
+               COALESCE(d.donor_road, '') AS donor_road,
+               d.donor_block,
+               d.donor_p_box,
+               COALESCE(d.donor_tel1, '') AS donor_tel1,
+               COALESCE(d.donor_tel2, '') AS donor_tel2,
+               COALESCE(d.donor_mobile, '') AS donor_mobile,
+               COALESCE(NULLIF(TRIM(t.etown_nm), ''), t.town_nm, '') AS town_name
+        FROM donor_master d
+        LEFT JOIN lkp_towns t ON d.donor_block = t.block_cd
+        WHERE d.donor_no = :dno
+    """), {"dno": int(donor_no)})
+    d_row = d_res.first()
+    if not d_row:
+        return None
+    d = dict(d_row._mapping)
 
-    reason_lkp = await db.execute(text("""
-        SELECT reason_cd,
-               COALESCE(NULLIF(TRIM(reason_enm), ''), reason_nm) AS reason_enm,
-               COALESCE(NULLIF(TRIM(reason_enm), ''), reason_nm) AS reason_nm
-        FROM lkp_delay_reasons
-        ORDER BY reason_cd
-    """))
-    delay_reasons = [dict(r._mapping) for r in reason_lkp]
-
-    towns_res = await db.execute(text("""
-        SELECT block_cd, COALESCE(NULLIF(TRIM(etown_nm), ''), town_nm, '') AS town_enm
-        FROM lkp_towns
-    """))
-    towns_map = {str(r.block_cd): r.town_enm for r in towns_res}
-
-    # جلب المتابعات على مستوى المتبرع بالقيم الإنجليزية
-    f_res = await db.execute(text("""
-        SELECT f.trans_id,
-               f.donor_no,
-               COALESCE(TO_CHAR(f.call_date, 'YYYY-MM-DD'), '') AS call_date,
-               COALESCE(f.call_time, '') AS call_time,
-               COALESCE(f.call_by, '') AS call_by,
-               f.call_result_cd,
-               f.delay_reason_cd,
-               COALESCE(f.contact_method, 1) AS contact_method,
-               COALESCE(f.call_result_notes, '') AS call_result_notes,
-               COALESCE(TO_CHAR(f.append_date, 'YYYY-MM-DD'), '') AS append_date,
-               COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_nm,
-               COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_enm,
-               COALESCE(NULLIF(TRIM(dr.reason_enm), ''), dr.reason_nm, 'Unspecified') AS reason_nm,
-               COALESCE(NULLIF(TRIM(dr.reason_enm), ''), dr.reason_nm, 'Unspecified') AS reason_enm,
-               CASE f.contact_method
-                   WHEN 1 THEN 'Phone Call'
-                   WHEN 2 THEN 'SMS / WhatsApp'
-                   WHEN 3 THEN 'Email'
-                   ELSE 'Phone Call'
-               END AS contact_method_nm
-        FROM donor_followup f
-        LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
-        LEFT JOIN lkp_delay_reasons dr ON f.delay_reason_cd = dr.reason_cd
-        ORDER BY f.call_date DESC, f.trans_id DESC
-    """))
-    followups_by_donor: dict[int, list] = {}
-    for row in f_res:
-        item = dict(row._mapping)
-        followups_by_donor.setdefault(item["donor_no"], []).append(item)
-
-    # جلب المتابعات على مستوى الاستقطاع مرة واحدة فقط
-    all_item_res = await db.execute(text("""
-        SELECT f.trans_id,
-               f.so_id,
-               f.donor_no,
-               COALESCE(f.item_no, '') AS item_no,
-               COALESCE(TO_CHAR(f.donation_start_date, 'YYYY-MM-DD'), '') AS donation_start_date,
-               COALESCE(TO_CHAR(f.call_date, 'YYYY-MM-DD'), '') AS call_date,
-               COALESCE(f.call_time, '') AS call_time,
-               COALESCE(f.call_by, '') AS call_by,
-               f.call_result_cd,
-               f.delay_reason_cd,
-               COALESCE(f.call_result_notes, '') AS call_result_notes,
-               COALESCE(f.delayed_months, 0) AS delayed_months,
-               COALESCE(TO_CHAR(f.last_paid_month, 'YYYY-MM-DD'), '') AS last_paid_month,
-               COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_nm,
-               COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_enm,
-               COALESCE(NULLIF(TRIM(d.reason_enm), ''), d.reason_nm, '') AS reason_nm,
-               COALESCE(NULLIF(TRIM(d.reason_enm), ''), d.reason_nm, '') AS reason_enm
-        FROM donor_item_followup f
-        LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
-        LEFT JOIN lkp_delay_reasons d ON f.delay_reason_cd = d.reason_cd
-        ORDER BY f.call_date DESC, f.trans_id DESC
-    """))
-    all_item_followups = []
-    old_followups_by_donor: dict[int, list] = {}
-    for row in all_item_res:
-        item = dict(row._mapping)
-        all_item_followups.append(item)
-        old_followups_by_donor.setdefault(item["donor_no"], []).append(item)
-
-    # جلب الاستقطاعات من العرض الموحد
     so_res = await db.execute(text("""
         SELECT so_id,
                donor_no,
@@ -1160,47 +1198,204 @@ async def get_followup_screen_data(db: AsyncSession = Depends(get_db)):
                payment_notes,
                last_followup_summary
         FROM vw_standing_orders_summary
+        WHERE donor_no = :dno
         ORDER BY so_id ASC
-    """))
-    so_by_donor: dict[int, list] = {}
-    for row in so_res:
-        item = dict(row._mapping)
-        so_by_donor.setdefault(item["donor_no"], []).append(item)
+    """), {"dno": int(donor_no)})
+    items = [dict(r._mapping) for r in so_res]
 
-    donors_res = await db.execute(text("""
-        SELECT d.donor_no,
-               COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name) AS donor_ename,
-               COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name) AS donor_name,
-               COALESCE(d.donor_cpr, '') AS donor_cpr,
-               COALESCE(d.gen_cd, 1) AS gen_cd,
-               COALESCE(d.status_no, 1) AS status_no,
-               COALESCE(d.address_type, 1) AS address_type,
-               d.donor_flat,
-               COALESCE(d.donor_building, '') AS donor_building,
-               COALESCE(d.donor_road, '') AS donor_road,
-               d.donor_block,
-               d.donor_p_box,
-               COALESCE(d.donor_tel1, '') AS donor_tel1,
-               COALESCE(d.donor_tel2, '') AS donor_tel2,
-               COALESCE(d.donor_mobile, '') AS donor_mobile,
-               COALESCE(NULLIF(TRIM(t.etown_nm), ''), t.town_nm, '') AS town_name
+    f_res = await db.execute(text("""
+        SELECT f.trans_id,
+               f.donor_no,
+               COALESCE(TO_CHAR(f.call_date, 'YYYY-MM-DD'), '') AS call_date,
+               COALESCE(f.call_time, '') AS call_time,
+               COALESCE(f.call_by, '') AS call_by,
+               f.call_result_cd,
+               f.delay_reason_cd,
+               COALESCE(f.contact_method, 1) AS contact_method,
+               COALESCE(f.call_result_notes, '') AS call_result_notes,
+               COALESCE(TO_CHAR(f.append_date, 'YYYY-MM-DD'), '') AS append_date,
+               COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_nm,
+               COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_enm,
+               COALESCE(NULLIF(TRIM(dr.reason_enm), ''), dr.reason_nm, 'Unspecified') AS reason_nm,
+               COALESCE(NULLIF(TRIM(dr.reason_enm), ''), dr.reason_nm, 'Unspecified') AS reason_enm,
+               CASE f.contact_method
+                   WHEN 1 THEN 'Phone Call'
+                   WHEN 2 THEN 'SMS / WhatsApp'
+                   WHEN 3 THEN 'Email'
+                   ELSE 'Phone Call'
+               END AS contact_method_nm
+        FROM donor_followup f
+        LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
+        LEFT JOIN lkp_delay_reasons dr ON f.delay_reason_cd = dr.reason_cd
+        WHERE f.donor_no = :dno
+        ORDER BY f.call_date DESC, f.trans_id DESC
+    """), {"dno": int(donor_no)})
+    followups = [dict(r._mapping) for r in f_res]
+
+    item_f_res = await db.execute(text("""
+        SELECT f.trans_id,
+               f.so_id,
+               f.donor_no,
+               COALESCE(f.item_no, '') AS item_no,
+               COALESCE(TO_CHAR(f.donation_start_date, 'YYYY-MM-DD'), '') AS donation_start_date,
+               COALESCE(TO_CHAR(f.call_date, 'YYYY-MM-DD'), '') AS call_date,
+               COALESCE(f.call_time, '') AS call_time,
+               COALESCE(f.call_by, '') AS call_by,
+               f.call_result_cd,
+               f.delay_reason_cd,
+               COALESCE(f.call_result_notes, '') AS call_result_notes,
+               COALESCE(f.delayed_months, 0) AS delayed_months,
+               COALESCE(TO_CHAR(f.last_paid_month, 'YYYY-MM-DD'), '') AS last_paid_month,
+               COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_nm,
+               COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_enm,
+               COALESCE(NULLIF(TRIM(d.reason_enm), ''), d.reason_nm, '') AS reason_nm,
+               COALESCE(NULLIF(TRIM(d.reason_enm), ''), d.reason_nm, '') AS reason_enm
+        FROM donor_item_followup f
+        LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
+        LEFT JOIN lkp_delay_reasons d ON f.delay_reason_cd = d.reason_cd
+        WHERE f.donor_no = :dno
+        ORDER BY f.call_date DESC, f.trans_id DESC
+    """), {"dno": int(donor_no)})
+    item_followups = [dict(r._mapping) for r in item_f_res]
+
+    d["items"] = items
+    d["followups"] = followups
+    d["old_item_followups"] = item_followups
+    d["max_delay"] = max((i["delay_months"] for i in items), default=0)
+    return d
+
+@app.get("/api/followup/record")
+async def get_single_followup_record_api(donor_no: int, db: AsyncSession = Depends(get_db)):
+    donor = await _fetch_single_followup_donor(db, donor_no)
+    if not donor:
+        raise HTTPException(status_code=404, detail="Donor not found")
+    return {
+        "donor": donor,
+        "all_item_followups": donor.get("old_item_followups", [])
+    }
+
+@app.get("/api/followup/data")
+async def get_followup_screen_data(
+    filter_mode: str = "ALL",
+    search_q: str = "",
+    donor_no: Optional[int] = None,
+    include_lookups: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    follow_results = []
+    delay_reasons = []
+    towns_map = {}
+
+    if include_lookups:
+        res_lkp = await db.execute(text("""
+            SELECT result_cd,
+                   COALESCE(NULLIF(TRIM(result_enm), ''), result_nm) AS result_enm,
+                   COALESCE(NULLIF(TRIM(result_enm), ''), result_nm) AS result_nm
+            FROM lkp_follow_results
+            ORDER BY result_cd
+        """))
+        follow_results = [dict(r._mapping) for r in res_lkp]
+
+        reason_lkp = await db.execute(text("""
+            SELECT reason_cd,
+                   COALESCE(NULLIF(TRIM(reason_enm), ''), reason_nm) AS reason_enm,
+                   COALESCE(NULLIF(TRIM(reason_enm), ''), reason_nm) AS reason_nm
+            FROM lkp_delay_reasons
+            ORDER BY reason_cd
+        """))
+        delay_reasons = [dict(r._mapping) for r in reason_lkp]
+
+        towns_res = await db.execute(text("""
+            SELECT block_cd, COALESCE(NULLIF(TRIM(etown_nm), ''), town_nm, '') AS town_enm
+            FROM lkp_towns
+        """))
+        towns_map = {str(r.block_cd): r.town_enm for r in towns_res}
+
+    delay_cte = """
+        WITH donor_delays AS (
+            SELECT i.donor_no,
+                   MAX(GREATEST(0, (
+                       EXTRACT(YEAR FROM AGE(
+                           DATE_TRUNC('month', CASE WHEN i.status_no = 2 AND i.deactive_date IS NOT NULL THEN i.deactive_date ELSE CURRENT_DATE END),
+                           DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))
+                       )) * 12 +
+                       EXTRACT(MONTH FROM AGE(
+                           DATE_TRUNC('month', CASE WHEN i.status_no = 2 AND i.deactive_date IS NOT NULL THEN i.deactive_date ELSE CURRENT_DATE END),
+                           DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))
+                       ))
+                   )::int)) AS max_delay
+            FROM donor_item i
+            LEFT JOIN so_payment_summary lp ON i.so_id = lp.so_id
+            GROUP BY i.donor_no
+        )
+    """
+
+    counts_res = await db.execute(text(f"""
+        {delay_cte}
+        SELECT
+            COUNT(*) AS total_all,
+            COUNT(*) FILTER (WHERE COALESCE(dd.max_delay, 0) > 2) AS total_delayed,
+            COUNT(*) FILTER (WHERE COALESCE(d.status_no, 1) = 2) AS total_inactive
         FROM donor_master d
-        LEFT JOIN lkp_towns t ON d.donor_block = t.block_cd
-        ORDER BY d.donor_no ASC
+        LEFT JOIN donor_delays dd ON d.donor_no = dd.donor_no
     """))
-    donors_list = []
-    for d_row in donors_res:
-        d = dict(d_row._mapping)
-        items = so_by_donor.get(d["donor_no"], [])
-        d["items"] = items
-        d["followups"] = followups_by_donor.get(d["donor_no"], [])
-        d["old_item_followups"] = old_followups_by_donor.get(d["donor_no"], [])
-        d["max_delay"] = max((i["delay_months"] for i in items), default=0)
-        donors_list.append(d)
+    c_row = counts_res.first()
+    counts = {
+        "ALL": int(c_row.total_all or 0) if c_row else 0,
+        "DELAYED": int(c_row.total_delayed or 0) if c_row else 0,
+        "INACTIVE": int(c_row.total_inactive or 0) if c_row else 0
+    }
+
+    where_clauses = ["1=1"]
+    params: dict[str, Any] = {}
+    fm = (filter_mode or "ALL").upper()
+    if fm == "DELAYED":
+        where_clauses.append("COALESCE(dd.max_delay, 0) > 2")
+    elif fm == "INACTIVE":
+        where_clauses.append("COALESCE(d.status_no, 1) = 2")
+
+    q_clean = (search_q or "").strip()
+    if q_clean:
+        params["q"] = f"%{q_clean}%"
+        where_clauses.append("""
+            (CAST(d.donor_no AS TEXT) ILIKE :q
+             OR COALESCE(d.donor_name, '') ILIKE :q
+             OR COALESCE(d.donor_ename, '') ILIKE :q
+             OR COALESCE(d.donor_cpr, '') ILIKE :q
+             OR COALESCE(d.donor_tel1, '') ILIKE :q
+             OR COALESCE(d.donor_tel2, '') ILIKE :q
+             OR COALESCE(d.donor_mobile, '') ILIKE :q)
+        """)
+
+    ids_res = await db.execute(text(f"""
+        {delay_cte}
+        SELECT d.donor_no
+        FROM donor_master d
+        LEFT JOIN donor_delays dd ON d.donor_no = dd.donor_no
+        WHERE {' AND '.join(where_clauses)}
+        ORDER BY d.donor_no ASC
+    """), params)
+    donor_nos = [int(r[0]) for r in ids_res.fetchall()]
+
+    target_dno = None
+    current_index = 0
+    if donor_nos:
+        if donor_no and int(donor_no) in donor_nos:
+            target_dno = int(donor_no)
+            current_index = donor_nos.index(target_dno)
+        else:
+            target_dno = donor_nos[0]
+            current_index = 0
+
+    current_donor = await _fetch_single_followup_donor(db, target_dno)
 
     return {
-        "donors": donors_list,
-        "all_item_followups": all_item_followups,
+        "donors": [current_donor] if current_donor else [],
+        "current_donor": current_donor,
+        "donor_nos": donor_nos,
+        "current_index": current_index,
+        "counts": counts,
+        "all_item_followups": current_donor.get("old_item_followups", []) if current_donor else [],
         "follow_results": follow_results,
         "delay_reasons": delay_reasons,
         "towns_map": towns_map
@@ -2007,6 +2202,9 @@ async def get_reports_matrix_api(
     years: Optional[str] = "2025,2026",
     bank_cd: Optional[int] = None,
     search_q: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 100,
+    export_all: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
     raw_years = [int(y.strip()) for y in (years or "2026").split(",") if y.strip().isdigit()]
@@ -2158,20 +2356,29 @@ async def get_reports_matrix_api(
         else:
             sub[p_key_val] = (st_val, amt_val)
 
-    so_matrix_rows = []
+    so_matrix_all_rows = []
     col_paid_totals = {k: 0.0 for k in period_keys}
     col_unpaid_totals = {k: 0.0 for k in period_keys}
     all_paid_sum = 0.0
     all_unpaid_sum = 0.0
     period_pairs = [(p["key"], p["month_start"]) for p in periods]
 
+    eff_page_size = max(1, int(page_size or 100))
+    total_raw = len(so_rows_raw)
+    total_pages_est = max(1, (total_raw + eff_page_size - 1) // eff_page_size)
+    cur_page = max(1, min(int(page or 1), total_pages_est))
+    start_idx = (cur_page - 1) * eff_page_size
+    end_idx = start_idx + eff_page_size
+
+    valid_idx = 0
     for sid, donor_no, donor_name_en, monthly_pay, so_status, start_str, bank_name in so_rows_raw:
         monthly_amt = round(monthly_pay, 3)
         is_so_active = (so_status == 1)
         start_prefix = start_str[:10] if start_str else ""
         so_mt = mt_by_so.get(sid)
 
-        cells = {}
+        in_page = export_all or (start_idx <= valid_idx < end_idx)
+        cells = {} if in_page else None
         row_paid = 0.0
         row_unpaid = 0.0
 
@@ -2181,20 +2388,24 @@ async def get_reports_matrix_api(
                 st_no, rec_amt = rec
                 amt_val = round(rec_amt, 3) if rec_amt > 0 else monthly_amt
                 if st_no == 1:
-                    cells[k] = {"state": "paid", "amt": amt_val}
+                    if in_page:
+                        cells[k] = {"state": "paid", "amt": amt_val}
                     row_paid += amt_val
                     col_paid_totals[k] += amt_val
                 else:
-                    cells[k] = {"state": "unpaid", "amt": amt_val}
+                    if in_page:
+                        cells[k] = {"state": "unpaid", "amt": amt_val}
                     row_unpaid += amt_val
                     col_unpaid_totals[k] += amt_val
             else:
                 if is_so_active and (not start_prefix or start_prefix <= m_start):
-                    cells[k] = {"state": "unpaid", "amt": monthly_amt}
+                    if in_page:
+                        cells[k] = {"state": "unpaid", "amt": monthly_amt}
                     row_unpaid += monthly_amt
                     col_unpaid_totals[k] += monthly_amt
                 else:
-                    cells[k] = {"state": "none", "amt": 0.0}
+                    if in_page:
+                        cells[k] = {"state": "none", "amt": 0.0}
 
         if not is_so_active and row_paid <= 0:
             continue
@@ -2204,19 +2415,25 @@ async def get_reports_matrix_api(
         all_paid_sum += row_paid
         all_unpaid_sum += row_unpaid
 
-        donor_label = donor_name_en.strip() if donor_name_en else f"Donor #{donor_no}"
+        if in_page:
+            donor_label = donor_name_en.strip() if donor_name_en else f"Donor #{donor_no}"
+            so_matrix_all_rows.append({
+                "so_id": sid,
+                "donor_no": donor_no,
+                "donor_name": donor_label,
+                "bank_name": bank_name,
+                "monthly_pay": monthly_amt,
+                "so_active": is_so_active,
+                "cells": cells,
+                "paid_total": row_paid,
+                "unpaid_total": row_unpaid
+            })
+        valid_idx += 1
 
-        so_matrix_rows.append({
-            "so_id": sid,
-            "donor_no": donor_no,
-            "donor_name": donor_label,
-            "bank_name": bank_name,
-            "monthly_pay": monthly_amt,
-            "so_active": is_so_active,
-            "cells": cells,
-            "paid_total": row_paid,
-            "unpaid_total": row_unpaid
-        })
+    total_valid_rows = valid_idx
+    total_pages = max(1, (total_valid_rows + eff_page_size - 1) // eff_page_size)
+    if cur_page > total_pages:
+        cur_page = total_pages
 
     for k in period_keys:
         col_paid_totals[k] = round(col_paid_totals[k], 3)
@@ -2236,12 +2453,18 @@ async def get_reports_matrix_api(
             "grand_total": {"general": grand_gen_total, "so": grand_so_total}
         },
         "so_matrix": {
-            "rows": so_matrix_rows,
+            "rows": so_matrix_all_rows,
             "period_totals": {
                 k: {"paid": col_paid_totals[k], "unpaid": col_unpaid_totals[k]}
                 for k in period_keys
             },
-            "grand_total": {"paid": all_paid_sum, "unpaid": all_unpaid_sum}
+            "grand_total": {"paid": all_paid_sum, "unpaid": all_unpaid_sum},
+            "pagination": {
+                "page": cur_page,
+                "page_size": eff_page_size,
+                "total_rows": total_valid_rows,
+                "total_pages": total_pages
+            }
         }
     }
 
@@ -2781,6 +3004,24 @@ async def get_so_executive_dashboard_api(
 async def data_views_export_page(request: Request):
     return templates.TemplateResponse("data_views_export.html", {"request": request})
 
+def _paginate_view_response(payload: dict, page: int, page_size: int, export_all: bool) -> dict:
+    all_rows = payload.get("rows") or []
+    total_rows = len(all_rows)
+    eff_page_size = max(1, int(page_size or 100))
+    total_pages = max(1, (total_rows + eff_page_size - 1) // eff_page_size)
+    cur_page = max(1, min(int(page or 1), total_pages))
+    offset = (cur_page - 1) * eff_page_size
+    if not export_all:
+        payload["rows"] = all_rows[offset : offset + eff_page_size]
+    payload["pagination"] = {
+        "page": cur_page,
+        "page_size": eff_page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "offset": 0 if export_all else offset
+    }
+    return payload
+
 @app.get("/api/reports/views")
 async def get_data_view_export_api(
     view_key: str = "ACTIVE_DON_ADDRESS",
@@ -2788,6 +3029,9 @@ async def get_data_view_export_api(
     min_amt: Optional[float] = None,
     status_filter: Optional[str] = "ACTIVE",
     contact_only: Optional[bool] = False,
+    page: int = 1,
+    page_size: int = 100,
+    export_all: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
     setup_res = await db.execute(text("SELECT so_min_amt FROM sys_donor_setup LIMIT 1"))
@@ -2817,7 +3061,7 @@ async def get_data_view_export_api(
             m["sumpay"] = round(float(m["sumpay"] or 0), 3)
             total_amt = round(total_amt + m["sumpay"], 3)
             rows.append(m)
-        return {
+        return _paginate_view_response({
             "view_key": vk,
             "view_title_en": "Active Donors — Street Address Mailing List (ACTIVE_DON_ADDRESS)",
             "view_title_ar": "Active Donors with Street Addresses & Monthly Standing Orders",
@@ -2827,7 +3071,7 @@ async def get_data_view_export_api(
             "headers": ["Donor No", "Prefix", "Donor Name", "Care / Salutation", "Street Address", "Total Monthly (BHD)", "SO Count", "Mobile / Tel 2"],
             "rows": rows,
             "summary": {"total_rows": len(rows), "total_amount": total_amt}
-        }
+        }, page, page_size, export_all)
 
     elif vk == "ACTIVE_DON_PBOX":
         where_parts = ["1=1"]
@@ -2853,7 +3097,7 @@ async def get_data_view_export_api(
             m["sumpay"] = round(float(m["sumpay"] or 0), 3)
             total_amt = round(total_amt + m["sumpay"], 3)
             rows.append(m)
-        return {
+        return _paginate_view_response({
             "view_key": vk,
             "view_title_en": "Donors — P.O. Box Mailing List (ACTIVE_DON_PBOX)",
             "view_title_ar": "Donors Mailing List with Registered P.O. Box",
@@ -2863,7 +3107,7 @@ async def get_data_view_export_api(
             "headers": ["Donor No", "Prefix", "Donor Name", "Care / Salutation", "P.O. Box", "Total Monthly (BHD)", "SO Count", "Mobile / Tel 2", "SO Status"],
             "rows": rows,
             "summary": {"total_rows": len(rows), "total_amount": total_amt}
-        }
+        }, page, page_size, export_all)
 
     elif vk == "SMS_SUBSCRIPTIONS":
         where_parts = ["1=1"]
@@ -2885,7 +3129,7 @@ async def get_data_view_export_api(
         """)
         res = await db.execute(sql, params)
         rows = [dict(r._mapping) for r in res]
-        return {
+        return _paginate_view_response({
             "view_key": vk,
             "view_title_en": "Donor SMS & Phone Subscriptions List (SMS_SUBSCRIPTIONS)",
             "view_title_ar": "Donor Mobile & Telephone Directory for SMS Campaigns",
@@ -2895,7 +3139,7 @@ async def get_data_view_export_api(
             "headers": ["Donor No", "Donor Name", "Mobile", "Tel 1 (Home/Office)", "Tel 2 (Mobile 2)", "Status"],
             "rows": rows,
             "summary": {"total_rows": len(rows), "total_amount": None}
-        }
+        }, page, page_size, export_all)
 
     elif vk == "UPTO_SPECIFIC_AMT":
         eff_min = float(min_amt) if (min_amt is not None and min_amt >= 0) else default_min_amt
@@ -2931,7 +3175,7 @@ async def get_data_view_export_api(
             m["monthly_pay"] = round(float(m["monthly_pay"] or 0), 3)
             total_amt = round(total_amt + m["monthly_pay"], 3)
             rows.append(m)
-        return {
+        return _paginate_view_response({
             "view_key": vk,
             "view_title_en": f"Active Standing Orders >= {eff_min:.3f} BHD (UPTO_SPECIFIC_AMT / UPTO5 / UPTO10 / UPTO25)",
             "view_title_ar": f"Active Standing Orders with Monthly Commitment >= {eff_min:.3f} BHD",
@@ -2942,7 +3186,7 @@ async def get_data_view_export_api(
             "headers": ["Donor No", "SO ID", "Monthly Pay (BHD)", "Donor Name", "Mobile / Tel 2", "P.O. Box", "Street Address"],
             "rows": rows,
             "summary": {"total_rows": len(rows), "total_amount": total_amt}
-        }
+        }, page, page_size, export_all)
 
     elif vk == "VW_STANDING_ORDERS_SUMMARY":
         where_parts = ["1=1"]
@@ -2977,7 +3221,7 @@ async def get_data_view_export_api(
             m["monthly_pay"] = round(float(m["monthly_pay"] or 0), 3)
             total_amt = round(total_amt + m["monthly_pay"], 3)
             rows.append(m)
-        return {
+        return _paginate_view_response({
             "view_key": vk,
             "view_title_en": "Unified Standing Orders & Delay Summary (vw_standing_orders_summary)",
             "view_title_ar": "Unified View of Standing Orders, Delay Months, and Follow-up Summary",
@@ -2987,7 +3231,7 @@ async def get_data_view_export_api(
             "headers": ["SO ID", "Donor No", "Donor Name", "Mobile", "Bank", "Bank Code", "Monthly (BHD)", "Start Date", "Last Paid", "Delay (Mo)", "Status", "Last Follow-up"],
             "rows": rows,
             "summary": {"total_rows": len(rows), "total_amount": total_amt}
-        }
+        }, page, page_size, export_all)
 
     raise HTTPException(status_code=400, detail=f"Unknown view_key: {view_key}")
 

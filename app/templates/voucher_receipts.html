@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Receipt Master (Issue Voucher) - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
+        [x-cloak] { display: none !important; }
+
+        /* Dedicated Print Styles for Pre-Printed Receipt Form & Full Form */
+        @media print {
+            @page {
+                size: A5 landscape;
+                margin: 0;
+            }
+            body * {
+                visibility: hidden !important;
+            }
+            #printable-receipt-sheet,
+            #printable-receipt-sheet * {
+                visibility: visible !important;
+            }
+            #printable-receipt-sheet {
+                position: fixed !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 210mm !important;
+                height: 148mm !important;
+                box-shadow: none !important;
+                border: none !important;
+                margin: 0 !important;
+                background: transparent !important;
+            }
+            .preprinted-only-mode .receipt-static-chrome {
+                visibility: hidden !important;
+                border-color: transparent !important;
+                background: transparent !important;
+            }
+            .preprinted-only-mode .receipt-field-box {
+                border-color: transparent !important;
+                background: transparent !important;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800" x-data="voucherReceiptsApp()" x-init="init()">
+    {% include 'sidebar.html' %}
+
+    <div class="p-4 lg:p-6 max-w-7xl mx-auto w-full space-y-4">
+        <!-- Top Bar -->
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-800 text-[10px] font-bold uppercase tracking-wider">Cash Donations Module</span>
+                    <h1 class="text-base font-bold text-slate-900">Receipt Master — Walk-in Cash & Cheque Payment Receipt (VOUCH_MSTR)</h1>
+                </div>
+                <p class="text-xs text-slate-500 mt-0.5">Issue official payment receipts for walk-in cash/cheque donors and print directly on pre-printed receipt stationery</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" @click="prepareNewVoucher()"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-2xs transition">
+                    + New Receipt Voucher
+                </button>
+                <button type="button" @click="showQuickDonorModal = true"
+                        class="bg-slate-800 hover:bg-slate-900 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-2xs transition">
+                    + Quick Walk-in Donor
+                </button>
+                <a href="/voucher-control"
+                   class="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3.5 py-2 rounded-lg text-xs font-semibold transition">
+                    Voucher Control / Cancel
+                </a>
+            </div>
+        </div>
+
+        <!-- Toast Alert -->
+        <div x-show="toast.message" x-cloak
+             :class="toast.type === 'error' ? 'bg-rose-50 border-rose-300 text-rose-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'"
+             class="p-3 rounded-xl border text-xs font-semibold flex items-center justify-between">
+            <span x-text="toast.message"></span>
+            <button type="button" @click="toast.message = ''" class="text-slate-400 hover:text-slate-700">✕</button>
+        </div>
+
+        <!-- Split Workspace: Left = Receipt Entry Form (6 cols), Right = Live Pre-Printed Form Preview & Print Controls (6 cols) -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+
+            <!-- LEFT: Receipt Entry Form -->
+            <section class="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-2xs p-4 space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200">
+                    <div class="flex items-center gap-2">
+                        <span :class="form.is_new ? 'bg-emerald-600' : (form.receipt_status === 2 ? 'bg-rose-600' : 'bg-blue-600')"
+                              class="px-2.5 py-1 rounded-lg text-white font-mono text-xs font-bold"
+                              x-text="form.is_new ? 'NEW RV #' + form.vouch_no + '/' + form.trns_year : ('RV #' + form.vouch_no + '/' + form.trns_year)"></span>
+                        <div>
+                            <h2 class="text-sm font-bold text-slate-900"
+                                x-text="form.is_new ? 'Issue Walk-in Payment Receipt' : (form.receipt_status === 2 ? 'Cancelled Receipt Voucher' : 'Edit / Reprint Receipt Voucher')"></h2>
+                            <p class="text-[11px] text-slate-500"
+                               x-text="'Cashier: ' + (form.user_name || lookups.current_user || 'SAJJAD') + (form.print_counter ? ' • Printed ' + form.print_counter + 'x' : ' • Not printed yet')"></p>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-1.5">
+                        <template x-if="form.is_new">
+                            <div class="flex items-center gap-1.5">
+                                <button type="button" @click="saveVoucher(false)"
+                                        class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-2xs transition">
+                                    Save Only
+                                </button>
+                                <button type="button" @click="saveVoucher(true)"
+                                        class="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-2xs transition flex items-center gap-1">
+                                    <span>🖨️ Save & Print Receipt</span>
+                                </button>
+                            </div>
+                        </template>
+                        <template x-if="!form.is_new">
+                            <div class="flex items-center gap-1.5">
+                                <button type="button" @click="printCurrentReceipt()"
+                                        class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-2xs transition">
+                                    🖨️ Reprint Receipt
+                                </button>
+                                <a x-show="form.receipt_status === 1"
+                                   :href="'/voucher-control?vouch_no=' + form.vouch_no + '&trns_year=' + form.trns_year"
+                                   class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-2xs transition">
+                                    Modify / Cancel Receipt
+                                </a>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Cancelled Banner if receipt_status == 2 -->
+                <div x-show="form.receipt_status === 2" x-cloak
+                     class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-1">
+                    <div class="font-bold">⚠️ This Receipt Voucher is CANCELLED (Cancelled by: <span class="font-mono" x-text="form.cancelled_by || 'N/A'"></span>)</div>
+                    <div x-show="form.cancel_replace_notes" class="text-[11px]" x-text="'Reason / Replacement: ' + form.cancel_replace_notes"></div>
+                </div>
+
+                <!-- 1. Voucher Header Row: Year, Auto Receipt No, Date -->
+                <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 text-xs">
+                    <div class="sm:col-span-4">
+                        <label class="block font-semibold text-slate-700 mb-1">Year (Independent Auto Sequence)</label>
+                        <input type="number" x-model.number="form.trns_year" @change="if(form.is_new) fetchNextVoucherNo()"
+                               :readonly="!form.is_new"
+                               class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold bg-slate-50">
+                    </div>
+                    <div class="sm:col-span-4">
+                        <label class="block font-semibold text-slate-700 mb-1">Auto Receipt No (RV #)</label>
+                        <input type="number" x-model.number="form.vouch_no" readonly
+                               class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold bg-slate-100 text-blue-700">
+                    </div>
+                    <div class="sm:col-span-4">
+                        <label class="block font-semibold text-slate-700 mb-1">Receipt Date *</label>
+                        <input type="date" x-model="form.trans_date" :readonly="!form.is_new"
+                               class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono">
+                    </div>
+                </div>
+
+                <!-- 2. Walk-in Donor Lookup & Printed Name -->
+                <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5 text-xs">
+                    <div class="flex items-center justify-between">
+                        <label class="font-bold text-slate-800">1. Select Walk-in Donor (CASH_DONORS)</label>
+                        <button type="button" @click="showQuickDonorModal = true"
+                                class="text-[11px] font-bold text-blue-600 hover:underline">
+                            + Register New Walk-in Donor
+                        </button>
+                    </div>
+                    <div class="relative">
+                        <div class="flex gap-2">
+                            <input type="number" x-model.number="form.donor_code" @change="loadDonorByCode(form.donor_code)"
+                                   placeholder="Code #"
+                                   class="w-24 border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold bg-white">
+                            <input type="text" x-model="donorSearchQuery" @input.debounce.250ms="searchDonorsDropdown()"
+                                   @focus="searchDonorsDropdown()"
+                                   placeholder="Type Donor Name (EN/AR) or Mobile to search..."
+                                   class="flex-1 border border-slate-300 rounded-lg px-3 py-1.5 bg-white">
+                        </div>
+
+                        <!-- Search Autocomplete Dropdown -->
+                        <div x-show="donorSearchResults.length > 0" @click.away="donorSearchResults = []" x-cloak
+                             class="absolute z-30 left-0 right-0 mt-1 bg-white border border-slate-300 rounded-xl shadow-xl max-h-56 overflow-y-auto divide-y divide-slate-100">
+                            <template x-for="d in donorSearchResults" :key="d.donor_cd">
+                                <button type="button" @click="pickDonor(d)"
+                                        class="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center justify-between gap-2">
+                                    <div>
+                                        <span class="font-mono font-bold text-blue-700" x-text="'#' + d.donor_cd"></span>
+                                        <span class="font-bold text-slate-900 ml-1" x-text="d.donor_ename || d.donor_name"></span>
+                                        <span class="text-slate-500 ml-1" style="font-family: 'Cairo', sans-serif;"
+                                              x-show="d.donor_name && d.donor_name !== d.donor_ename" x-text="'(' + d.donor_name + ')'"></span>
+                                    </div>
+                                    <span class="font-mono text-[11px] text-slate-500" x-text="d.mobile || d.tel_home || ''"></span>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-1">
+                        <div class="sm:col-span-8">
+                            <label class="block font-semibold text-slate-700 mb-1">Name Printed on Receipt (Received From / DON_REQ_DESC) *</label>
+                            <input type="text" x-model="form.don_req_desc" placeholder="Name to appear on the printed receipt form"
+                                   class="w-full border border-slate-300 rounded-lg px-3 py-1.5 bg-white font-semibold text-slate-900">
+                        </div>
+                        <div class="sm:col-span-4">
+                            <label class="block font-semibold text-slate-700 mb-1">Donor Tel / Mobile</label>
+                            <input type="text" x-model="form.tel" placeholder="Mobile / Tel"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Donation Purpose (Band Detail) & Amount (BHD + Words) -->
+                <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs">
+                    <div class="sm:col-span-7">
+                        <label class="block font-semibold text-slate-700 mb-1">2. Donation Purpose / Band (BAND_DET_CD) *</label>
+                        <select x-model.number="form.band_det_cd" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-semibold">
+                            <template x-for="b in lookups.band_details" :key="b.band_det_cd">
+                                <option :value="b.band_det_cd" x-text="b.band_det_cd + ' - ' + b.band_det_edesc + (b.band_det_desc !== b.band_det_edesc ? ' (' + b.band_det_desc + ')' : '')"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-5">
+                        <label class="block font-semibold text-emerald-800 mb-1">3. Amount Paid (BHD) *</label>
+                        <input type="number" step="0.001" min="0" x-model.number="form.trans_val" @input="updateAmountWords()"
+                               placeholder="0.000"
+                               class="w-full border-2 border-emerald-500 rounded-lg px-3 py-1.5 font-mono text-sm font-bold text-emerald-900 bg-emerald-50/40 focus:outline-none">
+                    </div>
+
+                    <div class="sm:col-span-12">
+                        <label class="block font-semibold text-slate-700 mb-1">Amount in Words (AMT_TXT — Auto-converted for Pre-Printed Form)</label>
+                        <input type="text" x-model="form.amt_txt"
+                               placeholder="e.g. One Hundred Dinar, Zero Fils"
+                               class="w-full border border-slate-300 rounded-lg px-3 py-1.5 bg-slate-50 font-medium text-slate-800">
+                    </div>
+                </div>
+
+                <!-- 4. Payment Method (Cash / Cheque / Visa / Transfer) -->
+                <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-3 text-xs">
+                    <div>
+                        <label class="block font-bold text-slate-800 mb-1.5">4. Payment Method (TRANS_PAY_TYPE) *</label>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <template x-for="pt in lookups.payment_types.filter(x => x.type_cd <= 4)" :key="pt.type_cd">
+                                <button type="button" @click="form.trans_pay_type = pt.type_cd"
+                                        :class="form.trans_pay_type === pt.type_cd ? 'bg-blue-600 text-white border-blue-600 shadow-2xs' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'"
+                                        class="px-2.5 py-2 rounded-lg border font-bold text-center transition">
+                                    <div x-text="pt.type_edesc"></div>
+                                    <div class="text-[10px] opacity-80" style="font-family: 'Cairo', sans-serif;" x-text="pt.type_desc"></div>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Conditional Cheque / Visa / Transfer Details -->
+                    <div x-show="form.trans_pay_type !== 1" x-cloak class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-2 border-t border-slate-200">
+                        <div class="sm:col-span-4">
+                            <label class="block font-semibold text-slate-700 mb-1"
+                                   x-text="form.trans_pay_type === 2 ? 'Cheque No *' : (form.trans_pay_type === 3 ? 'Card / Auth No' : 'Transfer / Fawri+ Ref')"></label>
+                            <input type="text" x-model="form.cheq_visa_no" placeholder="e.g. 002650"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono font-bold">
+                        </div>
+                        <div class="sm:col-span-5">
+                            <label class="block font-semibold text-slate-700 mb-1">Drawer / Sender Bank (BANK_CD)</label>
+                            <select x-model="form.bank_cd" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
+                                <option value="">-- Select Bank --</option>
+                                <template x-for="bk in lookups.banks" :key="bk.bank_cd">
+                                    <option :value="bk.bank_cd" x-text="bk.bank_cd + ' - ' + bk.bank_e_desc"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="sm:col-span-3" x-show="form.trans_pay_type === 2">
+                            <label class="block font-semibold text-slate-700 mb-1">Cheque Serial</label>
+                            <input type="text" x-model="form.chk_ser" placeholder="Series"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono">
+                        </div>
+                        <div class="sm:col-span-3" x-show="form.trans_pay_type === 3">
+                            <label class="block font-semibold text-slate-700 mb-1">Card Expiry</label>
+                            <input type="date" x-model="form.visa_ex_date"
+                                   class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-mono">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                        <div class="sm:col-span-8">
+                            <label class="block font-semibold text-slate-700 mb-1">Receipt Description / Attachments / Period (ATTACHMENTS)</label>
+                            <input type="text" x-model="form.attachments"
+                                   placeholder="e.g. for Call Centre Project / Fawri+ IBAN / Rent Period..."
+                                   class="w-full border border-slate-300 rounded-lg px-3 py-1.5 bg-white">
+                        </div>
+                        <div class="sm:col-span-4">
+                            <label class="block font-semibold text-slate-700 mb-1">Additional Remarks</label>
+                            <input type="text" x-model="form.req_reason" placeholder="Optional notes"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- RIGHT: Pre-Printed Payment Receipt Live Preview & Printer Calibration (6 cols) -->
+            <section class="lg:col-span-6 space-y-3">
+                <!-- Print Mode & Alignment Controls -->
+                <div class="bg-slate-900 text-white p-3.5 rounded-xl shadow-2xs space-y-2.5 text-xs">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                            <span class="font-bold uppercase tracking-wider">Pre-Printed Payment Receipt Printer</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" @click="printCurrentReceipt()"
+                                    class="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold transition flex items-center gap-1.5 shadow">
+                                <span>🖨️ Print Now</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800 text-[11px]">
+                        <div class="flex items-center gap-2">
+                            <span class="text-slate-400">Print Mode:</span>
+                            <button type="button" @click="printSettings.preprintedOnly = true; savePrintSettings()"
+                                    :class="printSettings.preprintedOnly ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'"
+                                    class="px-2.5 py-1 rounded-lg transition">
+                                Pre-Printed Form (Data Overlay Only)
+                            </button>
+                            <button type="button" @click="printSettings.preprintedOnly = false; savePrintSettings()"
+                                    :class="!printSettings.preprintedOnly ? 'bg-blue-500 text-white font-bold' : 'bg-slate-800 text-slate-300'"
+                                    class="px-2.5 py-1 rounded-lg transition">
+                                Full Receipt Template
+                            </button>
+                        </div>
+
+                        <div class="flex items-center gap-2">
+                            <span class="text-slate-400">Calibration (mm):</span>
+                            <label class="flex items-center gap-1">
+                                <span>X:</span>
+                                <input type="number" x-model.number="printSettings.offsetX" @change="savePrintSettings()"
+                                       class="w-12 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-center text-white">
+                            </label>
+                            <label class="flex items-center gap-1">
+                                <span>Y:</span>
+                                <input type="number" x-model.number="printSettings.offsetY" @change="savePrintSettings()"
+                                       class="w-12 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-center text-white">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Printable Receipt Canvas (Simulates the Pre-Printed Form on screen, and obeys preprintedOnly during @media print) -->
+                <div id="printable-receipt-sheet"
+                     :class="printSettings.preprintedOnly ? 'preprinted-only-mode' : ''"
+                     class="bg-white rounded-xl border-2 border-amber-700/40 shadow-md p-6 relative overflow-hidden">
+
+                    <div :style="`transform: translate(${printSettings.offsetX || 0}mm, ${printSettings.offsetY || 0}mm);`"
+                         class="space-y-4">
+
+                        <!-- Top Official Header (Hidden in Pre-Printed Form Mode when printing onto physical stationery) -->
+                        <div class="receipt-static-chrome flex items-start justify-between border-b-2 border-slate-800 pb-3">
+                            <div>
+                                <div class="text-sm font-extrabold text-slate-900 tracking-wide uppercase">Discover Islam Society</div>
+                                <div class="text-[11px] text-slate-600">Kingdom of Bahrain • P.O. Box 11622, Manama</div>
+                                <div class="text-[10px] font-mono text-slate-500 mt-0.5">OFFICIAL PAYMENT RECEIPT VOUCHER</div>
+                            </div>
+                            <div class="text-center px-3 py-1 rounded-lg border-2 border-slate-800 bg-slate-50">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-600">RECEIPT VOUCHER</div>
+                                <div class="text-xs font-bold text-slate-900" style="font-family: 'Cairo', sans-serif;">سند قبض / إيصال استلام</div>
+                            </div>
+                            <div class="text-right" style="font-family: 'Cairo', sans-serif;">
+                                <div class="text-base font-bold text-slate-900">جمعية اكتشف الإسلام</div>
+                                <div class="text-[11px] text-slate-600">مملكة البحرين - المنامة</div>
+                            </div>
+                        </div>
+
+                        <!-- Row 1: Receipt No, Date, Amount in Figures (BHD / Fils) -->
+                        <div class="grid grid-cols-12 gap-3 items-center pt-1">
+                            <div class="col-span-4 receipt-field-box border border-slate-300 rounded-lg p-2 bg-slate-50/70">
+                                <div class="receipt-static-chrome flex justify-between text-[10px] text-slate-500 font-semibold">
+                                    <span>Receipt No.</span>
+                                    <span style="font-family: 'Cairo', sans-serif;">رقم الإيصال</span>
+                                </div>
+                                <div class="font-mono text-base font-extrabold text-rose-700 mt-0.5"
+                                     x-text="form.vouch_no + ' / ' + form.trns_year"></div>
+                            </div>
+
+                            <div class="col-span-4 receipt-field-box border border-slate-300 rounded-lg p-2 bg-slate-50/70">
+                                <div class="receipt-static-chrome flex justify-between text-[10px] text-slate-500 font-semibold">
+                                    <span>Date</span>
+                                    <span style="font-family: 'Cairo', sans-serif;">التاريخ</span>
+                                </div>
+                                <div class="font-mono text-sm font-bold text-slate-900 mt-0.5"
+                                     x-text="form.trans_date || '-'"></div>
+                            </div>
+
+                            <div class="col-span-4 receipt-field-box border-2 border-emerald-700 rounded-lg p-2 bg-emerald-50/50">
+                                <div class="receipt-static-chrome flex justify-between text-[10px] text-emerald-800 font-bold">
+                                    <span>Amount (BHD)</span>
+                                    <span style="font-family: 'Cairo', sans-serif;">المبلغ (د.ب)</span>
+                                </div>
+                                <div class="font-mono text-base font-extrabold text-slate-950 text-right mt-0.5"
+                                     x-text="'BD ' + Number(form.trans_val || 0).toFixed(3)"></div>
+                            </div>
+                        </div>
+
+                        <!-- Row 2: Received From -->
+                        <div class="receipt-field-box border-b border-dashed border-slate-400 pb-2">
+                            <div class="flex items-baseline justify-between gap-2">
+                                <span class="receipt-static-chrome text-[11px] font-bold text-slate-600 shrink-0">Received with thanks from:</span>
+                                <span class="text-sm font-bold text-slate-950 text-center flex-1 px-2"
+                                      style="font-family: 'Inter', 'Cairo', sans-serif;"
+                                      x-text="form.don_req_desc || '____________________________________'"></span>
+                                <span class="receipt-static-chrome text-xs font-bold text-slate-700 shrink-0" style="font-family: 'Cairo', sans-serif;">استلمنا من الفاضل:</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-slate-500 mt-1">
+                                <span class="font-mono" x-text="'Donor Code: #' + (form.donor_code || '-')"></span>
+                                <span class="font-mono" x-show="form.tel" x-text="'Tel: ' + form.tel"></span>
+                            </div>
+                        </div>
+
+                        <!-- Row 3: The Sum of (Amount in Words) -->
+                        <div class="receipt-field-box border-b border-dashed border-slate-400 pb-2">
+                            <div class="flex items-baseline justify-between gap-2">
+                                <span class="receipt-static-chrome text-[11px] font-bold text-slate-600 shrink-0">The sum of:</span>
+                                <span class="text-xs font-bold text-slate-900 italic text-center flex-1 px-2"
+                                      x-text="(form.amt_txt || 'Zero Dinar, Zero Fils') + ' Only'"></span>
+                                <span class="receipt-static-chrome text-xs font-bold text-slate-700 shrink-0" style="font-family: 'Cairo', sans-serif;">مبلغاً وقدره:</span>
+                            </div>
+                        </div>
+
+                        <!-- Row 4: Payment Mode (Cash / Cheque / Bank) -->
+                        <div class="receipt-field-box border-b border-dashed border-slate-400 pb-2 grid grid-cols-12 gap-2 text-xs items-center">
+                            <div class="col-span-4">
+                                <span class="receipt-static-chrome text-[11px] font-bold text-slate-600">Payment Mode: </span>
+                                <span class="font-bold text-slate-950 uppercase ml-1" x-text="selectedPayTypeName()"></span>
+                            </div>
+                            <div class="col-span-4">
+                                <span class="receipt-static-chrome text-[11px] font-bold text-slate-600">Cheque / Ref No: </span>
+                                <span class="font-mono font-bold text-slate-900 ml-1" x-text="form.cheq_visa_no || '-'"></span>
+                            </div>
+                            <div class="col-span-4">
+                                <span class="receipt-static-chrome text-[11px] font-bold text-slate-600">Bank: </span>
+                                <span class="font-semibold text-slate-900 ml-1" x-text="selectedBankName() || '-'"></span>
+                            </div>
+                        </div>
+
+                        <!-- Row 5: Being / Donation Purpose & Notes -->
+                        <div class="receipt-field-box border-b border-dashed border-slate-400 pb-2">
+                            <div class="flex items-baseline justify-between gap-2">
+                                <span class="receipt-static-chrome text-[11px] font-bold text-slate-600 shrink-0">Being (Purpose):</span>
+                                <div class="flex-1 px-2 text-center">
+                                    <span class="text-xs font-bold text-slate-950" x-text="selectedBandName()"></span>
+                                    <span x-show="form.attachments" class="text-xs text-slate-700" x-text="' — ' + form.attachments"></span>
+                                </div>
+                                <span class="receipt-static-chrome text-xs font-bold text-slate-700 shrink-0" style="font-family: 'Cairo', sans-serif;">وذلك عن:</span>
+                            </div>
+                        </div>
+
+                        <!-- Row 6: Cashier Signature & Footer -->
+                        <div class="pt-3 flex items-end justify-between text-xs">
+                            <div>
+                                <div class="receipt-static-chrome text-[10px] text-slate-500 uppercase">Issued By (Cashier)</div>
+                                <div class="font-mono font-bold text-slate-900 text-xs mt-0.5"
+                                     x-text="form.user_name || lookups.current_user || 'SAJJAD'"></div>
+                            </div>
+                            <div class="text-center">
+                                <span x-show="form.receipt_status === 2" class="px-3 py-1 rounded bg-rose-100 text-rose-800 font-bold text-xs uppercase border border-rose-300">
+                                    CANCELLED RECEIPT
+                                </span>
+                            </div>
+                            <div class="text-right">
+                                <div class="receipt-static-chrome text-[10px] text-slate-500" style="font-family: 'Cairo', sans-serif;">توقيع المستلم / الختم</div>
+                                <div class="receipt-static-chrome w-36 border-b border-slate-400 mt-5"></div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Bottom Section: Vouchers Register & Search Table -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div class="p-3.5 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold uppercase tracking-wider">Receipt Vouchers Register (VOUCH_MSTR)</span>
+                    <span class="text-[11px] font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300"
+                          x-text="pagination.total_rows + ' vouchers'"></span>
+                </div>
+                <div class="flex flex-wrap items-center gap-3 text-xs font-mono">
+                    <span class="text-emerald-400 font-bold"
+                          x-text="'Active Sum: ' + Number(summary.total_active_bhd || 0).toLocaleString('en-US', {minimumFractionDigits: 3, maximumFractionDigits: 3}) + ' BHD'"></span>
+                    <span class="text-slate-400" x-text="'Valid: ' + (summary.active_count || 0) + ' | Cancelled: ' + (summary.cancelled_count || 0)"></span>
+                </div>
+            </div>
+
+            <!-- Filter Bar -->
+            <div class="p-3 bg-slate-100 border-b border-slate-200 grid grid-cols-2 sm:grid-cols-12 gap-2 text-xs">
+                <div class="sm:col-span-3">
+                    <input type="text" x-model="filters.q" @keydown.enter="loadVouchers(1)"
+                           placeholder="Search RV #, Donor Name/Code, Cheque #, Notes..."
+                           class="w-full border border-slate-300 rounded-lg px-3 py-1.5 bg-white">
+                </div>
+                <div class="sm:col-span-2">
+                    <select x-model="filters.trns_year" @change="loadVouchers(1)" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-mono">
+                        <option value="ALL">All Years</option>
+                        <template x-for="yr in lookups.years" :key="yr">
+                            <option :value="String(yr)" x-text="'Year ' + yr"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="sm:col-span-2">
+                    <select x-model="filters.pay_type" @change="loadVouchers(1)" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
+                        <option value="ALL">All Payment Modes</option>
+                        <template x-for="pt in lookups.payment_types" :key="pt.type_cd">
+                            <option :value="String(pt.type_cd)" x-text="pt.type_edesc"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="sm:col-span-2">
+                    <select x-model="filters.user_name" @change="loadVouchers(1)" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-mono">
+                        <option value="ALL">All Cashiers</option>
+                        <template x-for="c in lookups.cashiers" :key="c">
+                            <option :value="c" x-text="c"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="sm:col-span-2">
+                    <select x-model="filters.receipt_status" @change="loadVouchers(1)" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
+                        <option value="ALL">All Statuses</option>
+                        <option value="1">1 - Valid Receipts</option>
+                        <option value="2">2 - Cancelled</option>
+                    </select>
+                </div>
+                <div class="sm:col-span-1">
+                    <button type="button" @click="loadVouchers(1)"
+                            class="w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg">Filter</button>
+                </div>
+            </div>
+
+            <!-- Vouchers Table -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs text-left">
+                    <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] border-b border-slate-200">
+                        <tr>
+                            <th class="px-3 py-2.5">RV No / Year</th>
+                            <th class="px-3 py-2.5">Date</th>
+                            <th class="px-3 py-2.5">Donor / Printed Name</th>
+                            <th class="px-3 py-2.5">Purpose (Band)</th>
+                            <th class="px-3 py-2.5">Payment Mode</th>
+                            <th class="px-3 py-2.5 text-right">Amount (BHD)</th>
+                            <th class="px-3 py-2.5">Cashier</th>
+                            <th class="px-3 py-2.5">Status</th>
+                            <th class="px-3 py-2.5 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <template x-for="v in rows" :key="v.trns_year + '-' + v.vouch_no">
+                            <tr :class="form.vouch_no === v.vouch_no && form.trns_year === v.trns_year && !form.is_new ? 'bg-blue-50/80' : 'hover:bg-slate-50'">
+                                <td class="px-3 py-2.5 font-mono font-bold text-blue-700" x-text="v.vouch_no + ' / ' + v.trns_year"></td>
+                                <td class="px-3 py-2.5 font-mono text-slate-600" x-text="v.trans_date"></td>
+                                <td class="px-3 py-2.5">
+                                    <div class="font-bold text-slate-900" x-text="v.don_req_desc || v.donor_display_name"></div>
+                                    <div class="text-[11px] text-slate-500 font-mono" x-text="'Donor #' + v.donor_code + (v.donor_mobile ? ' • ' + v.donor_mobile : '')"></div>
+                                </td>
+                                <td class="px-3 py-2.5">
+                                    <div class="font-semibold text-slate-800" x-text="v.band_name"></div>
+                                    <div class="text-[11px] text-slate-500 truncate max-w-[220px]" x-text="v.attachments"></div>
+                                </td>
+                                <td class="px-3 py-2.5">
+                                    <span class="font-semibold" x-text="v.pay_type_name"></span>
+                                    <span x-show="v.cheq_visa_no" class="block text-[10px] font-mono text-slate-500"
+                                          x-text="'#' + v.cheq_visa_no + (v.bank_name ? ' (' + v.bank_name + ')' : '')"></span>
+                                </td>
+                                <td class="px-3 py-2.5 text-right font-mono font-bold text-slate-900" x-text="Number(v.trans_val || 0).toFixed(3)"></td>
+                                <td class="px-3 py-2.5 font-mono text-[11px] text-slate-600" x-text="v.user_name"></td>
+                                <td class="px-3 py-2.5">
+                                    <span :class="v.receipt_status === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
+                                          class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                          x-text="v.receipt_status === 1 ? 'Valid' : 'Cancelled'"></span>
+                                </td>
+                                <td class="px-3 py-2.5 text-right space-x-1">
+                                    <button type="button" @click="selectVoucherRow(v)"
+                                            class="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-[11px]">
+                                        Load
+                                    </button>
+                                    <button type="button" @click="selectVoucherRow(v, true)"
+                                            class="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold text-[11px]">
+                                        🖨️ Print
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination Footer -->
+            <div class="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+                <button type="button" @click="loadVouchers(pagination.page - 1)" :disabled="pagination.page <= 1"
+                        class="px-3 py-1 rounded border border-slate-300 bg-white disabled:opacity-40 font-semibold">Previous</button>
+                <span class="font-mono text-[11px] text-slate-600"
+                      x-text="'Page ' + pagination.page + ' of ' + pagination.total_pages + ' (' + pagination.total_rows + ' total)'"></span>
+                <button type="button" @click="loadVouchers(pagination.page + 1)" :disabled="pagination.page >= pagination.total_pages"
+                        class="px-3 py-1 rounded border border-slate-300 bg-white disabled:opacity-40 font-semibold">Next</button>
+            </div>
+        </section>
+    </div>
+
+    <!-- Quick New Walk-in Donor Modal -->
+    <div x-show="showQuickDonorModal" x-cloak class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4" @click.away="showQuickDonorModal = false">
+            <div class="flex items-center justify-between border-b pb-2.5">
+                <h3 class="text-sm font-bold text-slate-900">Quick Register Walk-in Donor</h3>
+                <button type="button" @click="showQuickDonorModal = false" class="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">Donor English Name *</label>
+                    <input type="text" x-model="quickDonor.donor_ename" placeholder="Full Name in English"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-1.5">
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">Donor Arabic Name</label>
+                    <input type="text" x-model="quickDonor.donor_name" dir="rtl" placeholder="الاسم بالعربية"
+                           style="font-family: 'Cairo', sans-serif;"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-1.5">
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">Mobile</label>
+                    <input type="text" x-model="quickDonor.mobile" placeholder="e.g. 39696933"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-1.5 font-mono">
+                </div>
+                <div>
+                    <label class="block font-semibold text-slate-700 mb-1">Address</label>
+                    <input type="text" x-model="quickDonor.donor_address" placeholder="House / Road / Block"
+                           class="w-full border border-slate-300 rounded-lg px-3 py-1.5">
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t">
+                <button type="button" @click="showQuickDonorModal = false"
+                        class="px-3.5 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600">Cancel</button>
+                <button type="button" @click="createQuickWalkinDonor()"
+                        class="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold">Save & Select Donor</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function voucherReceiptsApp() {
+            return {
+                lookups: {
+                    prefixes: [], cares: [], banks: [], dic_bank_accounts: [],
+                    band_details: [], payment_types: [], years: [2026], cashiers: [],
+                    current_user: 'SAJJAD', current_year: 2026, today: ''
+                },
+                form: {
+                    is_new: true,
+                    vouch_no: 1,
+                    trns_year: 2026,
+                    donor_type: 1,
+                    donor_code: '',
+                    band_det_cd: 1,
+                    trans_date: '',
+                    trans_val: '',
+                    don_req_desc: '',
+                    req_reason: '',
+                    attachments: '',
+                    trans_pay_type: 1,
+                    cheq_visa_no: '',
+                    bank_cd: '',
+                    visa_ex_date: '',
+                    amt_txt: '',
+                    chk_ser: '',
+                    addresss_tel: '',
+                    tel: '',
+                    auto_num: 1,
+                    receipt_status: 1,
+                    print_counter: 0,
+                    user_name: ''
+                },
+                donorSearchQuery: '',
+                donorSearchResults: [],
+                showQuickDonorModal: false,
+                quickDonor: { donor_ename: '', donor_name: '', mobile: '', donor_type: 1, donor_address: '' },
+                filters: { q: '', trns_year: '2026', pay_type: 'ALL', user_name: 'ALL', receipt_status: 'ALL' },
+                rows: [],
+                summary: { total_rows: 0, active_count: 0, cancelled_count: 0, total_active_bhd: 0 },
+                pagination: { page: 1, page_size: 50, total_rows: 0, total_pages: 1 },
+                printSettings: { preprintedOnly: true, offsetX: 0, offsetY: 0 },
+                toast: { message: '', type: 'success' },
+
+                async init() {
+                    const savedSettings = localStorage.getItem('dic_receipt_print_settings');
+                    if (savedSettings) {
+                        try { this.printSettings = { ...this.printSettings, ...JSON.parse(savedSettings) }; } catch (e) {}
+                    }
+                    const lkpRes = await fetch('/api/cash-donations/lookups');
+                    if (lkpRes.ok) {
+                        this.lookups = await lkpRes.json();
+                        this.filters.trns_year = String(this.lookups.current_year || 2026);
+                    }
+                    await this.prepareNewVoucher();
+                    await this.loadVouchers(1);
+
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const reqVno = urlParams.get('vouch_no');
+                    const reqYr = urlParams.get('trns_year');
+                    const reqDonor = urlParams.get('donor_cd');
+                    if (reqVno && reqYr) {
+                        await this.loadVoucherRecord(parseInt(reqVno, 10), parseInt(reqYr, 10));
+                    } else if (reqDonor) {
+                        await this.loadDonorByCode(parseInt(reqDonor, 10));
+                    }
+                },
+
+                savePrintSettings() {
+                    localStorage.setItem('dic_receipt_print_settings', JSON.stringify(this.printSettings));
+                },
+
+                showToast(msg, type = 'success') {
+                    this.toast = { message: msg, type };
+                    setTimeout(() => { if (this.toast.message === msg) this.toast.message = ''; }, 5000);
+                },
+
+                async fetchNextVoucherNo() {
+                    const yr = this.form.trns_year || this.lookups.current_year || 2026;
+                    const res = await fetch(`/api/voucher-receipts/next-no?trns_year=${yr}&donor_type=${this.form.donor_type || 1}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.form.vouch_no = data.next_vouch_no;
+                    }
+                },
+
+                async prepareNewVoucher() {
+                    const yr = this.lookups.current_year || 2026;
+                    this.form = {
+                        is_new: true,
+                        vouch_no: 1,
+                        trns_year: yr,
+                        donor_type: 1,
+                        donor_code: '',
+                        band_det_cd: 1,
+                        trans_date: this.lookups.today || new Date().toISOString().slice(0, 10),
+                        trans_val: '',
+                        don_req_desc: '',
+                        req_reason: '',
+                        attachments: '',
+                        trans_pay_type: 1,
+                        cheq_visa_no: '',
+                        bank_cd: '',
+                        visa_ex_date: '',
+                        amt_txt: '',
+                        chk_ser: '',
+                        addresss_tel: '',
+                        tel: '',
+                        auto_num: 1,
+                        receipt_status: 1,
+                        print_counter: 0,
+                        user_name: this.lookups.current_user || 'SAJJAD'
+                    };
+                    this.donorSearchQuery = '';
+                    await this.fetchNextVoucherNo();
+                },
+
+                async searchDonorsDropdown() {
+                    const q = (this.donorSearchQuery || '').trim();
+                    if (!q) {
+                        this.donorSearchResults = [];
+                        return;
+                    }
+                    const res = await fetch('/api/cash-donors/list?page_size=15&q=' + encodeURIComponent(q));
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.donorSearchResults = data.rows || [];
+                    }
+                },
+
+                pickDonor(d) {
+                    this.form.donor_code = d.donor_cd;
+                    this.form.don_req_desc = d.donor_ename || d.donor_name || '';
+                    this.form.tel = d.mobile || d.tel_home || d.tel_office || '';
+                    this.form.addresss_tel = d.donor_address || '';
+                    this.donorSearchQuery = `#${d.donor_cd} - ${d.donor_ename || d.donor_name}`;
+                    this.donorSearchResults = [];
+                },
+
+                async loadDonorByCode(code) {
+                    if (!code) return;
+                    const res = await fetch('/api/cash-donors/record?donor_cd=' + encodeURIComponent(code));
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.pickDonor(data.donor);
+                    } else {
+                        this.showToast(`Cash Donor #${code} not found.`, 'error');
+                    }
+                },
+
+                async createQuickWalkinDonor() {
+                    const res = await fetch('/api/cash-donors/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...this.quickDonor, is_new: true, donor_status: 1 })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        this.showToast(data.detail || 'Failed to register donor', 'error');
+                        return;
+                    }
+                    this.showQuickDonorModal = false;
+                    this.showToast(data.message, 'success');
+                    await this.loadDonorByCode(data.donor_cd);
+                    this.quickDonor = { donor_ename: '', donor_name: '', mobile: '', donor_type: 1, donor_address: '' };
+                },
+
+                async updateAmountWords() {
+                    const val = parseFloat(this.form.trans_val);
+                    if (isNaN(val) || val <= 0) {
+                        this.form.amt_txt = '';
+                        return;
+                    }
+                    const res = await fetch('/api/voucher-receipts/amount-words?amount=' + encodeURIComponent(val));
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.form.amt_txt = data.amt_txt;
+                    }
+                },
+
+                selectedPayTypeName() {
+                    const pt = (this.lookups.payment_types || []).find(x => x.type_cd === Number(this.form.trans_pay_type));
+                    return pt ? pt.type_edesc : 'Cash';
+                },
+
+                selectedBandName() {
+                    const b = (this.lookups.band_details || []).find(x => x.band_det_cd === Number(this.form.band_det_cd));
+                    return b ? b.band_det_edesc : 'Donation';
+                },
+
+                selectedBankName() {
+                    if (!this.form.bank_cd) return '';
+                    const bk = (this.lookups.banks || []).find(x => x.bank_cd === Number(this.form.bank_cd));
+                    return bk ? bk.bank_e_desc : '';
+                },
+
+                async saveVoucher(andPrint = false) {
+                    if (!this.form.donor_code) {
+                        this.showToast('Please select a Cash Donor first.', 'error');
+                        return;
+                    }
+                    if (!this.form.trans_val || Number(this.form.trans_val) <= 0) {
+                        this.showToast('Please enter a valid Amount (BHD) greater than 0.', 'error');
+                        return;
+                    }
+                    const payload = {
+                        ...this.form,
+                        donor_code: Number(this.form.donor_code),
+                        band_det_cd: Number(this.form.band_det_cd),
+                        trans_val: Number(this.form.trans_val),
+                        trans_pay_type: Number(this.form.trans_pay_type),
+                        bank_cd: this.form.bank_cd ? Number(this.form.bank_cd) : null,
+                        visa_ex_date: this.form.visa_ex_date || null,
+                        mark_printed: andPrint
+                    };
+                    const res = await fetch('/api/voucher-receipts/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        this.showToast(data.detail || 'Error saving receipt voucher', 'error');
+                        return;
+                    }
+                    this.showToast(data.message, 'success');
+                    this.selectVoucherRow(data.voucher, andPrint);
+                    await this.loadVouchers(1);
+                },
+
+                selectVoucherRow(v, triggerPrint = false) {
+                    this.form = {
+                        ...v,
+                        is_new: false,
+                        bank_cd: v.bank_cd || '',
+                        visa_ex_date: v.visa_ex_date || ''
+                    };
+                    this.donorSearchQuery = `#${v.donor_code} - ${v.donor_display_name || v.don_req_desc}`;
+                    if (triggerPrint) {
+                        setTimeout(() => this.printCurrentReceipt(), 150);
+                    }
+                },
+
+                async loadVoucherRecord(vno, yr) {
+                    const res = await fetch(`/api/voucher-receipts/record?vouch_no=${vno}&trns_year=${yr}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.selectVoucherRow(data.voucher, false);
+                    }
+                },
+
+                async printCurrentReceipt() {
+                    if (!this.form.is_new && this.form.vouch_no && this.form.trns_year) {
+                        fetch(`/api/voucher-receipts/mark-printed?vouch_no=${this.form.vouch_no}&trns_year=${this.form.trns_year}`, { method: 'POST' })
+                            .then(r => r.ok ? r.json() : null)
+                            .then(d => { if (d && d.voucher) this.form.print_counter = d.voucher.print_counter; });
+                    }
+                    window.print();
+                },
+
+                async loadVouchers(page = 1) {
+                    const qs = new URLSearchParams({
+                        trns_year: this.filters.trns_year,
+                        pay_type: this.filters.pay_type,
+                        user_name: this.filters.user_name,
+                        receipt_status: this.filters.receipt_status,
+                        q: this.filters.q || '',
+                        page: String(page),
+                        page_size: '50'
+                    });
+                    const res = await fetch('/api/voucher-receipts/list?' + qs.toString());
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.rows = data.rows || [];
+                        this.summary = data.summary || {};
+                        this.pagination = data.pagination || { page: 1, page_size: 50, total_rows: 0, total_pages: 1 };
+                    }
+                }
+            };
+        }
+    </script>
+</body>
+</html>

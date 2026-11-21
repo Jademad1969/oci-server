@@ -237,12 +237,12 @@
                 selectedUser: null,
                 showModal: false,
                 moduleHierarchy: [],
-                pageKeys: ['about', 'donors', 'audit', 'reconcile', 'followup', 'reports', 'reports_matrix', 'users'],
+                pageKeys: ['about', 'donors', 'audit', 'reconcile', 'followup', 'so_dashboard', 'reports', 'reports_matrix', 'data_views_export', 'cash_donors', 'voucher_receipt', 'voucher_control', 'users'],
                 newUser: {
                     username: '',
                     full_name: '',
                     password: '',
-                    page_permissions: { about: 'view', donors: 'view', audit: 'view', reconcile: 'view', followup: 'view', reports: 'view', reports_matrix: 'view', users: 'none' }
+                    page_permissions: { about: 'view', donors: 'view', audit: 'view', reconcile: 'view', followup: 'view', so_dashboard: 'view', reports: 'view', reports_matrix: 'view', data_views_export: 'view', cash_donors: 'view', voucher_receipt: 'view', voucher_control: 'view', users: 'none' }
                 },
                 totalModulePagesCount(grp) {
                     let count = (grp.pages || []).length;

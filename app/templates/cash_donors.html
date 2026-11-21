@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cash Donors - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800" x-data="cashDonorsApp()" x-init="init()">
+    {% include 'sidebar.html' %}
+
+    <div class="p-4 lg:p-6 max-w-7xl mx-auto w-full space-y-4">
+        <!-- Header & KPI Cards -->
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-800 text-[10px] font-bold uppercase tracking-wider">Cash Donations Module</span>
+                    <h1 class="text-base font-bold text-slate-900">Cash Donors Registry (CASH_DONORS)</h1>
+                </div>
+                <p class="text-xs text-slate-500 mt-0.5">Manage walk-in cash and cheque donors, inspect their historical receipts, or issue a new receipt voucher</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" @click="prepareNewDonor()"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-2xs transition flex items-center gap-1.5">
+                    <span>+ New Cash Donor</span>
+                </button>
+                <a :href="selectedDonor.donor_cd ? '/voucher-receipts?donor_cd=' + selectedDonor.donor_cd : '/voucher-receipts'"
+                   class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-2xs transition flex items-center gap-1.5">
+                    <span>🧾 Issue Receipt Voucher</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- KPI Strip -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="text-[11px] text-slate-500 font-medium">Total Cash Donors</div>
+                <div class="text-lg font-bold text-slate-900 font-mono mt-0.5" x-text="kpis.total_all || 0"></div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="text-[11px] text-emerald-700 font-medium">Active Cash Donors (1)</div>
+                <div class="text-lg font-bold text-emerald-700 font-mono mt-0.5" x-text="kpis.total_active || 0"></div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="text-[11px] text-slate-500 font-medium">Non-Active (2)</div>
+                <div class="text-lg font-bold text-slate-600 font-mono mt-0.5" x-text="kpis.total_inactive || 0"></div>
+            </div>
+        </div>
+
+        <!-- Status Toast -->
+        <div x-show="toast.message" x-cloak
+             :class="toast.type === 'error' ? 'bg-rose-50 border-rose-300 text-rose-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'"
+             class="p-3 rounded-xl border text-xs font-semibold flex items-center justify-between">
+            <span x-text="toast.message"></span>
+            <button type="button" @click="toast.message = ''" class="text-slate-400 hover:text-slate-700">✕</button>
+        </div>
+
+        <!-- Master-Detail Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+            <!-- LEFT: Search & Donors List (5 cols) -->
+            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden flex flex-col">
+                <div class="p-3 bg-slate-900 text-white space-y-2.5">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold uppercase tracking-wider">Search Cash Donors</span>
+                        <span class="text-[11px] font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300"
+                              x-text="pagination.total_rows + ' records'"></span>
+                    </div>
+                    <div class="flex gap-2">
+                        <input type="text" x-model="filters.q" @keydown.enter="loadDonors(1)"
+                               placeholder="Search Code, Name (EN/AR), Mobile, Address..."
+                               class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-400">
+                        <button type="button" @click="loadDonors(1)"
+                                class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold">
+                            Search
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-[11px]">
+                        <select x-model="filters.donor_status" @change="loadDonors(1)"
+                                class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200">
+                            <option value="ALL">All Statuses</option>
+                            <option value="1">Active (1)</option>
+                            <option value="2">Non-Active (2)</option>
+                        </select>
+                        <div class="flex gap-1">
+                            <input type="number" x-model="jumpCode" @keydown.enter="jumpToDonorCode()"
+                                   placeholder="Jump to Code #"
+                                   class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-white font-mono">
+                            <button type="button" @click="jumpToDonorCode()"
+                                    class="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-200 font-semibold">Go</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Donors List Table -->
+                <div class="overflow-y-auto max-h-[600px] divide-y divide-slate-100">
+                    <template x-for="d in rows" :key="d.donor_cd">
+                        <button type="button" @click="selectDonorRecord(d.donor_cd)"
+                                :class="selectedDonor.donor_cd === d.donor_cd && !selectedDonor.is_new ? 'bg-blue-50/90 border-l-4 border-l-blue-600' : 'hover:bg-slate-50 border-l-4 border-l-transparent'"
+                                class="w-full text-left p-3 transition flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="font-mono font-bold text-xs text-blue-700" x-text="'#' + d.donor_cd"></span>
+                                    <span class="text-xs font-bold text-slate-900 truncate" x-text="d.donor_ename || d.donor_name"></span>
+                                </div>
+                                <div class="text-xs text-slate-600 truncate mt-0.5" style="font-family: 'Cairo', sans-serif;"
+                                     x-show="d.donor_name && d.donor_name !== d.donor_ename" x-text="d.donor_name"></div>
+                                <div class="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-500">
+                                    <span x-show="d.mobile" class="font-mono" x-text="'📱 ' + d.mobile"></span>
+                                    <span x-show="d.vouch_count > 0" class="text-emerald-700 font-semibold"
+                                          x-text="d.vouch_count + ' RVs (' + Number(d.total_donated || 0).toFixed(3) + ' BHD)'"></span>
+                                </div>
+                            </div>
+                            <div class="text-right shrink-0 space-y-1">
+                                <div>
+                                    <span :class="d.donor_status === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'"
+                                          class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                          x-text="d.donor_status === 1 ? 'Active' : 'Inactive'"></span>
+                                </div>
+                                <div class="text-[10px] font-mono text-slate-400"
+                                     x-text="d.donor_type === 2 ? 'Rent/Tenant' : 'Cash Donor'"></div>
+                            </div>
+                        </button>
+                    </template>
+                    <div x-show="rows.length === 0" class="p-8 text-center text-xs text-slate-400">
+                        No matching cash donors found.
+                    </div>
+                </div>
+
+                <!-- Pagination Footer -->
+                <div class="p-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+                    <button type="button" @click="loadDonors(pagination.page - 1)" :disabled="pagination.page <= 1"
+                            class="px-2.5 py-1 rounded border border-slate-300 bg-white disabled:opacity-40 font-semibold">Prev</button>
+                    <span class="font-mono text-[11px] text-slate-600"
+                          x-text="'Page ' + pagination.page + ' of ' + pagination.total_pages"></span>
+                    <button type="button" @click="loadDonors(pagination.page + 1)" :disabled="pagination.page >= pagination.total_pages"
+                            class="px-2.5 py-1 rounded border border-slate-300 bg-white disabled:opacity-40 font-semibold">Next</button>
+                </div>
+            </section>
+
+            <!-- RIGHT: Donor Form & Historical Vouchers (7 cols) -->
+            <section class="lg:col-span-7 space-y-4">
+                <!-- Donor Master Card -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-2xs p-4 space-y-4">
+                    <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-mono text-xs font-bold"
+                                  x-text="selectedDonor.is_new ? 'NEW DONOR (#' + (kpis.max_donor_cd + 1) + ')' : 'DONOR #' + selectedDonor.donor_cd"></span>
+                            <div>
+                                <h2 class="text-sm font-bold text-slate-900"
+                                    x-text="selectedDonor.is_new ? 'Register New Cash Donor' : (selectedDonor.donor_ename || selectedDonor.donor_name || 'Cash Donor Profile')"></h2>
+                                <p class="text-[11px] text-slate-500"
+                                   x-text="selectedDonor.is_new ? 'Fill details and click Save Donor' : ('Added by: ' + (selectedDonor.user_name || 'SYSTEM') + (selectedDonor.append_date ? ' on ' + selectedDonor.append_date : ''))"></p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <a x-show="!selectedDonor.is_new && selectedDonor.donor_cd"
+                               :href="'/voucher-receipts?donor_cd=' + selectedDonor.donor_cd"
+                               class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-2xs transition">
+                                + Issue Receipt for Donor
+                            </a>
+                            <button type="button" @click="saveDonor()"
+                                    class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-2xs transition">
+                                Save Donor
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs">
+                        <div class="sm:col-span-4">
+                            <label class="block font-semibold text-slate-700 mb-1">Donor Code</label>
+                            <input type="number" x-model="selectedDonor.donor_cd" :readonly="!selectedDonor.is_new"
+                                   :class="!selectedDonor.is_new ? 'bg-slate-100 text-slate-600' : 'bg-white'"
+                                   placeholder="Auto"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold">
+                        </div>
+                        <div class="sm:col-span-4">
+                            <label class="block font-semibold text-slate-700 mb-1">Title / Prefix</label>
+                            <select x-model.number="selectedDonor.prefix" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+                                <template x-for="p in lookups.prefixes" :key="p.prefix_cd">
+                                    <option :value="p.prefix_cd" x-text="p.prefix_ename + ' (' + p.prefix_name + ')'"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="sm:col-span-4">
+                            <label class="block font-semibold text-slate-700 mb-1">Status</label>
+                            <select x-model.number="selectedDonor.donor_status" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-semibold">
+                                <option :value="1">1 - Active</option>
+                                <option :value="2">2 - Non-Active</option>
+                            </select>
+                        </div>
+
+                        <div class="sm:col-span-6">
+                            <label class="block font-semibold text-slate-700 mb-1">Donor English Name *</label>
+                            <input type="text" x-model="selectedDonor.donor_ename" placeholder="Full Name in English"
+                                   class="w-full border border-slate-300 rounded-lg px-3 py-1.5 font-medium">
+                        </div>
+                        <div class="sm:col-span-6">
+                            <label class="block font-semibold text-slate-700 mb-1">Donor Arabic Name</label>
+                            <input type="text" x-model="selectedDonor.donor_name" dir="rtl" placeholder="الاسم بالعربية"
+                                   style="font-family: 'Cairo', sans-serif;"
+                                   class="w-full border border-slate-300 rounded-lg px-3 py-1.5 font-medium">
+                        </div>
+
+                        <div class="sm:col-span-3">
+                            <label class="block font-semibold text-slate-700 mb-1">Mobile</label>
+                            <input type="text" x-model="selectedDonor.mobile" placeholder="e.g. 39696933"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono">
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block font-semibold text-slate-700 mb-1">Tel (Home)</label>
+                            <input type="text" x-model="selectedDonor.tel_home" placeholder="Home Phone"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono">
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block font-semibold text-slate-700 mb-1">Tel (Office)</label>
+                            <input type="text" x-model="selectedDonor.tel_office" placeholder="Office Phone"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono">
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block font-semibold text-slate-700 mb-1">Block No</label>
+                            <input type="text" x-model="selectedDonor.block_no" placeholder="Block #"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono">
+                        </div>
+
+                        <div class="sm:col-span-8">
+                            <label class="block font-semibold text-slate-700 mb-1">Full Address</label>
+                            <input type="text" x-model="selectedDonor.donor_address" placeholder="House / Road / Block / Area"
+                                   class="w-full border border-slate-300 rounded-lg px-3 py-1.5">
+                        </div>
+                        <div class="sm:col-span-4">
+                            <label class="block font-semibold text-slate-700 mb-1">Profession / Notes</label>
+                            <input type="text" x-model="selectedDonor.profession" placeholder="Profession"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5">
+                        </div>
+
+                        <div class="sm:col-span-3">
+                            <label class="block font-semibold text-slate-700 mb-1">Gender</label>
+                            <select x-model.number="selectedDonor.sex_cd" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+                                <option :value="1">1 - Male</option>
+                                <option :value="2">2 - Female</option>
+                            </select>
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block font-semibold text-slate-700 mb-1">Residency</label>
+                            <select x-model.number="selectedDonor.bahrain_status" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+                                <option :value="1">Inside Bahrain</option>
+                                <option :value="2">Outside Bahrain</option>
+                            </select>
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block font-semibold text-slate-700 mb-1">Importance Level</label>
+                            <select x-model.number="selectedDonor.donor_importancy_lvl" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+                                <option :value="1">1 - High</option>
+                                <option :value="2">2 - Medium</option>
+                                <option :value="3">3 - Low</option>
+                            </select>
+                        </div>
+                        <div class="sm:col-span-3">
+                            <label class="block font-semibold text-slate-700 mb-1">DIC Representative</label>
+                            <input type="text" x-model="selectedDonor.dic_representitive" placeholder="Representative"
+                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Donor's Voucher Receipts Table -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+                    <div class="px-4 py-3 bg-slate-800 text-white flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                            <span class="text-xs font-bold uppercase tracking-wider">Donor Receipt Vouchers (VOUCH_MSTR)</span>
+                            <span class="ml-2 text-[11px] font-mono bg-slate-700 px-2 py-0.5 rounded"
+                                  x-text="(selectedDonor.vouchers || []).length + ' receipts'"></span>
+                        </div>
+                        <div class="text-xs font-mono font-bold text-emerald-300"
+                             x-text="'Valid Total: ' + Number(selectedDonor.total_valid_bhd || 0).toFixed(3) + ' BHD'"></div>
+                    </div>
+
+                    <div class="overflow-x-auto max-h-[360px]">
+                        <table class="w-full text-xs text-left">
+                            <thead class="bg-slate-100 text-slate-600 uppercase text-[10px] border-b border-slate-200 sticky top-0">
+                                <tr>
+                                    <th class="px-3 py-2">RV No / Year</th>
+                                    <th class="px-3 py-2">Date</th>
+                                    <th class="px-3 py-2">Band / Purpose</th>
+                                    <th class="px-3 py-2">Payment</th>
+                                    <th class="px-3 py-2 text-right">Amount (BHD)</th>
+                                    <th class="px-3 py-2">Status</th>
+                                    <th class="px-3 py-2">Cashier</th>
+                                    <th class="px-3 py-2 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                <template x-for="v in (selectedDonor.vouchers || [])" :key="v.trns_year + '-' + v.vouch_no">
+                                    <tr class="hover:bg-slate-50">
+                                        <td class="px-3 py-2 font-mono font-bold text-blue-700" x-text="v.vouch_no + ' / ' + v.trns_year"></td>
+                                        <td class="px-3 py-2 font-mono text-slate-600" x-text="v.trans_date"></td>
+                                        <td class="px-3 py-2">
+                                            <div class="font-semibold text-slate-800" x-text="v.band_name"></div>
+                                            <div class="text-[11px] text-slate-500 truncate max-w-[200px]" x-text="v.attachments || v.don_req_desc"></div>
+                                        </td>
+                                        <td class="px-3 py-2">
+                                            <span class="font-semibold" x-text="v.pay_type_name"></span>
+                                            <span x-show="v.cheq_visa_no" class="block text-[10px] font-mono text-slate-500" x-text="'#' + v.cheq_visa_no"></span>
+                                        </td>
+                                        <td class="px-3 py-2 text-right font-mono font-bold text-slate-900" x-text="Number(v.trans_val || 0).toFixed(3)"></td>
+                                        <td class="px-3 py-2">
+                                            <span :class="v.receipt_status === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
+                                                  class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                                  x-text="v.receipt_status === 1 ? 'Valid' : 'Cancelled'"></span>
+                                        </td>
+                                        <td class="px-3 py-2 font-mono text-[11px] text-slate-600" x-text="v.user_name"></td>
+                                        <td class="px-3 py-2 text-right">
+                                            <a :href="'/voucher-receipts?vouch_no=' + v.vouch_no + '&trns_year=' + v.trns_year"
+                                               class="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-[11px]">
+                                                Open / Print
+                                            </a>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr x-show="!selectedDonor.vouchers || selectedDonor.vouchers.length === 0">
+                                    <td colspan="8" class="p-6 text-center text-slate-400">No vouchers recorded for this donor yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        function cashDonorsApp() {
+            return {
+                lookups: { prefixes: [], cares: [] },
+                kpis: { total_all: 0, total_active: 0, total_inactive: 0, total_type_cash: 0, total_type_rent: 0, max_donor_cd: 0 },
+                rows: [],
+                pagination: { page: 1, page_size: 50, total_rows: 0, total_pages: 1 },
+                filters: { q: '', donor_type: 'ALL', donor_status: 'ALL' },
+                jumpCode: '',
+                selectedDonor: { is_new: true, prefix: 1, donor_type: 1, donor_status: 1, sex_cd: 1, bahrain_status: 1, donor_importancy_lvl: 1, vouchers: [] },
+                toast: { message: '', type: 'success' },
+
+                async init() {
+                    const lkpRes = await fetch('/api/cash-donations/lookups');
+                    if (lkpRes.ok) {
+                        this.lookups = await lkpRes.json();
+                    }
+                    await this.loadDonors(1);
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const reqCd = urlParams.get('donor_cd');
+                    if (reqCd) {
+                        await this.selectDonorRecord(parseInt(reqCd, 10));
+                    } else if (this.rows.length > 0) {
+                        await this.selectDonorRecord(this.rows[0].donor_cd);
+                    }
+                },
+
+                showToast(msg, type = 'success') {
+                    this.toast = { message: msg, type };
+                    setTimeout(() => { if (this.toast.message === msg) this.toast.message = ''; }, 5000);
+                },
+
+                async loadDonors(page = 1) {
+                    const qs = new URLSearchParams({
+                        q: this.filters.q || '',
+                        donor_type: this.filters.donor_type,
+                        donor_status: this.filters.donor_status,
+                        page: String(page),
+                        page_size: '50'
+                    });
+                    const res = await fetch('/api/cash-donors/list?' + qs.toString());
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.kpis = data.kpis;
+                        this.rows = data.rows;
+                        this.pagination = data.pagination;
+                    }
+                },
+
+                async selectDonorRecord(donor_cd) {
+                    const res = await fetch('/api/cash-donors/record?donor_cd=' + encodeURIComponent(donor_cd));
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.selectedDonor = { ...data.donor, is_new: false };
+                    } else {
+                        this.showToast('Donor #' + donor_cd + ' not found.', 'error');
+                    }
+                },
+
+                async jumpToDonorCode() {
+                    if (!this.jumpCode) return;
+                    await this.selectDonorRecord(parseInt(this.jumpCode, 10));
+                },
+
+                prepareNewDonor() {
+                    this.selectedDonor = {
+                        is_new: true,
+                        donor_cd: (this.kpis.max_donor_cd || 0) + 1,
+                        prefix: 1,
+                        donor_name: '',
+                        donor_ename: '',
+                        donor_type: 1,
+                        donor_status: 1,
+                        mobile: '',
+                        tel_home: '',
+                        tel_office: '',
+                        block_no: '',
+                        donor_address: '',
+                        profession: '',
+                        sex_cd: 1,
+                        bahrain_status: 1,
+                        donor_importancy_lvl: 1,
+                        dic_representitive: '',
+                        vouchers: [],
+                        total_valid_bhd: 0
+                    };
+                },
+
+                async saveDonor() {
+                    const res = await fetch('/api/cash-donors/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.selectedDonor)
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        this.showToast(data.detail || 'Error saving cash donor', 'error');
+                        return;
+                    }
+                    this.showToast(data.message, 'success');
+                    await this.loadDonors(this.pagination.page);
+                    await this.selectDonorRecord(data.donor_cd);
+                }
+            };
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voucher Control (Modify & Cancel) - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800" x-data="voucherControlApp()" x-init="init()">
+    {% include 'sidebar.html' %}
+
+    <div class="p-4 lg:p-6 max-w-7xl mx-auto w-full space-y-4">
+        <!-- Header -->
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded bg-rose-500/15 text-rose-800 text-[10px] font-bold uppercase tracking-wider">Cash Donations Module</span>
+                    <h1 class="text-base font-bold text-slate-900">Receipts Control — Receipt Modification & Receipt Cancellation</h1>
+                </div>
+                <p class="text-xs text-slate-500 mt-0.5">Modify or cancel receipts with a mandatory reason — every modification or cancellation archives the old receipt values and responsible user in VOUCH_HISTORY</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <a href="/voucher-receipts"
+                   class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-2xs transition">
+                    + Issue New Receipt
+                </a>
+            </div>
+        </div>
+
+        <!-- KPI Strip -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="text-[11px] text-slate-500 font-medium" x-text="'Year ' + overview.sequence_audit.trns_year + ' Auto-Sequence'"></div>
+                <div class="text-lg font-bold text-slate-900 font-mono mt-0.5"
+                     x-text="(overview.sequence_audit.min_vouch_no || 0) + ' → ' + (overview.sequence_audit.max_vouch_no || 0)"></div>
+                <div class="text-[11px] text-slate-400" x-text="overview.sequence_audit.count + ' receipts issued in year'"></div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="text-[11px] text-rose-700 font-medium">Cancelled Receipts (VOUCH_MSTR)</div>
+                <div class="text-lg font-bold text-rose-700 font-mono mt-0.5" x-text="overview.cancelled_vouchers.length"></div>
+                <div class="text-[11px] text-slate-400">Status = 2 (Zeroed with cancellation reason)</div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="text-[11px] text-amber-700 font-medium">Old Receipts History Archive (VOUCH_HISTORY)</div>
+                <div class="text-lg font-bold text-amber-700 font-mono mt-0.5" x-text="overview.voucher_history.length"></div>
+                <div class="text-[11px] text-slate-400">Archived snapshots before Modify or Cancel</div>
+            </div>
+        </div>
+
+        <!-- Toast Alert -->
+        <div x-show="toast.message" x-cloak
+             :class="toast.type === 'error' ? 'bg-rose-50 border-rose-300 text-rose-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'"
+             class="p-3 rounded-xl border text-xs font-semibold flex items-center justify-between">
+            <span x-text="toast.message"></span>
+            <button type="button" @click="toast.message = ''" class="text-slate-400 hover:text-slate-700">✕</button>
+        </div>
+
+        <!-- Quick Receipt Lookup & Modify / Cancel Panel -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-2xs p-4 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                <div>
+                    <h2 class="text-sm font-bold text-slate-900">Find Receipt to Modify or Cancel</h2>
+                    <p class="text-xs text-slate-500">Enter RV Number and Year (or click "Modify" / "Cancel" on any receipt row below)</p>
+                </div>
+                <div class="flex items-center gap-2 text-xs">
+                    <input type="number" x-model.number="lookup.vouch_no" @keydown.enter="fetchTargetVoucher()"
+                           placeholder="RV No #"
+                           class="w-28 border border-slate-300 rounded-lg px-3 py-1.5 font-mono font-bold">
+                    <select x-model.number="lookup.trns_year" class="border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono bg-white">
+                        <template x-for="yr in lookups.years" :key="yr">
+                            <option :value="yr" x-text="yr"></option>
+                        </template>
+                    </select>
+                    <button type="button" @click="fetchTargetVoucher()"
+                            class="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold">
+                        Load Receipt
+                    </button>
+                </div>
+            </div>
+
+            <!-- Selected Voucher Details & Two Action Modes (MODIFY vs CANCEL) -->
+            <template x-if="targetVoucher">
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start pt-1">
+                    <!-- Left: Current Stored Receipt Snapshot (4 cols) -->
+                    <div class="lg:col-span-4 p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5 text-xs">
+                        <div class="flex items-center justify-between">
+                            <span class="font-mono font-bold text-sm text-blue-700"
+                                  x-text="'RV #' + targetVoucher.vouch_no + ' / ' + targetVoucher.trns_year"></span>
+                            <span :class="targetVoucher.receipt_status === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
+                                  class="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                                  x-text="targetVoucher.receipt_status === 1 ? 'Valid / Active (1)' : 'Cancelled (2)'"></span>
+                        </div>
+                        <div class="text-[11px] font-semibold text-slate-500">Current Stored Values (Will be archived to VOUCH_HISTORY):</div>
+                        <div class="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200">
+                            <div class="col-span-2">
+                                <div class="text-[10px] text-slate-400 uppercase">Donor & Printed Name</div>
+                                <div class="font-bold text-slate-900" x-text="'#' + targetVoucher.donor_code + ' - ' + (targetVoucher.don_req_desc || targetVoucher.donor_display_name)"></div>
+                            </div>
+                            <div>
+                                <div class="text-[10px] text-slate-400 uppercase">Receipt Date</div>
+                                <div class="font-mono font-semibold text-slate-800" x-text="targetVoucher.trans_date"></div>
+                            </div>
+                            <div>
+                                <div class="text-[10px] text-slate-400 uppercase">Original Cashier</div>
+                                <div class="font-mono font-semibold text-slate-800" x-text="targetVoucher.user_name"></div>
+                            </div>
+                            <div>
+                                <div class="text-[10px] text-slate-400 uppercase">Current Amount (BHD)</div>
+                                <div class="font-mono font-extrabold text-emerald-700 text-sm" x-text="Number(targetVoucher.trans_val || 0).toFixed(3) + ' BHD'"></div>
+                            </div>
+                            <div>
+                                <div class="text-[10px] text-slate-400 uppercase">Payment & Purpose</div>
+                                <div class="font-semibold text-slate-800" x-text="targetVoucher.pay_type_name + ' • ' + targetVoucher.band_name"></div>
+                            </div>
+                        </div>
+                        <div class="text-[11px] text-slate-600 italic pt-1 border-t border-slate-200" x-text="'Words: ' + (targetVoucher.amt_txt || '-')"></div>
+                        <div x-show="targetVoucher.attachments" class="text-[11px] text-slate-600" x-text="'Notes: ' + targetVoucher.attachments"></div>
+                        <div x-show="targetVoucher.cancel_replace_notes" class="p-2 rounded bg-amber-50 border border-amber-200 text-amber-900 text-[11px]"
+                             x-text="'Control Note: ' + targetVoucher.cancel_replace_notes"></div>
+                    </div>
+
+                    <!-- Right: Action Switcher (Case 1: Receipt Modification vs Case 2: Receipt Cancellation) (8 cols) -->
+                    <div class="lg:col-span-8 space-y-3 text-xs" x-show="targetVoucher.receipt_status === 1">
+                        <!-- Mode Toggle Buttons -->
+                        <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+                            <div class="flex gap-1.5">
+                                <button type="button" @click="controlMode = 'MODIFY'"
+                                        :class="controlMode === 'MODIFY' ? 'bg-amber-500 text-white shadow-2xs' : 'bg-white text-slate-700 hover:bg-slate-50'"
+                                        class="px-4 py-1.5 rounded-lg font-bold transition">
+                                    ✏️ Case 1: Receipt Modification
+                                </button>
+                                <button type="button" @click="controlMode = 'CANCEL'"
+                                        :class="controlMode === 'CANCEL' ? 'bg-rose-600 text-white shadow-2xs' : 'bg-white text-slate-700 hover:bg-slate-50'"
+                                        class="px-4 py-1.5 rounded-lg font-bold transition">
+                                    🚫 Case 2: Receipt Cancellation
+                                </button>
+                            </div>
+                            <button type="button" @click="targetVoucher = null"
+                                    class="px-2.5 py-1 text-slate-500 hover:text-slate-800 font-semibold">
+                                Close ✕
+                            </button>
+                        </div>
+
+                        <!-- CASE 1: RECEIPT MODIFICATION FORM -->
+                        <div x-show="controlMode === 'MODIFY'" class="p-4 rounded-xl border-2 border-amber-300 bg-amber-50/30 space-y-3">
+                            <div class="flex items-center justify-between border-b border-amber-200 pb-2">
+                                <div>
+                                    <div class="font-bold text-amber-950 text-sm">Modify Receipt RV #<span x-text="targetVoucher.vouch_no + '/' + targetVoucher.trns_year"></span></div>
+                                    <div class="text-[11px] text-amber-800">Old receipt values will be saved to <strong>VOUCH_HISTORY</strong> with your username (<span class="font-mono font-bold" x-text="lookups.current_user"></span>) before applying changes.</div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                                <div class="sm:col-span-2">
+                                    <label class="block font-semibold text-slate-700 mb-1">Donor Code *</label>
+                                    <input type="number" x-model.number="modifyForm.donor_code"
+                                           class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono font-bold">
+                                </div>
+                                <div class="sm:col-span-6">
+                                    <label class="block font-semibold text-slate-700 mb-1">Printed Name on Receipt (DON_REQ_DESC) *</label>
+                                    <input type="text" x-model="modifyForm.don_req_desc"
+                                           class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-semibold">
+                                </div>
+                                <div class="sm:col-span-4">
+                                    <label class="block font-semibold text-slate-700 mb-1">Receipt Date *</label>
+                                    <input type="date" x-model="modifyForm.trans_date"
+                                           class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono">
+                                </div>
+
+                                <div class="sm:col-span-5">
+                                    <label class="block font-semibold text-slate-700 mb-1">Purpose / Band (BAND_DET_CD) *</label>
+                                    <select x-model.number="modifyForm.band_det_cd" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-semibold">
+                                        <template x-for="b in lookups.band_details" :key="b.band_det_cd">
+                                            <option :value="b.band_det_cd" x-text="b.band_det_cd + ' - ' + b.band_det_edesc"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="sm:col-span-3">
+                                    <label class="block font-semibold text-emerald-800 mb-1">New Amount (BHD) *</label>
+                                    <input type="number" step="0.001" min="0" x-model.number="modifyForm.trans_val" @input="updateModifyAmountWords()"
+                                           class="w-full border-2 border-emerald-500 rounded-lg px-2.5 py-1.5 bg-white font-mono font-bold text-emerald-900">
+                                </div>
+                                <div class="sm:col-span-4">
+                                    <label class="block font-semibold text-slate-700 mb-1">Payment Mode *</label>
+                                    <select x-model.number="modifyForm.trans_pay_type" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-semibold">
+                                        <template x-for="pt in lookups.payment_types.filter(x => x.type_cd <= 4)" :key="pt.type_cd">
+                                            <option :value="pt.type_cd" x-text="pt.type_edesc + ' (' + pt.type_desc + ')'"></option>
+                                        </template>
+                                    </select>
+                                </div>
+
+                                <div class="sm:col-span-12">
+                                    <label class="block font-semibold text-slate-700 mb-1">Amount in Words (Auto-Updated)</label>
+                                    <input type="text" x-model="modifyForm.amt_txt" readonly
+                                           class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-slate-100 text-slate-700">
+                                </div>
+
+                                <div class="sm:col-span-4" x-show="modifyForm.trans_pay_type !== 1">
+                                    <label class="block font-semibold text-slate-700 mb-1">Cheque / Ref No</label>
+                                    <input type="text" x-model="modifyForm.cheq_visa_no"
+                                           class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono">
+                                </div>
+                                <div class="sm:col-span-4" x-show="modifyForm.trans_pay_type !== 1">
+                                    <label class="block font-semibold text-slate-700 mb-1">Bank</label>
+                                    <select x-model="modifyForm.bank_cd" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
+                                        <option value="">-- Select Bank --</option>
+                                        <template x-for="bk in lookups.banks" :key="bk.bank_cd">
+                                            <option :value="bk.bank_cd" x-text="bk.bank_cd + ' - ' + bk.bank_e_desc"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div :class="modifyForm.trans_pay_type !== 1 ? 'sm:col-span-4' : 'sm:col-span-12'">
+                                    <label class="block font-semibold text-slate-700 mb-1">Attachments / Receipt Description</label>
+                                    <input type="text" x-model="modifyForm.attachments"
+                                           class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+                                </div>
+
+                                <div class="sm:col-span-12 pt-1">
+                                    <label class="block font-bold text-amber-950 mb-1">Mandatory Reason for Modification *</label>
+                                    <input type="text" x-model="modifyForm.modify_reason"
+                                           placeholder="Enter the reason for modifying this receipt (required before confirming)..."
+                                           class="w-full border-2 border-amber-400 rounded-lg px-3 py-2 bg-white font-medium">
+                                </div>
+                            </div>
+
+                            <div class="flex justify-end gap-2 pt-2">
+                                <button type="button" @click="submitModification()"
+                                        class="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold shadow-2xs transition">
+                                    Confirm Receipt Modification (Archive Old Record to History)
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- CASE 2: RECEIPT CANCELLATION FORM -->
+                        <div x-show="controlMode === 'CANCEL'" x-cloak class="p-4 rounded-xl border-2 border-rose-300 bg-rose-50/40 space-y-3">
+                            <div class="border-b border-rose-200 pb-2">
+                                <div class="font-bold text-rose-950 text-sm">Cancel Receipt RV #<span x-text="targetVoucher.vouch_no + '/' + targetVoucher.trns_year"></span></div>
+                                <div class="text-[11px] text-rose-800">
+                                    The old receipt with its original values (<span class="font-mono font-bold" x-text="Number(targetVoucher.trans_val || 0).toFixed(3) + ' BHD'"></span>) will be archived to <strong>VOUCH_HISTORY</strong> with responsible user <strong class="font-mono" x-text="lookups.current_user"></strong>, and the receipt will be marked Cancelled (Status = 2, Value = 0.000).
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block font-bold text-rose-950 mb-1">Mandatory Reason for Cancellation *</label>
+                                <input type="text" x-model="cancelForm.cancel_replace_notes"
+                                       placeholder="Enter the reason for cancelling this receipt (required before confirming)..."
+                                       class="w-full border-2 border-rose-400 rounded-lg px-3 py-2 bg-white font-medium">
+                            </div>
+
+                            <div class="flex justify-end gap-2 pt-1">
+                                <button type="button" @click="submitCancellation()"
+                                        class="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-2xs transition">
+                                    Confirm Receipt Cancellation (Archive Old Record to History)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </section>
+
+        <!-- Control Tabs Navigation (3 Tabs: All Vouchers Control, Cancelled Receipts, Voucher History Archive) -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div class="border-b border-slate-200 bg-slate-100 px-4 pt-2.5 flex flex-wrap gap-2 text-xs font-bold">
+                <button type="button" @click="activeTab = 'vouchers'"
+                        :class="activeTab === 'vouchers' ? 'bg-white text-blue-700 border-t border-l border-r border-slate-200 rounded-t-lg -mb-px' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-4 py-2 transition">
+                    All Receipts Control (<span x-text="pagination.total_rows"></span>)
+                </button>
+                <button type="button" @click="activeTab = 'history'"
+                        :class="activeTab === 'history' ? 'bg-white text-amber-700 border-t border-l border-r border-slate-200 rounded-t-lg -mb-px' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-4 py-2 transition">
+                    Old Receipts History Archive — VOUCH_HISTORY (<span x-text="overview.voucher_history.length"></span>)
+                </button>
+                <button type="button" @click="activeTab = 'cancelled'"
+                        :class="activeTab === 'cancelled' ? 'bg-white text-rose-700 border-t border-l border-r border-slate-200 rounded-t-lg -mb-px' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-4 py-2 transition">
+                    Cancelled Receipts (<span x-text="overview.cancelled_vouchers.length"></span>)
+                </button>
+            </div>
+
+            <!-- TAB 1: All Receipts Control -->
+            <div x-show="activeTab === 'vouchers'">
+                <div class="p-3 bg-slate-50 border-b border-slate-200 grid grid-cols-2 sm:grid-cols-12 gap-2 text-xs">
+                    <div class="sm:col-span-4">
+                        <input type="text" x-model="filters.q" @keydown.enter="loadVouchers(1)"
+                               placeholder="Search RV #, Donor Name, Cheque #, Notes..."
+                               class="w-full border border-slate-300 rounded-lg px-3 py-1.5 bg-white">
+                    </div>
+                    <div class="sm:col-span-2">
+                        <select x-model="filters.trns_year" @change="loadVouchers(1); loadOverview()" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-mono">
+                            <option value="ALL">All Years</option>
+                            <template x-for="yr in lookups.years" :key="yr">
+                                <option :value="String(yr)" x-text="'Year ' + yr"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <select x-model="filters.user_name" @change="loadVouchers(1)" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-mono">
+                            <option value="ALL">All Cashiers</option>
+                            <template x-for="c in lookups.cashiers" :key="c">
+                                <option :value="c" x-text="c"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <select x-model="filters.receipt_status" @change="loadVouchers(1)" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
+                            <option value="ALL">All Statuses</option>
+                            <option value="1">1 - Valid Only</option>
+                            <option value="2">2 - Cancelled Only</option>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <button type="button" @click="loadVouchers(1)"
+                                class="w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg">Search</button>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-xs text-left">
+                        <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] border-b border-slate-200">
+                            <tr>
+                                <th class="px-3 py-2.5">RV No / Year</th>
+                                <th class="px-3 py-2.5">Date</th>
+                                <th class="px-3 py-2.5">Donor / Printed Name</th>
+                                <th class="px-3 py-2.5">Purpose</th>
+                                <th class="px-3 py-2.5">Payment</th>
+                                <th class="px-3 py-2.5 text-right">Amount (BHD)</th>
+                                <th class="px-3 py-2.5">Cashier</th>
+                                <th class="px-3 py-2.5">Status</th>
+                                <th class="px-3 py-2.5 text-right">Control Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <template x-for="v in rows" :key="v.trns_year + '-' + v.vouch_no">
+                                <tr class="hover:bg-slate-50">
+                                    <td class="px-3 py-2 font-mono font-bold text-blue-700" x-text="v.vouch_no + ' / ' + v.trns_year"></td>
+                                    <td class="px-3 py-2 font-mono text-slate-600" x-text="v.trans_date"></td>
+                                    <td class="px-3 py-2">
+                                        <div class="font-bold text-slate-900" x-text="v.don_req_desc || v.donor_display_name"></div>
+                                        <div class="text-[11px] font-mono text-slate-500" x-text="'Donor #' + v.donor_code"></div>
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        <div class="font-semibold text-slate-800" x-text="v.band_name"></div>
+                                        <div class="text-[11px] text-slate-500 truncate max-w-[200px]" x-text="v.cancel_replace_notes || v.attachments"></div>
+                                    </td>
+                                    <td class="px-3 py-2" x-text="v.pay_type_name + (v.cheq_visa_no ? ' #' + v.cheq_visa_no : '')"></td>
+                                    <td class="px-3 py-2 text-right font-mono font-bold text-slate-900" x-text="Number(v.trans_val || 0).toFixed(3)"></td>
+                                    <td class="px-3 py-2 font-mono text-[11px]" x-text="v.user_name"></td>
+                                    <td class="px-3 py-2">
+                                        <span :class="v.receipt_status === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
+                                              class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                              x-text="v.receipt_status === 1 ? 'Valid' : 'Cancelled'"></span>
+                                    </td>
+                                    <td class="px-3 py-2 text-right space-x-1">
+                                        <button type="button" x-show="v.receipt_status === 1" @click="selectVoucherForAction(v, 'MODIFY')"
+                                                class="px-2.5 py-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-semibold text-[11px]">
+                                            Modify
+                                        </button>
+                                        <button type="button" x-show="v.receipt_status === 1" @click="selectVoucherForAction(v, 'CANCEL')"
+                                                class="px-2.5 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[11px]">
+                                            Cancel
+                                        </button>
+                                        <span x-show="v.receipt_status === 2" class="text-[11px] font-mono text-rose-600"
+                                              x-text="'Cancelled by ' + (v.cancelled_by || 'N/A')"></span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+                    <button type="button" @click="loadVouchers(pagination.page - 1)" :disabled="pagination.page <= 1"
+                            class="px-3 py-1 rounded border border-slate-300 bg-white disabled:opacity-40 font-semibold">Previous</button>
+                    <span class="font-mono text-[11px] text-slate-600"
+                          x-text="'Page ' + pagination.page + ' of ' + pagination.total_pages"></span>
+                    <button type="button" @click="loadVouchers(pagination.page + 1)" :disabled="pagination.page >= pagination.total_pages"
+                            class="px-3 py-1 rounded border border-slate-300 bg-white disabled:opacity-40 font-semibold">Next</button>
+                </div>
+            </div>
+
+            <!-- TAB 2: VOUCH_HISTORY Archive (Old Receipts before Modify or Cancel) -->
+            <div x-show="activeTab === 'history'" x-cloak class="overflow-x-auto">
+                <table class="w-full text-xs text-left">
+                    <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] border-b border-slate-200">
+                        <tr>
+                            <th class="px-3 py-2.5">RV No / Year</th>
+                            <th class="px-3 py-2.5">Action</th>
+                            <th class="px-3 py-2.5">Responsible User</th>
+                            <th class="px-3 py-2.5">Action Date</th>
+                            <th class="px-3 py-2.5">Reason</th>
+                            <th class="px-3 py-2.5">Old Donor & Name</th>
+                            <th class="px-3 py-2.5">Old Purpose & Payment</th>
+                            <th class="px-3 py-2.5 text-right">Old Amount (BHD)</th>
+                            <th class="px-3 py-2.5">Original Cashier</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <template x-for="h in overview.voucher_history" :key="h.hist_id">
+                            <tr class="hover:bg-amber-50/30">
+                                <td class="px-3 py-2.5 font-mono font-bold text-slate-900" x-text="h.vouch_no + ' / ' + h.trns_year"></td>
+                                <td class="px-3 py-2.5">
+                                    <span :class="h.action_type === 'MODIFY' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'"
+                                          class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                          x-text="h.action_type || 'CANCEL'"></span>
+                                </td>
+                                <td class="px-3 py-2.5 font-mono font-bold text-blue-700" x-text="h.action_by || h.user_name"></td>
+                                <td class="px-3 py-2.5 font-mono text-slate-600" x-text="h.delete_date || '-'"></td>
+                                <td class="px-3 py-2.5 font-medium text-slate-800" x-text="h.action_reason || '-'"></td>
+                                <td class="px-3 py-2.5">
+                                    <div class="font-semibold text-slate-900" x-text="'#' + h.donor_code + (h.don_req_desc ? ' - ' + h.don_req_desc : '')"></div>
+                                    <div class="text-[10px] text-slate-500 font-mono" x-text="'Receipt Date: ' + h.trans_date"></div>
+                                </td>
+                                <td class="px-3 py-2.5">
+                                    <div class="font-semibold text-slate-800" x-text="h.band_name"></div>
+                                    <div class="text-[11px] text-slate-500" x-text="h.pay_type_name + (h.cheq_visa_no ? ' #' + h.cheq_visa_no : '')"></div>
+                                </td>
+                                <td class="px-3 py-2.5 text-right font-mono font-bold text-emerald-800" x-text="Number(h.trans_val || 0).toFixed(3)"></td>
+                                <td class="px-3 py-2.5 font-mono text-slate-600" x-text="h.user_name"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- TAB 3: Cancelled Vouchers Log -->
+            <div x-show="activeTab === 'cancelled'" x-cloak class="overflow-x-auto">
+                <table class="w-full text-xs text-left">
+                    <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] border-b border-slate-200">
+                        <tr>
+                            <th class="px-3 py-2.5">RV No / Year</th>
+                            <th class="px-3 py-2.5">Date</th>
+                            <th class="px-3 py-2.5">Donor</th>
+                            <th class="px-3 py-2.5">Purpose</th>
+                            <th class="px-3 py-2.5">Original Amount (Words)</th>
+                            <th class="px-3 py-2.5">Cancelled By</th>
+                            <th class="px-3 py-2.5">Cancellation Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <template x-for="c in overview.cancelled_vouchers" :key="c.trns_year + '-' + c.vouch_no">
+                            <tr class="hover:bg-rose-50/30">
+                                <td class="px-3 py-2.5 font-mono font-bold text-rose-700" x-text="c.vouch_no + ' / ' + c.trns_year"></td>
+                                <td class="px-3 py-2.5 font-mono text-slate-600" x-text="c.trans_date"></td>
+                                <td class="px-3 py-2.5 font-semibold" x-text="'#' + c.donor_code + ' - ' + (c.don_req_desc || c.donor_display_name)"></td>
+                                <td class="px-3 py-2.5" x-text="c.band_name"></td>
+                                <td class="px-3 py-2.5 italic text-slate-700" x-text="c.amt_txt"></td>
+                                <td class="px-3 py-2.5 font-mono font-bold text-rose-800" x-text="c.cancelled_by || c.user_name"></td>
+                                <td class="px-3 py-2.5 text-slate-800 font-medium" x-text="c.cancel_replace_notes || '-'"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function voucherControlApp() {
+            return {
+                activeTab: 'vouchers',
+                controlMode: 'MODIFY',
+                lookups: { band_details: [], payment_types: [], banks: [], years: [2026], cashiers: [], current_user: 'SAJJAD', current_year: 2026 },
+                lookup: { vouch_no: '', trns_year: 2026 },
+                targetVoucher: null,
+                modifyForm: {
+                    donor_code: '',
+                    don_req_desc: '',
+                    trans_date: '',
+                    band_det_cd: 1,
+                    trans_val: 0,
+                    amt_txt: '',
+                    trans_pay_type: 1,
+                    cheq_visa_no: '',
+                    bank_cd: '',
+                    attachments: '',
+                    modify_reason: ''
+                },
+                cancelForm: {
+                    cancel_replace_notes: ''
+                },
+                overview: {
+                    cancelled_vouchers: [],
+                    voucher_history: [],
+                    sequence_audit: { trns_year: 2026, count: 0, min_vouch_no: 0, max_vouch_no: 0 }
+                },
+                filters: { q: '', trns_year: '2026', user_name: 'ALL', receipt_status: 'ALL' },
+                rows: [],
+                pagination: { page: 1, page_size: 50, total_rows: 0, total_pages: 1 },
+                toast: { message: '', type: 'success' },
+
+                async init() {
+                    const lkpRes = await fetch('/api/cash-donations/lookups');
+                    if (lkpRes.ok) {
+                        this.lookups = await lkpRes.json();
+                        this.lookup.trns_year = this.lookups.current_year || 2026;
+                        this.filters.trns_year = String(this.lookups.current_year || 2026);
+                    }
+                    await this.loadOverview();
+                    await this.loadVouchers(1);
+
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const reqVno = urlParams.get('vouch_no');
+                    const reqYr = urlParams.get('trns_year');
+                    if (reqVno && reqYr) {
+                        this.lookup.vouch_no = parseInt(reqVno, 10);
+                        this.lookup.trns_year = parseInt(reqYr, 10);
+                        await this.fetchTargetVoucher();
+                    }
+                },
+
+                showToast(msg, type = 'success') {
+                    this.toast = { message: msg, type };
+                    setTimeout(() => { if (this.toast.message === msg) this.toast.message = ''; }, 6000);
+                },
+
+                async loadOverview() {
+                    const yr = this.filters.trns_year !== 'ALL' ? this.filters.trns_year : (this.lookups.current_year || 2026);
+                    const res = await fetch('/api/voucher-control/overview?trns_year=' + encodeURIComponent(yr));
+                    if (res.ok) {
+                        this.overview = await res.json();
+                    }
+                },
+
+                async loadVouchers(page = 1) {
+                    const qs = new URLSearchParams({
+                        trns_year: this.filters.trns_year,
+                        user_name: this.filters.user_name,
+                        receipt_status: this.filters.receipt_status,
+                        q: this.filters.q || '',
+                        page: String(page),
+                        page_size: '50'
+                    });
+                    const res = await fetch('/api/voucher-receipts/list?' + qs.toString());
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.rows = data.rows || [];
+                        this.pagination = data.pagination || { page: 1, page_size: 50, total_rows: 0, total_pages: 1 };
+                    }
+                },
+
+                async fetchTargetVoucher() {
+                    if (!this.lookup.vouch_no || !this.lookup.trns_year) return;
+                    const res = await fetch(`/api/voucher-receipts/record?vouch_no=${this.lookup.vouch_no}&trns_year=${this.lookup.trns_year}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.selectVoucherForAction(data.voucher, this.controlMode || 'MODIFY');
+                    } else {
+                        this.showToast(`Receipt #${this.lookup.vouch_no}/${this.lookup.trns_year} not found.`, 'error');
+                    }
+                },
+
+                selectVoucherForAction(v, mode = 'MODIFY') {
+                    this.targetVoucher = v;
+                    this.controlMode = mode;
+                    this.lookup.vouch_no = v.vouch_no;
+                    this.lookup.trns_year = v.trns_year;
+                    this.modifyForm = {
+                        donor_code: v.donor_code,
+                        don_req_desc: v.don_req_desc || v.donor_display_name || '',
+                        trans_date: v.trans_date,
+                        band_det_cd: v.band_det_cd,
+                        trans_val: v.trans_val,
+                        amt_txt: v.amt_txt || '',
+                        trans_pay_type: v.trans_pay_type,
+                        cheq_visa_no: v.cheq_visa_no || '',
+                        bank_cd: v.bank_cd || '',
+                        attachments: v.attachments || '',
+                        modify_reason: ''
+                    };
+                    this.cancelForm = { cancel_replace_notes: '' };
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                },
+
+                async updateModifyAmountWords() {
+                    const val = parseFloat(this.modifyForm.trans_val);
+                    if (isNaN(val) || val <= 0) {
+                        this.modifyForm.amt_txt = '';
+                        return;
+                    }
+                    const res = await fetch('/api/voucher-receipts/amount-words?amount=' + encodeURIComponent(val));
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.modifyForm.amt_txt = data.amt_txt;
+                    }
+                },
+
+                async submitModification() {
+                    if (!this.targetVoucher) return;
+                    if (!this.modifyForm.modify_reason || this.modifyForm.modify_reason.trim().length < 3) {
+                        this.showToast('Please enter the reason for modification before confirming.', 'error');
+                        return;
+                    }
+                    const payload = {
+                        vouch_no: this.targetVoucher.vouch_no,
+                        trns_year: this.targetVoucher.trns_year,
+                        donor_type: 1,
+                        donor_code: Number(this.modifyForm.donor_code),
+                        band_det_cd: Number(this.modifyForm.band_det_cd),
+                        trans_date: this.modifyForm.trans_date,
+                        trans_val: Number(this.modifyForm.trans_val),
+                        don_req_desc: this.modifyForm.don_req_desc,
+                        attachments: this.modifyForm.attachments,
+                        trans_pay_type: Number(this.modifyForm.trans_pay_type),
+                        cheq_visa_no: this.modifyForm.cheq_visa_no,
+                        bank_cd: this.modifyForm.bank_cd ? Number(this.modifyForm.bank_cd) : null,
+                        amt_txt: this.modifyForm.amt_txt,
+                        modify_reason: this.modifyForm.modify_reason
+                    };
+                    const res = await fetch('/api/voucher-control/modify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        this.showToast(data.detail || 'Error modifying receipt', 'error');
+                        return;
+                    }
+                    this.showToast(data.message, 'success');
+                    await this.fetchTargetVoucher();
+                    await this.loadOverview();
+                    await this.loadVouchers(this.pagination.page);
+                },
+
+                async submitCancellation() {
+                    if (!this.targetVoucher) return;
+                    if (!this.cancelForm.cancel_replace_notes || this.cancelForm.cancel_replace_notes.trim().length < 3) {
+                        this.showToast('Please enter the reason for cancellation before confirming.', 'error');
+                        return;
+                    }
+                    const payload = {
+                        vouch_no: this.targetVoucher.vouch_no,
+                        trns_year: this.targetVoucher.trns_year,
+                        donor_type: 1,
+                        cancel_replace_notes: this.cancelForm.cancel_replace_notes
+                    };
+                    const res = await fetch('/api/voucher-control/cancel', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        this.showToast(data.detail || 'Error cancelling receipt', 'error');
+                        return;
+                    }
+                    this.showToast(data.message, 'success');
+                    await this.fetchTargetVoucher();
+                    await this.loadOverview();
+                    await this.loadVouchers(this.pagination.page);
+                }
+            };
+        }
+    </script>
+</body>
+</html>

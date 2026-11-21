@@ -21,7 +21,7 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
-DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "users")
+DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "users")
 
 def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_keys: tuple = DEFAULT_PAGE_KEYS) -> dict:
     if isinstance(raw_perms, str):
@@ -33,8 +33,10 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_k
         raw_perms = {}
 
     # If explicit page keys already exist in raw_perms, honor them
+    code = (role_code or "").upper()
+    default_for_missing = "edit" if code in ("READ_WRITE", "ADMIN") else ("view" if code == "FOLLOWUP" else "none")
     if any(k in raw_perms for k in valid_keys):
-        base = {k: raw_perms.get(k, "none") for k in valid_keys}
+        base = {k: raw_perms.get(k, ("none" if k == "users" and default_for_missing == "view" else default_for_missing)) for k in valid_keys}
         if "reports_matrix" not in raw_perms and "reports" in raw_perms:
             base["reports_matrix"] = raw_perms.get("reports", "none")
         if "so_dashboard" not in raw_perms and "reports" in raw_perms:
@@ -59,6 +61,14 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_k
 def resolve_page_key(path: str) -> str:
     if path.startswith("/users") or path.startswith("/api/users"):
         return "users"
+    if path.startswith("/cash-donors") or path.startswith("/api/cash-donors"):
+        return "cash_donors"
+    if path.startswith("/voucher-receipts") or path.startswith("/api/voucher-receipts"):
+        return "voucher_receipt"
+    if path.startswith("/voucher-control") or path.startswith("/api/voucher-control"):
+        return "voucher_control"
+    if path.startswith("/api/cash-donations/"):
+        return "voucher_receipt"
     if path.startswith("/reports-views") or path.startswith("/api/reports/views"):
         return "data_views_export"
     if path.startswith("/reports-dashboard") or path.startswith("/api/reports/dashboard"):
@@ -122,6 +132,12 @@ async def auth_and_rbac_middleware(request: Request, call_next):
             access_level = page_perms.get("reports_matrix", "view")
         elif page_perms.get("so_dashboard", "none") != "none":
             access_level = page_perms.get("so_dashboard", "view")
+    if (path.startswith("/api/cash-donations/") or path.startswith("/api/cash-donors/") or path.startswith("/api/voucher-receipts/")) and access_level == "none":
+        # Shared lookups/donor search/print record across cash_donors, voucher_receipt, and voucher_control
+        for ck in ("voucher_receipt", "cash_donors", "voucher_control"):
+            if page_perms.get(ck, "none") != "none":
+                access_level = page_perms.get(ck, "view")
+                break
     request.state.current_page_access = access_level
 
     if access_level == "none":
@@ -3234,5 +3250,1032 @@ async def get_data_view_export_api(
         }, page, page_size, export_all)
 
     raise HTTPException(status_code=400, detail=f"Unknown view_key: {view_key}")
+
+
+# =================================================================================
+# MODULE 2: CASH DONATIONS & VOUCHERS (Cash Donors, Receipt Master, Voucher Control)
+# =================================================================================
+
+_ONES = ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+         "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+         "Seventeen", "Eighteen", "Nineteen")
+_TENS = ("", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety")
+
+def _int_to_en_words(n: int) -> str:
+    if n < 0:
+        return "Minus " + _int_to_en_words(-n)
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        q, r = divmod(n, 10)
+        return _TENS[q] + (f"-{_ONES[r]}" if r else "")
+    if n < 1000:
+        q, r = divmod(n, 100)
+        return f"{_ONES[q]} Hundred" + (f" {_int_to_en_words(r)}" if r else "")
+    if n < 1_000_000:
+        q, r = divmod(n, 1000)
+        return f"{_int_to_en_words(q)} Thousand" + (f", {_int_to_en_words(r)}" if r else "")
+    q, r = divmod(n, 1_000_000)
+    return f"{_int_to_en_words(q)} Million" + (f", {_int_to_en_words(r)}" if r else "")
+
+def bhd_amount_to_words(amount: float) -> str:
+    val = round(max(float(amount or 0.0), 0.0), 3)
+    dinars = int(val)
+    fils = int(round((val - dinars) * 1000))
+    return f"{_int_to_en_words(dinars)} Dinar, {_int_to_en_words(fils)} Fils"
+
+
+class CashDonorSaveSchema(BaseModel):
+    donor_cd: Optional[int] = None
+    is_new: Optional[bool] = False
+    donor_name: Optional[str] = ""
+    donor_ename: Optional[str] = ""
+    donor_address: Optional[str] = ""
+    tel_home: Optional[str] = ""
+    tel_office: Optional[str] = ""
+    mobile: Optional[str] = ""
+    donor_status: int = 1
+    profession: Optional[str] = ""
+    dic_representitive: Optional[str] = ""
+    don_fax: Optional[str] = ""
+    prefix: Optional[int] = 1
+    don_reayet: Optional[str] = "1"
+    donor_type: int = 1
+    bahrain_status: int = 1
+    data_status: Optional[int] = 4
+    sex_cd: int = 1
+    block_no: Optional[str] = ""
+    donor_importancy_lvl: int = 1
+
+
+class VoucherSaveSchema(BaseModel):
+    is_new: Optional[bool] = True
+    vouch_no: Optional[int] = None
+    trns_year: int
+    donor_type: int = 1
+    donor_code: int
+    band_det_cd: int = 1
+    trans_date: date
+    trans_val: float
+    don_req_desc: Optional[str] = ""
+    req_reason: Optional[str] = ""
+    attachments: Optional[str] = ""
+    trans_pay_type: int = 1
+    cheq_visa_no: Optional[str] = ""
+    bank_cd: Optional[int] = None
+    visa_ex_date: Optional[date] = None
+    amt_txt: Optional[str] = ""
+    chk_ser: Optional[str] = ""
+    addresss_tel: Optional[str] = ""
+    tel: Optional[str] = ""
+    vouch_no2: Optional[int] = None
+    auto_num: int = 1
+    dic_bank: Optional[int] = None
+    dic_account: Optional[str] = ""
+    mark_printed: Optional[bool] = False
+
+
+class VoucherModifySchema(BaseModel):
+    vouch_no: int
+    trns_year: int
+    donor_type: int = 1
+    donor_code: int
+    band_det_cd: int
+    trans_date: date
+    trans_val: float
+    don_req_desc: Optional[str] = ""
+    req_reason: Optional[str] = ""
+    attachments: Optional[str] = ""
+    trans_pay_type: int = 1
+    cheq_visa_no: Optional[str] = ""
+    bank_cd: Optional[int] = None
+    visa_ex_date: Optional[date] = None
+    amt_txt: Optional[str] = ""
+    chk_ser: Optional[str] = ""
+    addresss_tel: Optional[str] = ""
+    tel: Optional[str] = ""
+    modify_reason: str
+
+
+class VoucherCancelSchema(BaseModel):
+    vouch_no: int
+    trns_year: int
+    donor_type: int = 1
+    cancel_replace_notes: str
+
+
+@app.get("/cash-donors", response_class=HTMLResponse)
+async def cash_donors_page(request: Request):
+    return templates.TemplateResponse("cash_donors.html", {"request": request})
+
+@app.get("/voucher-receipts", response_class=HTMLResponse)
+async def voucher_receipts_page(request: Request):
+    return templates.TemplateResponse("voucher_receipts.html", {"request": request})
+
+@app.get("/voucher-control", response_class=HTMLResponse)
+async def voucher_control_page(request: Request):
+    return templates.TemplateResponse("voucher_control.html", {"request": request})
+
+
+@app.get("/api/cash-donations/lookups")
+async def get_cash_donations_lookups(request: Request, db: AsyncSession = Depends(get_db)):
+    prefixes_res = await db.execute(text("""
+        SELECT prefix_cd, prefix_name, COALESCE(NULLIF(TRIM(prefix_ename), ''), prefix_name) AS prefix_ename
+        FROM lkp_name_prefixes ORDER BY prefix_cd
+    """))
+    cares_res = await db.execute(text("""
+        SELECT care_cd, care_nm, COALESCE(NULLIF(TRIM(care_enm), ''), care_nm) AS care_enm
+        FROM lkp_cares ORDER BY care_cd
+    """))
+    banks_res = await db.execute(text("""
+        SELECT bank_cd, bank_desc, COALESCE(NULLIF(TRIM(bank_e_desc), ''), bank_desc) AS bank_e_desc
+        FROM lkp_banks ORDER BY bank_cd
+    """))
+    dic_acc_res = await db.execute(text("""
+        SELECT a.bank_cd, b.bank_e_desc, a.bank_acc_no, COALESCE(a.iban, '') AS iban, COALESCE(a.account_name, '') AS account_name
+        FROM lkp_bank_accounts a
+        JOIN lkp_banks b ON a.bank_cd = b.bank_cd
+        WHERE a.account_status = 1
+        ORDER BY a.bank_cd, a.bank_acc_no
+    """))
+    bands_res = await db.execute(text("""
+        SELECT d.band_det_cd, d.band_cd, d.band_det_desc,
+               COALESCE(NULLIF(TRIM(d.band_det_edesc), ''), d.band_det_desc) AS band_det_edesc,
+               COALESCE(m.band_edesc, m.band_desc, '') AS band_group_name
+        FROM lkp_band_details d
+        LEFT JOIN lkp_band_master m ON d.band_cd = m.band_cd
+        ORDER BY d.band_det_cd
+    """))
+    pay_types_res = await db.execute(text("""
+        SELECT type_cd, type_desc, type_edesc
+        FROM lkp_payment_types ORDER BY type_cd
+    """))
+    years_res = await db.execute(text("""
+        SELECT DISTINCT trns_year FROM vouch_mstr WHERE trns_year IS NOT NULL ORDER BY trns_year DESC
+    """))
+    cashiers_res = await db.execute(text("""
+        SELECT DISTINCT UPPER(TRIM(user_name)) AS user_name
+        FROM vouch_mstr
+        WHERE user_name IS NOT NULL AND TRIM(user_name) <> ''
+        ORDER BY 1
+    """))
+    years = [int(r.trns_year) for r in years_res]
+    cur_yr = date.today().year
+    if cur_yr not in years:
+        years.insert(0, cur_yr)
+
+    cur_user = (request.state.user or {}).get("username", "SAJJAD")
+    return {
+        "prefixes": [dict(r._mapping) for r in prefixes_res],
+        "cares": [dict(r._mapping) for r in cares_res],
+        "banks": [dict(r._mapping) for r in banks_res],
+        "dic_bank_accounts": [dict(r._mapping) for r in dic_acc_res],
+        "band_details": [dict(r._mapping) for r in bands_res],
+        "payment_types": [dict(r._mapping) for r in pay_types_res],
+        "years": years,
+        "cashiers": [r.user_name for r in cashiers_res],
+        "current_user": cur_user,
+        "current_year": cur_yr,
+        "today": date.today().isoformat()
+    }
+
+
+@app.get("/api/cash-donors/list")
+async def list_cash_donors_api(
+    q: str = "",
+    donor_type: str = "ALL",
+    donor_status: str = "ALL",
+    importancy: str = "ALL",
+    page: int = 1,
+    page_size: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    kpi_res = await db.execute(text("""
+        SELECT
+            COUNT(*) AS total_all,
+            COUNT(*) FILTER (WHERE donor_status = 1) AS total_active,
+            COUNT(*) FILTER (WHERE donor_status <> 1) AS total_inactive,
+            COUNT(*) FILTER (WHERE donor_type = 1) AS total_type_cash,
+            COUNT(*) FILTER (WHERE donor_type = 2) AS total_type_rent,
+            COALESCE(MAX(donor_cd), 0) AS max_donor_cd
+        FROM cash_donors
+    """))
+    kpis = dict(kpi_res.first()._mapping)
+
+    where_clauses = ["1=1"]
+    params: dict[str, Any] = {}
+    if donor_type in ("1", "2"):
+        where_clauses.append("d.donor_type = :dtype")
+        params["dtype"] = int(donor_type)
+    if donor_status in ("1", "2"):
+        where_clauses.append("d.donor_status = :dstat")
+        params["dstat"] = int(donor_status)
+    if importancy in ("1", "2", "3"):
+        where_clauses.append("d.donor_importancy_lvl = :imp")
+        params["imp"] = int(importancy)
+    q_clean = (q or "").strip()
+    if q_clean:
+        where_clauses.append("""(
+            CAST(d.donor_cd AS TEXT) ILIKE :q
+            OR COALESCE(d.donor_name, '') ILIKE :q
+            OR COALESCE(d.donor_ename, '') ILIKE :q
+            OR COALESCE(d.mobile, '') ILIKE :q
+            OR COALESCE(d.tel_home, '') ILIKE :q
+            OR COALESCE(d.tel_office, '') ILIKE :q
+            OR COALESCE(d.donor_address, '') ILIKE :q
+        )""")
+        params["q"] = f"%{q_clean}%"
+
+    where_sql = " AND ".join(where_clauses)
+    cnt_res = await db.execute(text(f"SELECT COUNT(*) FROM cash_donors d WHERE {where_sql}"), params)
+    total_filtered = int(cnt_res.scalar() or 0)
+
+    p = max(int(page or 1), 1)
+    ps = min(max(int(page_size or 50), 10), 200)
+    total_pages = max((total_filtered + ps - 1) // ps, 1)
+    if p > total_pages:
+        p = total_pages
+    params["limit"] = ps
+    params["offset"] = (p - 1) * ps
+
+    rows_res = await db.execute(text(f"""
+        SELECT
+            d.donor_cd,
+            COALESCE(d.donor_name, '') AS donor_name,
+            COALESCE(d.donor_ename, '') AS donor_ename,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), NULLIF(TRIM(d.donor_name), ''), 'Donor #' || d.donor_cd::text) AS display_name,
+            COALESCE(d.donor_address, '') AS donor_address,
+            COALESCE(d.mobile, '') AS mobile,
+            COALESCE(d.tel_home, '') AS tel_home,
+            COALESCE(d.tel_office, '') AS tel_office,
+            d.donor_status,
+            d.donor_type,
+            COALESCE(d.bahrain_status, 1) AS bahrain_status,
+            COALESCE(d.donor_importancy_lvl, 1) AS donor_importancy_lvl,
+            COALESCE(d.prefix, 1) AS prefix,
+            COALESCE(p.prefix_ename, p.prefix_name, '') AS prefix_ename,
+            COALESCE(d.block_no, '') AS block_no,
+            COALESCE(d.user_name, '') AS user_name,
+            COALESCE(TO_CHAR(d.append_date, 'YYYY-MM-DD'), '') AS append_date,
+            COALESCE(v.vouch_cnt, 0) AS vouch_count,
+            COALESCE(v.total_donated, 0)::float8 AS total_donated,
+            COALESCE(TO_CHAR(v.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date
+        FROM cash_donors d
+        LEFT JOIN lkp_name_prefixes p ON d.prefix = p.prefix_cd
+        LEFT JOIN (
+            SELECT donor_code,
+                   COUNT(*) FILTER (WHERE receipt_status = 1) AS vouch_cnt,
+                   SUM(trans_val) FILTER (WHERE receipt_status = 1) AS total_donated,
+                   MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date
+            FROM vouch_mstr
+            GROUP BY donor_code
+        ) v ON v.donor_code = d.donor_cd
+        WHERE {where_sql}
+        ORDER BY d.donor_cd DESC
+        LIMIT :limit OFFSET :offset
+    """), params)
+
+    return {
+        "kpis": kpis,
+        "rows": [dict(r._mapping) for r in rows_res],
+        "pagination": {
+            "page": p,
+            "page_size": ps,
+            "total_rows": total_filtered,
+            "total_pages": total_pages
+        }
+    }
+
+
+@app.get("/api/cash-donors/record")
+async def get_cash_donor_record_api(donor_cd: int, db: AsyncSession = Depends(get_db)):
+    d_res = await db.execute(text("""
+        SELECT
+            d.donor_cd,
+            COALESCE(d.donor_name, '') AS donor_name,
+            COALESCE(d.donor_ename, '') AS donor_ename,
+            COALESCE(d.donor_address, '') AS donor_address,
+            COALESCE(d.tel_home, '') AS tel_home,
+            COALESCE(d.tel_office, '') AS tel_office,
+            COALESCE(d.mobile, '') AS mobile,
+            COALESCE(d.donor_status, 1) AS donor_status,
+            COALESCE(d.profession, '') AS profession,
+            COALESCE(d.dic_representitive, '') AS dic_representitive,
+            COALESCE(d.don_fax, '') AS don_fax,
+            COALESCE(d.prefix, 1) AS prefix,
+            COALESCE(p.prefix_ename, p.prefix_name, '') AS prefix_ename,
+            COALESCE(d.don_reayet, '1') AS don_reayet,
+            COALESCE(d.user_name, '') AS user_name,
+            COALESCE(TO_CHAR(d.append_date, 'YYYY-MM-DD'), '') AS append_date,
+            COALESCE(d.donor_type, 1) AS donor_type,
+            COALESCE(d.bahrain_status, 1) AS bahrain_status,
+            COALESCE(d.data_status, 4) AS data_status,
+            COALESCE(d.sex_cd, 1) AS sex_cd,
+            COALESCE(d.block_no, '') AS block_no,
+            COALESCE(d.donor_importancy_lvl, 1) AS donor_importancy_lvl
+        FROM cash_donors d
+        LEFT JOIN lkp_name_prefixes p ON d.prefix = p.prefix_cd
+        WHERE d.donor_cd = :dcd
+    """), {"dcd": int(donor_cd)})
+    d_row = d_res.first()
+    if not d_row:
+        raise HTTPException(status_code=404, detail=f"Cash Donor #{donor_cd} not found")
+    donor = dict(d_row._mapping)
+
+    v_res = await db.execute(text("""
+        SELECT
+            v.vouch_no,
+            v.trns_year,
+            v.donor_type,
+            v.donor_code,
+            v.band_det_cd,
+            COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name,
+            COALESCE(TO_CHAR(v.trans_date, 'YYYY-MM-DD'), '') AS trans_date,
+            COALESCE(v.trans_val, 0)::float8 AS trans_val,
+            COALESCE(v.don_req_desc, '') AS don_req_desc,
+            COALESCE(v.req_reason, '') AS req_reason,
+            COALESCE(v.attachments, '') AS attachments,
+            v.trans_pay_type,
+            COALESCE(pt.type_edesc, pt.type_desc, 'Cash') AS pay_type_name,
+            COALESCE(v.cheq_visa_no, '') AS cheq_visa_no,
+            v.bank_cd,
+            COALESCE(bk.bank_e_desc, bk.bank_desc, '') AS bank_name,
+            COALESCE(TO_CHAR(v.visa_ex_date, 'YYYY-MM-DD'), '') AS visa_ex_date,
+            COALESCE(v.user_name, '') AS user_name,
+            COALESCE(v.amt_txt, '') AS amt_txt,
+            COALESCE(v.chk_ser, '') AS chk_ser,
+            COALESCE(v.addresss_tel, '') AS addresss_tel,
+            COALESCE(v.tel, '') AS tel,
+            COALESCE(v.print_flag, 2) AS print_flag,
+            COALESCE(TO_CHAR(v.print_date, 'YYYY-MM-DD'), '') AS print_date,
+            COALESCE(v.print_counter, 0) AS print_counter,
+            v.vouch_no2,
+            COALESCE(v.auto_num, 1) AS auto_num,
+            COALESCE(v.cancel_replace_notes, '') AS cancel_replace_notes,
+            COALESCE(v.receipt_status, 1) AS receipt_status,
+            COALESCE(v.cancelled_by, '') AS cancelled_by,
+            v.dic_bank,
+            COALESCE(v.dic_account, '') AS dic_account
+        FROM vouch_mstr v
+        LEFT JOIN lkp_band_details b ON v.band_det_cd = b.band_det_cd
+        LEFT JOIN lkp_payment_types pt ON v.trans_pay_type = pt.type_cd
+        LEFT JOIN lkp_banks bk ON v.bank_cd = bk.bank_cd
+        WHERE v.donor_code = :dcd
+        ORDER BY v.trans_date DESC, v.trns_year DESC, v.vouch_no DESC
+    """), {"dcd": int(donor_cd)})
+    vouchers = [dict(r._mapping) for r in v_res]
+    donor["vouchers"] = vouchers
+    donor["total_valid_bhd"] = round(sum(x["trans_val"] for x in vouchers if x["receipt_status"] == 1), 3)
+    donor["valid_vouchers_count"] = sum(1 for x in vouchers if x["receipt_status"] == 1)
+    return {"donor": donor}
+
+
+@app.post("/api/cash-donors/save")
+async def save_cash_donor_api(payload: CashDonorSaveSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    cur_user = (request.state.user or {}).get("username", "SAJJAD")
+    ar_name = (payload.donor_name or "").strip()
+    en_name = (payload.donor_ename or "").strip()
+    if not ar_name and not en_name:
+        raise HTTPException(status_code=400, detail="Please enter at least the Donor English Name or Arabic Name.")
+
+    if not payload.donor_cd or payload.is_new:
+        if payload.donor_cd:
+            chk = await db.execute(text("SELECT 1 FROM cash_donors WHERE donor_cd = :dcd"), {"dcd": payload.donor_cd})
+            if chk.first():
+                raise HTTPException(status_code=400, detail=f"Donor Code #{payload.donor_cd} already exists.")
+            target_cd = int(payload.donor_cd)
+        else:
+            mx = await db.execute(text("SELECT COALESCE(MAX(donor_cd), 0) + 1 FROM cash_donors"))
+            target_cd = int(mx.scalar() or 1)
+
+        await db.execute(text("""
+            INSERT INTO cash_donors (
+                donor_cd, donor_name, donor_ename, donor_address, tel_home, tel_office, mobile,
+                donor_status, profession, dic_representitive, don_fax, prefix, don_reayet,
+                user_name, append_date, donor_type, bahrain_status, data_status, sex_cd,
+                block_no, donor_importancy_lvl
+            ) VALUES (
+                :donor_cd, :donor_name, :donor_ename, :donor_address, :tel_home, :tel_office, :mobile,
+                :donor_status, :profession, :dic_representitive, :don_fax, :prefix, :don_reayet,
+                :user_name, CURRENT_DATE, :donor_type, :bahrain_status, :data_status, :sex_cd,
+                :block_no, :donor_importancy_lvl
+            )
+        """), {
+            "donor_cd": target_cd,
+            "donor_name": ar_name or en_name,
+            "donor_ename": en_name or ar_name,
+            "donor_address": (payload.donor_address or "").strip(),
+            "tel_home": (payload.tel_home or "").strip(),
+            "tel_office": (payload.tel_office or "").strip(),
+            "mobile": (payload.mobile or "").strip(),
+            "donor_status": int(payload.donor_status or 1),
+            "profession": (payload.profession or "").strip(),
+            "dic_representitive": (payload.dic_representitive or "").strip(),
+            "don_fax": (payload.don_fax or "").strip(),
+            "prefix": int(payload.prefix or 1),
+            "don_reayet": (payload.don_reayet or "1").strip(),
+            "user_name": cur_user,
+            "donor_type": int(payload.donor_type or 1),
+            "bahrain_status": int(payload.bahrain_status or 1),
+            "data_status": int(payload.data_status or 4),
+            "sex_cd": int(payload.sex_cd or 1),
+            "block_no": (payload.block_no or "").strip(),
+            "donor_importancy_lvl": int(payload.donor_importancy_lvl or 1)
+        })
+        await db.commit()
+        return {"status": "success", "donor_cd": target_cd, "message": f"Cash Donor #{target_cd} created successfully."}
+    else:
+        target_cd = int(payload.donor_cd)
+        await db.execute(text("""
+            UPDATE cash_donors SET
+                donor_name = :donor_name,
+                donor_ename = :donor_ename,
+                donor_address = :donor_address,
+                tel_home = :tel_home,
+                tel_office = :tel_office,
+                mobile = :mobile,
+                donor_status = :donor_status,
+                profession = :profession,
+                dic_representitive = :dic_representitive,
+                don_fax = :don_fax,
+                prefix = :prefix,
+                don_reayet = :don_reayet,
+                donor_type = :donor_type,
+                bahrain_status = :bahrain_status,
+                data_status = :data_status,
+                sex_cd = :sex_cd,
+                block_no = :block_no,
+                donor_importancy_lvl = :donor_importancy_lvl
+            WHERE donor_cd = :donor_cd
+        """), {
+            "donor_cd": target_cd,
+            "donor_name": ar_name or en_name,
+            "donor_ename": en_name or ar_name,
+            "donor_address": (payload.donor_address or "").strip(),
+            "tel_home": (payload.tel_home or "").strip(),
+            "tel_office": (payload.tel_office or "").strip(),
+            "mobile": (payload.mobile or "").strip(),
+            "donor_status": int(payload.donor_status or 1),
+            "profession": (payload.profession or "").strip(),
+            "dic_representitive": (payload.dic_representitive or "").strip(),
+            "don_fax": (payload.don_fax or "").strip(),
+            "prefix": int(payload.prefix or 1),
+            "don_reayet": (payload.don_reayet or "1").strip(),
+            "donor_type": int(payload.donor_type or 1),
+            "bahrain_status": int(payload.bahrain_status or 1),
+            "data_status": int(payload.data_status or 4),
+            "sex_cd": int(payload.sex_cd or 1),
+            "block_no": (payload.block_no or "").strip(),
+            "donor_importancy_lvl": int(payload.donor_importancy_lvl or 1)
+        })
+        await db.commit()
+        return {"status": "success", "donor_cd": target_cd, "message": f"Cash Donor #{target_cd} updated successfully."}
+
+
+@app.get("/api/voucher-receipts/amount-words")
+async def convert_bhd_amount_to_words_api(amount: float = 0.0):
+    return {"amount": round(float(amount or 0.0), 3), "amt_txt": bhd_amount_to_words(amount)}
+
+
+@app.get("/api/voucher-receipts/next-no")
+async def get_next_voucher_no_api(trns_year: int = 2026, donor_type: int = 1, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(text("""
+        SELECT COALESCE(MAX(vouch_no), 0) + 1 AS next_no
+        FROM vouch_mstr
+        WHERE trns_year = :yr AND donor_type = :dtype
+    """), {"yr": int(trns_year), "dtype": int(donor_type)})
+    return {"trns_year": int(trns_year), "donor_type": int(donor_type), "next_vouch_no": int(res.scalar() or 1)}
+
+
+@app.get("/api/voucher-receipts/list")
+async def list_voucher_receipts_api(
+    trns_year: str = "ALL",
+    pay_type: str = "ALL",
+    band_det_cd: str = "ALL",
+    receipt_status: str = "ALL",
+    user_name: str = "ALL",
+    q: str = "",
+    page: int = 1,
+    page_size: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    where_clauses = ["1=1"]
+    params: dict[str, Any] = {}
+    if trns_year and trns_year != "ALL":
+        where_clauses.append("v.trns_year = :yr")
+        params["yr"] = int(trns_year)
+    if pay_type and pay_type != "ALL":
+        where_clauses.append("v.trans_pay_type = :ptype")
+        params["ptype"] = int(pay_type)
+    if band_det_cd and band_det_cd != "ALL":
+        where_clauses.append("v.band_det_cd = :bdet")
+        params["bdet"] = int(band_det_cd)
+    if receipt_status in ("1", "2"):
+        where_clauses.append("v.receipt_status = :rstat")
+        params["rstat"] = int(receipt_status)
+    if user_name and user_name != "ALL":
+        where_clauses.append("UPPER(TRIM(v.user_name)) = :unm")
+        params["unm"] = user_name.strip().upper()
+    q_clean = (q or "").strip()
+    if q_clean:
+        where_clauses.append("""(
+            CAST(v.vouch_no AS TEXT) ILIKE :q
+            OR CAST(v.donor_code AS TEXT) ILIKE :q
+            OR COALESCE(v.don_req_desc, '') ILIKE :q
+            OR COALESCE(d.donor_ename, '') ILIKE :q
+            OR COALESCE(d.donor_name, '') ILIKE :q
+            OR COALESCE(v.cheq_visa_no, '') ILIKE :q
+            OR COALESCE(v.attachments, '') ILIKE :q
+        )""")
+        params["q"] = f"%{q_clean}%"
+
+    where_sql = " AND ".join(where_clauses)
+    sum_res = await db.execute(text(f"""
+        SELECT
+            COUNT(*) AS total_rows,
+            COUNT(*) FILTER (WHERE v.receipt_status = 1) AS active_count,
+            COUNT(*) FILTER (WHERE v.receipt_status = 2) AS cancelled_count,
+            COALESCE(SUM(v.trans_val) FILTER (WHERE v.receipt_status = 1), 0)::float8 AS total_active_bhd
+        FROM vouch_mstr v
+        LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+        WHERE {where_sql}
+    """), params)
+    summary = dict(sum_res.first()._mapping)
+    total_filtered = int(summary["total_rows"] or 0)
+
+    p = max(int(page or 1), 1)
+    ps = min(max(int(page_size or 50), 10), 200)
+    total_pages = max((total_filtered + ps - 1) // ps, 1)
+    if p > total_pages:
+        p = total_pages
+    params["limit"] = ps
+    params["offset"] = (p - 1) * ps
+
+    rows_res = await db.execute(text(f"""
+        SELECT
+            v.vouch_no,
+            v.trns_year,
+            v.donor_type,
+            v.donor_code,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, '') AS donor_display_name,
+            COALESCE(d.donor_name, '') AS donor_name_ar,
+            COALESCE(d.donor_ename, '') AS donor_name_en,
+            COALESCE(d.mobile, d.tel_home, d.tel_office, '') AS donor_mobile,
+            COALESCE(d.donor_address, '') AS donor_address,
+            v.band_det_cd,
+            COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name,
+            COALESCE(TO_CHAR(v.trans_date, 'YYYY-MM-DD'), '') AS trans_date,
+            COALESCE(v.trans_val, 0)::float8 AS trans_val,
+            COALESCE(v.don_req_desc, '') AS don_req_desc,
+            COALESCE(v.req_reason, '') AS req_reason,
+            COALESCE(v.attachments, '') AS attachments,
+            v.trans_pay_type,
+            COALESCE(pt.type_edesc, pt.type_desc, 'Cash') AS pay_type_name,
+            COALESCE(v.cheq_visa_no, '') AS cheq_visa_no,
+            v.bank_cd,
+            COALESCE(bk.bank_e_desc, bk.bank_desc, '') AS bank_name,
+            COALESCE(TO_CHAR(v.visa_ex_date, 'YYYY-MM-DD'), '') AS visa_ex_date,
+            COALESCE(v.user_name, '') AS user_name,
+            COALESCE(v.amt_txt, '') AS amt_txt,
+            COALESCE(v.chk_ser, '') AS chk_ser,
+            COALESCE(v.addresss_tel, '') AS addresss_tel,
+            COALESCE(v.tel, '') AS tel,
+            COALESCE(v.print_flag, 2) AS print_flag,
+            COALESCE(TO_CHAR(v.print_date, 'YYYY-MM-DD'), '') AS print_date,
+            COALESCE(v.print_counter, 0) AS print_counter,
+            v.vouch_no2,
+            COALESCE(v.auto_num, 1) AS auto_num,
+            COALESCE(v.cancel_replace_notes, '') AS cancel_replace_notes,
+            COALESCE(v.receipt_status, 1) AS receipt_status,
+            COALESCE(v.cancelled_by, '') AS cancelled_by,
+            v.dic_bank,
+            COALESCE(dbk.bank_e_desc, '') AS dic_bank_name,
+            COALESCE(v.dic_account, '') AS dic_account
+        FROM vouch_mstr v
+        LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+        LEFT JOIN lkp_band_details b ON v.band_det_cd = b.band_det_cd
+        LEFT JOIN lkp_payment_types pt ON v.trans_pay_type = pt.type_cd
+        LEFT JOIN lkp_banks bk ON v.bank_cd = bk.bank_cd
+        LEFT JOIN lkp_banks dbk ON v.dic_bank = dbk.bank_cd
+        WHERE {where_sql}
+        ORDER BY v.trns_year DESC, v.vouch_no DESC
+        LIMIT :limit OFFSET :offset
+    """), params)
+
+    return {
+        "summary": summary,
+        "rows": [dict(r._mapping) for r in rows_res],
+        "pagination": {
+            "page": p,
+            "page_size": ps,
+            "total_rows": total_filtered,
+            "total_pages": total_pages
+        }
+    }
+
+
+@app.get("/api/voucher-receipts/record")
+async def get_single_voucher_receipt_api(vouch_no: int, trns_year: int, donor_type: int = 1, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(text("""
+        SELECT
+            v.vouch_no,
+            v.trns_year,
+            v.donor_type,
+            v.donor_code,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, '') AS donor_display_name,
+            COALESCE(d.donor_name, '') AS donor_name_ar,
+            COALESCE(d.donor_ename, '') AS donor_name_en,
+            COALESCE(d.mobile, d.tel_home, d.tel_office, '') AS donor_mobile,
+            COALESCE(d.donor_address, '') AS donor_address,
+            v.band_det_cd,
+            COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name,
+            COALESCE(TO_CHAR(v.trans_date, 'YYYY-MM-DD'), '') AS trans_date,
+            COALESCE(v.trans_val, 0)::float8 AS trans_val,
+            COALESCE(v.don_req_desc, '') AS don_req_desc,
+            COALESCE(v.req_reason, '') AS req_reason,
+            COALESCE(v.attachments, '') AS attachments,
+            v.trans_pay_type,
+            COALESCE(pt.type_edesc, pt.type_desc, 'Cash') AS pay_type_name,
+            COALESCE(v.cheq_visa_no, '') AS cheq_visa_no,
+            v.bank_cd,
+            COALESCE(bk.bank_e_desc, bk.bank_desc, '') AS bank_name,
+            COALESCE(TO_CHAR(v.visa_ex_date, 'YYYY-MM-DD'), '') AS visa_ex_date,
+            COALESCE(v.user_name, '') AS user_name,
+            COALESCE(v.amt_txt, '') AS amt_txt,
+            COALESCE(v.chk_ser, '') AS chk_ser,
+            COALESCE(v.addresss_tel, '') AS addresss_tel,
+            COALESCE(v.tel, '') AS tel,
+            COALESCE(v.print_flag, 2) AS print_flag,
+            COALESCE(TO_CHAR(v.print_date, 'YYYY-MM-DD'), '') AS print_date,
+            COALESCE(v.print_counter, 0) AS print_counter,
+            v.vouch_no2,
+            COALESCE(v.auto_num, 1) AS auto_num,
+            COALESCE(v.cancel_replace_notes, '') AS cancel_replace_notes,
+            COALESCE(v.receipt_status, 1) AS receipt_status,
+            COALESCE(v.cancelled_by, '') AS cancelled_by,
+            v.dic_bank,
+            COALESCE(dbk.bank_e_desc, '') AS dic_bank_name,
+            COALESCE(v.dic_account, '') AS dic_account
+        FROM vouch_mstr v
+        LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+        LEFT JOIN lkp_band_details b ON v.band_det_cd = b.band_det_cd
+        LEFT JOIN lkp_payment_types pt ON v.trans_pay_type = pt.type_cd
+        LEFT JOIN lkp_banks bk ON v.bank_cd = bk.bank_cd
+        LEFT JOIN lkp_banks dbk ON v.dic_bank = dbk.bank_cd
+        WHERE v.vouch_no = :vno AND v.trns_year = :yr AND v.donor_type = :dtype
+    """), {"vno": int(vouch_no), "yr": int(trns_year), "dtype": int(donor_type)})
+    row = res.first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Receipt Voucher #{vouch_no}/{trns_year} not found.")
+    return {"voucher": dict(row._mapping)}
+
+
+@app.post("/api/voucher-receipts/save")
+async def save_voucher_receipt_api(payload: VoucherSaveSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    cur_user = (request.state.user or {}).get("username", "SAJJAD")
+    if payload.trans_val <= 0:
+        raise HTTPException(status_code=400, detail="Receipt amount (trans_val) must be greater than 0.000 BHD.")
+
+    d_res = await db.execute(text("SELECT donor_cd, donor_name, donor_ename, donor_address, mobile, tel_home FROM cash_donors WHERE donor_cd = :dcd"), {"dcd": payload.donor_code})
+    d_row = d_res.first()
+    if not d_row:
+        raise HTTPException(status_code=400, detail=f"Cash Donor #{payload.donor_code} does not exist.")
+
+    amt_words = (payload.amt_txt or "").strip() or bhd_amount_to_words(payload.trans_val)
+    don_req = (payload.don_req_desc or "").strip() or (d_row.donor_ename or d_row.donor_name or "")
+    tel_val = (payload.tel or "").strip() or (d_row.mobile or d_row.tel_home or "")
+    addr_val = (payload.addresss_tel or "").strip() or (d_row.donor_address or "")[:80]
+
+    if payload.is_new:
+        # Receipt numbering is ALWAYS auto-incremented per trns_year
+        nx = await db.execute(text("""
+            SELECT COALESCE(MAX(vouch_no), 0) + 1
+            FROM vouch_mstr
+            WHERE trns_year = :yr AND donor_type = 1
+        """), {"yr": int(payload.trns_year)})
+        target_vno = int(nx.scalar() or 1)
+
+        p_flag = 1 if payload.mark_printed else 2
+        p_date = date.today() if payload.mark_printed else None
+        p_cnt = 1 if payload.mark_printed else 0
+
+        await db.execute(text("""
+            INSERT INTO vouch_mstr (
+                vouch_no, donor_type, donor_code, band_det_cd, trans_date, trans_val,
+                don_req_desc, req_reason, attachments, trans_pay_type, cheq_visa_no,
+                bank_cd, visa_ex_date, trns_year, user_name, amt_txt, chk_ser,
+                addresss_tel, tel, print_flag, print_date, print_counter,
+                vouch_no2, auto_num, receipt_status, dic_bank, dic_account
+            ) VALUES (
+                :vouch_no, 1, :donor_code, :band_det_cd, :trans_date, :trans_val,
+                :don_req_desc, :req_reason, :attachments, :trans_pay_type, :cheq_visa_no,
+                :bank_cd, :visa_ex_date, :trns_year, :user_name, :amt_txt, :chk_ser,
+                :addresss_tel, :tel, :print_flag, :print_date, :print_counter,
+                NULL, 1, 1, :dic_bank, :dic_account
+            )
+        """), {
+            "vouch_no": target_vno,
+            "donor_code": int(payload.donor_code),
+            "band_det_cd": int(payload.band_det_cd),
+            "trans_date": payload.trans_date,
+            "trans_val": round(float(payload.trans_val), 3),
+            "don_req_desc": don_req,
+            "req_reason": (payload.req_reason or "").strip(),
+            "attachments": (payload.attachments or "").strip(),
+            "trans_pay_type": int(payload.trans_pay_type or 1),
+            "cheq_visa_no": (payload.cheq_visa_no or "").strip(),
+            "bank_cd": int(payload.bank_cd) if payload.bank_cd else None,
+            "visa_ex_date": payload.visa_ex_date,
+            "trns_year": int(payload.trns_year),
+            "user_name": cur_user,
+            "amt_txt": amt_words,
+            "chk_ser": (payload.chk_ser or "").strip(),
+            "addresss_tel": addr_val,
+            "tel": tel_val,
+            "print_flag": p_flag,
+            "print_date": p_date,
+            "print_counter": p_cnt,
+            "dic_bank": int(payload.dic_bank) if payload.dic_bank else None,
+            "dic_account": (payload.dic_account or "").strip()
+        })
+        await db.commit()
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="To modify or cancel an existing receipt, please use Voucher Control (/voucher-control) so the old receipt snapshot and reason are logged in VOUCH_HISTORY."
+        )
+
+    saved = await get_single_voucher_receipt_api(target_vno, int(payload.trns_year), int(payload.donor_type or 1), db)
+    return {
+        "status": "success",
+        "vouch_no": target_vno,
+        "trns_year": int(payload.trns_year),
+        "voucher": saved["voucher"],
+        "message": f"Receipt Voucher #{target_vno}/{payload.trns_year} saved successfully."
+    }
+
+
+@app.post("/api/voucher-receipts/mark-printed")
+async def mark_voucher_printed_api(vouch_no: int, trns_year: int, donor_type: int = 1, db: AsyncSession = Depends(get_db)):
+    await db.execute(text("""
+        UPDATE vouch_mstr
+        SET print_flag = 1,
+            print_date = CURRENT_DATE,
+            print_counter = COALESCE(print_counter, 0) + 1
+        WHERE vouch_no = :vno AND trns_year = :yr AND donor_type = :dtype
+    """), {"vno": int(vouch_no), "yr": int(trns_year), "dtype": int(donor_type)})
+    await db.commit()
+    saved = await get_single_voucher_receipt_api(int(vouch_no), int(trns_year), int(donor_type), db)
+    return {"status": "success", "voucher": saved["voucher"]}
+
+
+@app.get("/api/voucher-control/overview")
+async def get_voucher_control_overview_api(
+    trns_year: int = 2026,
+    db: AsyncSession = Depends(get_db)
+):
+    cancelled_res = await db.execute(text("""
+        SELECT
+            v.vouch_no, v.trns_year, v.donor_type, v.donor_code,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, '') AS donor_display_name,
+            v.band_det_cd,
+            COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name,
+            COALESCE(TO_CHAR(v.trans_date, 'YYYY-MM-DD'), '') AS trans_date,
+            COALESCE(v.trans_val, 0)::float8 AS trans_val,
+            COALESCE(v.don_req_desc, '') AS don_req_desc,
+            COALESCE(v.attachments, '') AS attachments,
+            v.trans_pay_type,
+            COALESCE(pt.type_edesc, pt.type_desc, 'Cash') AS pay_type_name,
+            COALESCE(v.cheq_visa_no, '') AS cheq_visa_no,
+            COALESCE(v.user_name, '') AS user_name,
+            COALESCE(v.amt_txt, '') AS amt_txt,
+            COALESCE(v.cancel_replace_notes, '') AS cancel_replace_notes,
+            COALESCE(v.cancelled_by, '') AS cancelled_by,
+            COALESCE(v.print_counter, 0) AS print_counter
+        FROM vouch_mstr v
+        LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+        LEFT JOIN lkp_band_details b ON v.band_det_cd = b.band_det_cd
+        LEFT JOIN lkp_payment_types pt ON v.trans_pay_type = pt.type_cd
+        WHERE v.receipt_status = 2
+        ORDER BY v.trns_year DESC, v.vouch_no DESC
+    """))
+
+    hist_res = await db.execute(text("""
+        SELECT
+            h.hist_id, h.vouch_no, h.trns_year, h.donor_code,
+            h.band_det_cd,
+            COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name,
+            COALESCE(TO_CHAR(h.trans_date, 'YYYY-MM-DD'), '') AS trans_date,
+            COALESCE(h.trans_val, 0)::float8 AS trans_val,
+            COALESCE(h.don_req_desc, '') AS don_req_desc,
+            COALESCE(h.attachments, '') AS attachments,
+            h.trans_pay_type,
+            COALESCE(pt.type_edesc, pt.type_desc, 'Cash') AS pay_type_name,
+            COALESCE(h.cheq_visa_no, '') AS cheq_visa_no,
+            COALESCE(h.user_name, '') AS user_name,
+            COALESCE(h.amt_txt, '') AS amt_txt,
+            COALESCE(TO_CHAR(h.delete_date, 'YYYY-MM-DD'), '') AS delete_date,
+            COALESCE(h.action_type, 'CANCEL') AS action_type,
+            COALESCE(h.action_by, h.user_name, '') AS action_by,
+            COALESCE(h.action_reason, '') AS action_reason
+        FROM vouch_history h
+        LEFT JOIN lkp_band_details b ON h.band_det_cd = b.band_det_cd
+        LEFT JOIN lkp_payment_types pt ON h.trans_pay_type = pt.type_cd
+        ORDER BY h.hist_id DESC
+    """))
+
+    seq_res = await db.execute(text("""
+        SELECT vouch_no FROM vouch_mstr WHERE trns_year = :yr ORDER BY vouch_no ASC
+    """), {"yr": int(trns_year)})
+    vnos = [int(r.vouch_no) for r in seq_res]
+
+    return {
+        "cancelled_vouchers": [dict(r._mapping) for r in cancelled_res],
+        "voucher_history": [dict(r._mapping) for r in hist_res],
+        "sequence_audit": {
+            "trns_year": int(trns_year),
+            "count": len(vnos),
+            "min_vouch_no": vnos[0] if vnos else 0,
+            "max_vouch_no": vnos[-1] if vnos else 0
+        }
+    }
+
+
+async def _archive_voucher_to_history(db: AsyncSession, orig: Any, action_type: str, action_by: str, action_reason: str):
+    await db.execute(text("""
+        INSERT INTO vouch_history (
+            vouch_no, donor_type, donor_code, band_det_cd, trans_date, trans_val,
+            don_req_desc, req_reason, attachments, trans_pay_type, cheq_visa_no,
+            bank_cd, visa_ex_date, nation_cd, trns_year, user_name, amt_txt,
+            chk_ser, addresss_tel, tel, print_flag, print_date, print_counter,
+            delete_date, action_type, action_by, action_reason, action_at
+        ) VALUES (
+            :vouch_no, :donor_type, :donor_code, :band_det_cd, :trans_date, :trans_val,
+            :don_req_desc, :req_reason, :attachments, :trans_pay_type, :cheq_visa_no,
+            :bank_cd, :visa_ex_date, :nation_cd, :trns_year, :user_name, :amt_txt,
+            :chk_ser, :addresss_tel, :tel, :print_flag, :print_date, :print_counter,
+            CURRENT_DATE, :action_type, :action_by, :action_reason, CURRENT_TIMESTAMP
+        )
+    """), {
+        "vouch_no": orig.vouch_no,
+        "donor_type": orig.donor_type,
+        "donor_code": str(orig.donor_code),
+        "band_det_cd": orig.band_det_cd,
+        "trans_date": orig.trans_date,
+        "trans_val": orig.trans_val,
+        "don_req_desc": orig.don_req_desc,
+        "req_reason": orig.req_reason,
+        "attachments": orig.attachments,
+        "trans_pay_type": orig.trans_pay_type,
+        "cheq_visa_no": orig.cheq_visa_no,
+        "bank_cd": orig.bank_cd,
+        "visa_ex_date": orig.visa_ex_date,
+        "nation_cd": orig.nation_cd,
+        "trns_year": orig.trns_year,
+        "user_name": orig.user_name,
+        "amt_txt": orig.amt_txt,
+        "chk_ser": orig.chk_ser,
+        "addresss_tel": orig.addresss_tel,
+        "tel": orig.tel,
+        "print_flag": orig.print_flag,
+        "print_date": orig.print_date,
+        "print_counter": orig.print_counter,
+        "action_type": action_type,
+        "action_by": action_by,
+        "action_reason": action_reason[:250]
+    })
+
+
+@app.post("/api/voucher-control/cancel")
+async def cancel_voucher_api(payload: VoucherCancelSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    cur_user = (request.state.user or {}).get("username", "SAJJAD")
+    reason = (payload.cancel_replace_notes or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="Please enter the reason for cancellation before confirming.")
+
+    v_res = await db.execute(text("""
+        SELECT * FROM vouch_mstr
+        WHERE vouch_no = :vno AND trns_year = :yr AND donor_type = :dtype
+    """), {"vno": int(payload.vouch_no), "yr": int(payload.trns_year), "dtype": int(payload.donor_type or 1)})
+    orig = v_res.first()
+    if not orig:
+        raise HTTPException(status_code=404, detail=f"Receipt #{payload.vouch_no}/{payload.trns_year} not found.")
+    if orig.receipt_status == 2:
+        raise HTTPException(status_code=400, detail=f"Receipt #{payload.vouch_no}/{payload.trns_year} is already cancelled.")
+
+    # 1. Save old receipt snapshot with its original values & responsible user into vouch_history
+    await _archive_voucher_to_history(db, orig, "CANCEL", cur_user, reason)
+
+    # 2. Mark voucher as Cancelled in vouch_mstr
+    await db.execute(text("""
+        UPDATE vouch_mstr
+        SET receipt_status = 2,
+            trans_val = 0,
+            cancelled_by = :cby,
+            cancel_replace_notes = :notes
+        WHERE vouch_no = :vno AND trns_year = :yr AND donor_type = :dtype
+    """), {
+        "cby": cur_user,
+        "notes": reason[:250],
+        "vno": orig.vouch_no,
+        "yr": orig.trns_year,
+        "dtype": orig.donor_type
+    })
+    await db.commit()
+
+    return {
+        "status": "success",
+        "cancelled_vouch_no": orig.vouch_no,
+        "trns_year": orig.trns_year,
+        "message": f"Receipt #{orig.vouch_no}/{orig.trns_year} cancelled. Old receipt snapshot archived to VOUCH_HISTORY by {cur_user}."
+    }
+
+
+@app.post("/api/voucher-control/modify")
+async def modify_voucher_api(payload: VoucherModifySchema, request: Request, db: AsyncSession = Depends(get_db)):
+    cur_user = (request.state.user or {}).get("username", "SAJJAD")
+    reason = (payload.modify_reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="Please enter the reason for modification before confirming.")
+    if payload.trans_val <= 0:
+        raise HTTPException(status_code=400, detail="Modified receipt amount must be greater than 0.000 BHD.")
+
+    v_res = await db.execute(text("""
+        SELECT * FROM vouch_mstr
+        WHERE vouch_no = :vno AND trns_year = :yr AND donor_type = :dtype
+    """), {"vno": int(payload.vouch_no), "yr": int(payload.trns_year), "dtype": int(payload.donor_type or 1)})
+    orig = v_res.first()
+    if not orig:
+        raise HTTPException(status_code=404, detail=f"Receipt #{payload.vouch_no}/{payload.trns_year} not found.")
+    if orig.receipt_status == 2:
+        raise HTTPException(status_code=400, detail="Cannot modify a cancelled receipt.")
+
+    d_res = await db.execute(text("SELECT donor_cd, donor_name, donor_ename, donor_address, mobile, tel_home FROM cash_donors WHERE donor_cd = :dcd"), {"dcd": payload.donor_code})
+    d_row = d_res.first()
+    if not d_row:
+        raise HTTPException(status_code=400, detail=f"Cash Donor #{payload.donor_code} does not exist.")
+
+    # 1. Save old receipt snapshot with all its old values & responsible user into vouch_history
+    await _archive_voucher_to_history(db, orig, "MODIFY", cur_user, reason)
+
+    # 2. Update receipt in vouch_mstr with new values
+    new_val = round(float(payload.trans_val), 3)
+    amt_words = bhd_amount_to_words(new_val)
+    don_req = (payload.don_req_desc or "").strip() or (d_row.donor_ename or d_row.donor_name or "")
+    tel_val = (payload.tel or "").strip() or (d_row.mobile or d_row.tel_home or "")
+    addr_val = (payload.addresss_tel or "").strip() or (d_row.donor_address or "")[:80]
+    mod_note = f"Modified by {cur_user} ({date.today().isoformat()}): {reason}"[:250]
+
+    await db.execute(text("""
+        UPDATE vouch_mstr SET
+            donor_code = :donor_code,
+            band_det_cd = :band_det_cd,
+            trans_date = :trans_date,
+            trans_val = :trans_val,
+            don_req_desc = :don_req_desc,
+            req_reason = :req_reason,
+            attachments = :attachments,
+            trans_pay_type = :trans_pay_type,
+            cheq_visa_no = :cheq_visa_no,
+            bank_cd = :bank_cd,
+            visa_ex_date = :visa_ex_date,
+            amt_txt = :amt_txt,
+            chk_ser = :chk_ser,
+            addresss_tel = :addresss_tel,
+            tel = :tel,
+            cancel_replace_notes = :mod_note
+        WHERE vouch_no = :vno AND trns_year = :yr AND donor_type = :dtype
+    """), {
+        "donor_code": int(payload.donor_code),
+        "band_det_cd": int(payload.band_det_cd),
+        "trans_date": payload.trans_date,
+        "trans_val": new_val,
+        "don_req_desc": don_req,
+        "req_reason": (payload.req_reason or "").strip(),
+        "attachments": (payload.attachments or "").strip(),
+        "trans_pay_type": int(payload.trans_pay_type or 1),
+        "cheq_visa_no": (payload.cheq_visa_no or "").strip(),
+        "bank_cd": int(payload.bank_cd) if payload.bank_cd else None,
+        "visa_ex_date": payload.visa_ex_date,
+        "amt_txt": amt_words,
+        "chk_ser": (payload.chk_ser or "").strip(),
+        "addresss_tel": addr_val,
+        "tel": tel_val,
+        "mod_note": mod_note,
+        "vno": orig.vouch_no,
+        "yr": orig.trns_year,
+        "dtype": orig.donor_type
+    })
+    await db.commit()
+
+    saved = await get_single_voucher_receipt_api(orig.vouch_no, orig.trns_year, orig.donor_type, db)
+    return {
+        "status": "success",
+        "vouch_no": orig.vouch_no,
+        "trns_year": orig.trns_year,
+        "voucher": saved["voucher"],
+        "message": f"Receipt #{orig.vouch_no}/{orig.trns_year} modified. Previous values archived to VOUCH_HISTORY by {cur_user}."
+    }
+
 
 

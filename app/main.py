@@ -21,7 +21,7 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
-DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "users")
+DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "users")
 
 def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_keys: tuple = DEFAULT_PAGE_KEYS) -> dict:
     if isinstance(raw_perms, str):
@@ -61,6 +61,8 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_k
 def resolve_page_key(path: str) -> str:
     if path.startswith("/users") or path.startswith("/api/users"):
         return "users"
+    if path.startswith("/cash-dashboard") or path.startswith("/api/cash-dashboard"):
+        return "cash_dashboard"
     if path.startswith("/cash-donors") or path.startswith("/api/cash-donors"):
         return "cash_donors"
     if path.startswith("/voucher-receipts") or path.startswith("/api/voucher-receipts"):
@@ -3443,33 +3445,53 @@ async def get_cash_donations_lookups(request: Request, db: AsyncSession = Depend
 @app.get("/api/cash-donors/list")
 async def list_cash_donors_api(
     q: str = "",
-    donor_type: str = "ALL",
-    donor_status: str = "ALL",
+    delay_filter: str = "ALL",
     importancy: str = "ALL",
     page: int = 1,
     page_size: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
     kpi_res = await db.execute(text("""
+        WITH donor_delay AS (
+            SELECT
+                d.donor_cd,
+                v.last_don_date,
+                CASE
+                    WHEN v.last_don_date IS NULL THEN NULL
+                    ELSE GREATEST(0,
+                        (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM v.last_don_date)::int) * 12
+                        + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM v.last_don_date)::int)
+                    )
+                END AS delay_months
+            FROM cash_donors d
+            LEFT JOIN (
+                SELECT donor_code, MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date
+                FROM vouch_mstr
+                GROUP BY donor_code
+            ) v ON v.donor_code = d.donor_cd
+        )
         SELECT
             COUNT(*) AS total_all,
-            COUNT(*) FILTER (WHERE donor_status = 1) AS total_active,
-            COUNT(*) FILTER (WHERE donor_status <> 1) AS total_inactive,
-            COUNT(*) FILTER (WHERE donor_type = 1) AS total_type_cash,
-            COUNT(*) FILTER (WHERE donor_type = 2) AS total_type_rent,
+            COUNT(*) FILTER (WHERE delay_months IS NOT NULL AND delay_months <= 12) AS recent_12m,
+            COUNT(*) FILTER (WHERE delay_months BETWEEN 13 AND 24) AS delayed_13_24m,
+            COUNT(*) FILTER (WHERE delay_months > 24) AS delayed_over_24m,
+            COUNT(*) FILTER (WHERE delay_months IS NULL) AS no_receipts,
             COALESCE(MAX(donor_cd), 0) AS max_donor_cd
-        FROM cash_donors
+        FROM donor_delay
     """))
     kpis = dict(kpi_res.first()._mapping)
 
     where_clauses = ["1=1"]
     params: dict[str, Any] = {}
-    if donor_type in ("1", "2"):
-        where_clauses.append("d.donor_type = :dtype")
-        params["dtype"] = int(donor_type)
-    if donor_status in ("1", "2"):
-        where_clauses.append("d.donor_status = :dstat")
-        params["dstat"] = int(donor_status)
+    if delay_filter == "0_12":
+        where_clauses.append("(v.delay_months IS NOT NULL AND v.delay_months <= 12)")
+    elif delay_filter == "13_24":
+        where_clauses.append("(v.delay_months BETWEEN 13 AND 24)")
+    elif delay_filter == "OVER_24":
+        where_clauses.append("(v.delay_months > 24)")
+    elif delay_filter == "NEVER":
+        where_clauses.append("(v.delay_months IS NULL)")
+
     if importancy in ("1", "2", "3"):
         where_clauses.append("d.donor_importancy_lvl = :imp")
         params["imp"] = int(importancy)
@@ -3487,7 +3509,27 @@ async def list_cash_donors_api(
         params["q"] = f"%{q_clean}%"
 
     where_sql = " AND ".join(where_clauses)
-    cnt_res = await db.execute(text(f"SELECT COUNT(*) FROM cash_donors d WHERE {where_sql}"), params)
+    v_subquery = """
+        SELECT donor_code,
+               COUNT(*) FILTER (WHERE receipt_status = 1) AS vouch_cnt,
+               SUM(trans_val) FILTER (WHERE receipt_status = 1) AS total_donated,
+               MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date,
+               CASE
+                   WHEN MAX(trans_date) FILTER (WHERE receipt_status = 1) IS NULL THEN NULL
+                   ELSE GREATEST(0,
+                       (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int) * 12
+                       + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int)
+                   )
+               END AS delay_months
+        FROM vouch_mstr
+        GROUP BY donor_code
+    """
+    cnt_res = await db.execute(text(f"""
+        SELECT COUNT(*)
+        FROM cash_donors d
+        LEFT JOIN ({v_subquery}) v ON v.donor_code = d.donor_cd
+        WHERE {where_sql}
+    """), params)
     total_filtered = int(cnt_res.scalar() or 0)
 
     p = max(int(page or 1), 1)
@@ -3508,7 +3550,6 @@ async def list_cash_donors_api(
             COALESCE(d.mobile, '') AS mobile,
             COALESCE(d.tel_home, '') AS tel_home,
             COALESCE(d.tel_office, '') AS tel_office,
-            d.donor_status,
             d.donor_type,
             COALESCE(d.bahrain_status, 1) AS bahrain_status,
             COALESCE(d.donor_importancy_lvl, 1) AS donor_importancy_lvl,
@@ -3519,17 +3560,11 @@ async def list_cash_donors_api(
             COALESCE(TO_CHAR(d.append_date, 'YYYY-MM-DD'), '') AS append_date,
             COALESCE(v.vouch_cnt, 0) AS vouch_count,
             COALESCE(v.total_donated, 0)::float8 AS total_donated,
-            COALESCE(TO_CHAR(v.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date
+            COALESCE(TO_CHAR(v.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date,
+            v.delay_months
         FROM cash_donors d
         LEFT JOIN lkp_name_prefixes p ON d.prefix = p.prefix_cd
-        LEFT JOIN (
-            SELECT donor_code,
-                   COUNT(*) FILTER (WHERE receipt_status = 1) AS vouch_cnt,
-                   SUM(trans_val) FILTER (WHERE receipt_status = 1) AS total_donated,
-                   MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date
-            FROM vouch_mstr
-            GROUP BY donor_code
-        ) v ON v.donor_code = d.donor_cd
+        LEFT JOIN ({v_subquery}) v ON v.donor_code = d.donor_cd
         WHERE {where_sql}
         ORDER BY d.donor_cd DESC
         LIMIT :limit OFFSET :offset
@@ -3624,9 +3659,22 @@ async def get_cash_donor_record_api(donor_cd: int, db: AsyncSession = Depends(ge
         ORDER BY v.trans_date DESC, v.trns_year DESC, v.vouch_no DESC
     """), {"dcd": int(donor_cd)})
     vouchers = [dict(r._mapping) for r in v_res]
+    valid_vouchers = [x for x in vouchers if x["receipt_status"] == 1]
     donor["vouchers"] = vouchers
-    donor["total_valid_bhd"] = round(sum(x["trans_val"] for x in vouchers if x["receipt_status"] == 1), 3)
-    donor["valid_vouchers_count"] = sum(1 for x in vouchers if x["receipt_status"] == 1)
+    donor["total_valid_bhd"] = round(sum(x["trans_val"] for x in valid_vouchers), 3)
+    donor["valid_vouchers_count"] = len(valid_vouchers)
+    if valid_vouchers:
+        last_dt_str = max(x["trans_date"] for x in valid_vouchers if x["trans_date"])
+        donor["last_donation_date"] = last_dt_str
+        try:
+            ldt = date.fromisoformat(last_dt_str)
+            tdy = date.today()
+            donor["delay_months"] = max(0, (tdy.year - ldt.year) * 12 + (tdy.month - ldt.month))
+        except Exception:
+            donor["delay_months"] = None
+    else:
+        donor["last_donation_date"] = ""
+        donor["delay_months"] = None
     return {"donor": donor}
 
 
@@ -3635,8 +3683,14 @@ async def save_cash_donor_api(payload: CashDonorSaveSchema, request: Request, db
     cur_user = (request.state.user or {}).get("username", "SAJJAD")
     ar_name = (payload.donor_name or "").strip()
     en_name = (payload.donor_ename or "").strip()
-    if not ar_name and not en_name:
-        raise HTTPException(status_code=400, detail="Please enter at least the Donor English Name or Arabic Name.")
+    if not en_name:
+        raise HTTPException(status_code=400, detail="Donor English Name (DONOR_ENAME) is required and cannot be empty.")
+    if payload.sex_cd not in (1, 2):
+        raise HTTPException(status_code=400, detail="Donor Sex/Gender (SEX_CD) is required and must be 1 (Male) or 2 (Female).")
+    if payload.donor_status not in (1, 2):
+        raise HTTPException(status_code=400, detail="Donor Status (DONOR_STATUS) is required and must be 1 (Active) or 2 (Non-Active).")
+    if payload.donor_importancy_lvl not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="Donor Importance Level (DONOR_IMPORTANCY_LVL) is required.")
 
     if not payload.donor_cd or payload.is_new:
         if payload.donor_cd:
@@ -3935,6 +3989,12 @@ async def save_voucher_receipt_api(payload: VoucherSaveSchema, request: Request,
     cur_user = (request.state.user or {}).get("username", "SAJJAD")
     if payload.trans_val <= 0:
         raise HTTPException(status_code=400, detail="Receipt amount (trans_val) must be greater than 0.000 BHD.")
+    if int(payload.trans_pay_type or 1) in (2, 3):
+        pay_label = "Cheque" if int(payload.trans_pay_type) == 2 else "Visa / Card"
+        if not (payload.cheq_visa_no or "").strip():
+            raise HTTPException(status_code=400, detail=f"{pay_label} Number (CHEQ_VISA_NO) is mandatory when payment method is {pay_label}.")
+        if not payload.bank_cd:
+            raise HTTPException(status_code=400, detail=f"Bank Name (BANK_CD) is mandatory when payment method is {pay_label}.")
 
     d_res = await db.execute(text("SELECT donor_cd, donor_name, donor_ename, donor_address, mobile, tel_home FROM cash_donors WHERE donor_cd = :dcd"), {"dcd": payload.donor_code})
     d_row = d_res.first()
@@ -3947,13 +4007,15 @@ async def save_voucher_receipt_api(payload: VoucherSaveSchema, request: Request,
     addr_val = (payload.addresss_tel or "").strip() or (d_row.donor_address or "")[:80]
 
     if payload.is_new:
-        # Receipt numbering is ALWAYS auto-incremented per trns_year
+        # Voucher year and receipt number are ALWAYS locked to current server year & auto-sequence
+        locked_year = date.today().year
         nx = await db.execute(text("""
             SELECT COALESCE(MAX(vouch_no), 0) + 1
             FROM vouch_mstr
             WHERE trns_year = :yr AND donor_type = 1
-        """), {"yr": int(payload.trns_year)})
+        """), {"yr": locked_year})
         target_vno = int(nx.scalar() or 1)
+        payload.trns_year = locked_year
 
         p_flag = 1 if payload.mark_printed else 2
         p_date = date.today() if payload.mark_printed else None
@@ -4199,6 +4261,12 @@ async def modify_voucher_api(payload: VoucherModifySchema, request: Request, db:
         raise HTTPException(status_code=400, detail="Please enter the reason for modification before confirming.")
     if payload.trans_val <= 0:
         raise HTTPException(status_code=400, detail="Modified receipt amount must be greater than 0.000 BHD.")
+    if int(payload.trans_pay_type or 1) in (2, 3):
+        pay_label = "Cheque" if int(payload.trans_pay_type) == 2 else "Visa / Card"
+        if not (payload.cheq_visa_no or "").strip():
+            raise HTTPException(status_code=400, detail=f"{pay_label} Number (CHEQ_VISA_NO) is mandatory when payment method is {pay_label}.")
+        if not payload.bank_cd:
+            raise HTTPException(status_code=400, detail=f"Bank Name (BANK_CD) is mandatory when payment method is {pay_label}.")
 
     v_res = await db.execute(text("""
         SELECT * FROM vouch_mstr
@@ -4276,6 +4344,286 @@ async def modify_voucher_api(payload: VoucherModifySchema, request: Request, db:
         "voucher": saved["voucher"],
         "message": f"Receipt #{orig.vouch_no}/{orig.trns_year} modified. Previous values archived to VOUCH_HISTORY by {cur_user}."
     }
+
+
+@app.get("/cash-dashboard", response_class=HTMLResponse)
+async def cash_dashboard_page(request: Request):
+    return templates.TemplateResponse("cash_dashboard.html", {"request": request})
+
+
+@app.get("/api/cash-dashboard/data")
+async def get_cash_dashboard_data_api(
+    trns_year: int = 2026,
+    band_det_cd: str = "ALL",
+    pay_type: str = "ALL",
+    db: AsyncSession = Depends(get_db)
+):
+    sel_yr = int(trns_year or date.today().year)
+    prev_yr = sel_yr - 1
+    today_dt = date.today()
+    ytd_cutoff_sel = today_dt if sel_yr == today_dt.year else date(sel_yr, 12, 31)
+    try:
+        ytd_cutoff_prev = date(prev_yr, ytd_cutoff_sel.month, ytd_cutoff_sel.day)
+    except ValueError:
+        ytd_cutoff_prev = date(prev_yr, ytd_cutoff_sel.month, 28)
+
+    extra_clauses = ["v.receipt_status = 1", "v.donor_type = 1"]
+    params: dict[str, Any] = {
+        "sel_yr": sel_yr,
+        "prev_yr": prev_yr,
+        "ytd_sel": ytd_cutoff_sel,
+        "ytd_prev": ytd_cutoff_prev
+    }
+    if band_det_cd and band_det_cd != "ALL":
+        extra_clauses.append("v.band_det_cd = :bdet")
+        params["bdet"] = int(band_det_cd)
+    if pay_type and pay_type != "ALL":
+        extra_clauses.append("v.trans_pay_type = :ptype")
+        params["ptype"] = int(pay_type)
+    base_where = " AND ".join(extra_clauses)
+
+    # 1. Year KPIs + Same-Period YTD Comparison + New vs Repeat Donors
+    kpi_sql = text(f"""
+        WITH first_don AS (
+            SELECT donor_code, MIN(trns_year) AS first_year
+            FROM vouch_mstr
+            WHERE receipt_status = 1 AND donor_type = 1
+            GROUP BY donor_code
+        ),
+        sel_rows AS (
+            SELECT v.trans_val, v.donor_code, v.trans_date, fd.first_year
+            FROM vouch_mstr v
+            LEFT JOIN first_don fd ON v.donor_code = fd.donor_code
+            WHERE {base_where} AND v.trns_year = :sel_yr
+        ),
+        prev_rows AS (
+            SELECT v.trans_val, v.donor_code, v.trans_date
+            FROM vouch_mstr v
+            WHERE {base_where} AND v.trns_year = :prev_yr
+        )
+        SELECT
+            COALESCE((SELECT SUM(trans_val) FROM sel_rows), 0)::float8 AS year_total_bhd,
+            COALESCE((SELECT SUM(trans_val) FROM prev_rows), 0)::float8 AS prev_year_total_bhd,
+            COALESCE((SELECT SUM(trans_val) FROM sel_rows WHERE trans_date <= :ytd_sel), 0)::float8 AS ytd_total_bhd,
+            COALESCE((SELECT SUM(trans_val) FROM prev_rows WHERE trans_date <= :ytd_prev), 0)::float8 AS prev_ytd_total_bhd,
+            (SELECT COUNT(*) FROM sel_rows) AS receipts_count,
+            COALESCE((SELECT AVG(trans_val) FROM sel_rows), 0)::float8 AS avg_receipt_bhd,
+            COALESCE((SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY trans_val) FROM sel_rows), 0)::float8 AS median_receipt_bhd,
+            (SELECT COUNT(DISTINCT donor_code) FROM sel_rows) AS unique_donors_year,
+            (SELECT COUNT(DISTINCT donor_code) FROM sel_rows WHERE first_year = :sel_yr) AS new_donors_year,
+            (SELECT COUNT(DISTINCT donor_code) FROM sel_rows WHERE first_year < :sel_yr) AS repeat_donors_year
+    """)
+    kpi_row = dict((await db.execute(kpi_sql, params)).first()._mapping)
+
+    def _pct(cur_v: float, old_v: float) -> Optional[float]:
+        if not old_v:
+            return None
+        return round(((cur_v - old_v) / old_v) * 100.0, 1)
+
+    kpi_row["selected_year"] = sel_yr
+    kpi_row["prev_year"] = prev_yr
+    kpi_row["ytd_label"] = ytd_cutoff_sel.strftime("%b %d")
+    kpi_row["yoy_pct"] = _pct(kpi_row["year_total_bhd"], kpi_row["prev_year_total_bhd"])
+    kpi_row["ytd_pct"] = _pct(kpi_row["ytd_total_bhd"], kpi_row["prev_ytd_total_bhd"])
+
+    # 2. Donor Recency Health (All-Time Base)
+    recency_res = await db.execute(text("""
+        WITH donor_delay AS (
+            SELECT
+                d.donor_cd,
+                CASE
+                    WHEN MAX(v.trans_date) FILTER (WHERE v.receipt_status = 1) IS NULL THEN NULL
+                    ELSE GREATEST(0,
+                        (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM MAX(v.trans_date) FILTER (WHERE v.receipt_status = 1))::int) * 12
+                        + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM MAX(v.trans_date) FILTER (WHERE v.receipt_status = 1))::int)
+                    )
+                END AS delay_months
+            FROM cash_donors d
+            LEFT JOIN vouch_mstr v ON v.donor_code = d.donor_cd
+            GROUP BY d.donor_cd
+        )
+        SELECT
+            COUNT(*) AS total_all,
+            COUNT(*) FILTER (WHERE delay_months IS NOT NULL AND delay_months <= 12) AS recent_12m,
+            COUNT(*) FILTER (WHERE delay_months BETWEEN 13 AND 24) AS delayed_13_24m,
+            COUNT(*) FILTER (WHERE delay_months > 24) AS delayed_over_24m,
+            COUNT(*) FILTER (WHERE delay_months IS NULL) AS no_receipts
+        FROM donor_delay
+    """))
+    recency = dict(recency_res.first()._mapping)
+
+    # 3. Audit & Control Counts for Selected Year
+    audit_cnt_res = await db.execute(text("""
+        SELECT
+            (SELECT COUNT(*) FROM vouch_mstr WHERE trns_year = :sel_yr AND receipt_status = 2) AS cancelled_in_year,
+            (SELECT COUNT(*) FROM vouch_history WHERE trns_year = :sel_yr AND action_type = 'MODIFY') AS modified_in_year,
+            (SELECT COUNT(*) FROM vouch_history WHERE trns_year = :sel_yr) AS history_in_year
+    """), {"sel_yr": sel_yr})
+    audit_counts = dict(audit_cnt_res.first()._mapping)
+
+    # 4. Monthly Collection Trend (Selected Year vs Previous Year, Jan-Dec)
+    monthly_res = await db.execute(text(f"""
+        WITH months AS (SELECT generate_series(1, 12) AS m_num)
+        SELECT
+            m.m_num,
+            TO_CHAR(TO_DATE(m.m_num::text, 'MM'), 'Mon') AS month_label,
+            COALESCE(SUM(v.trans_val) FILTER (WHERE v.trns_year = :sel_yr), 0)::float8 AS cur_bhd,
+            COUNT(v.vouch_no) FILTER (WHERE v.trns_year = :sel_yr) AS cur_cnt,
+            COALESCE(SUM(v.trans_val) FILTER (WHERE v.trns_year = :prev_yr), 0)::float8 AS prev_bhd,
+            COUNT(v.vouch_no) FILTER (WHERE v.trns_year = :prev_yr) AS prev_cnt
+        FROM months m
+        LEFT JOIN vouch_mstr v ON EXTRACT(MONTH FROM v.trans_date)::int = m.m_num
+            AND v.trns_year IN (:sel_yr, :prev_yr)
+            AND {base_where}
+        GROUP BY m.m_num
+        ORDER BY m.m_num
+    """), params)
+    monthly_trend = [dict(r._mapping) for r in monthly_res]
+
+    # 5. Breakdown by Donation Band / Purpose (Selected Year)
+    band_res = await db.execute(text(f"""
+        SELECT
+            v.band_det_cd,
+            COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, 'Band #' || v.band_det_cd::text) AS band_name,
+            COUNT(*) AS receipts,
+            COALESCE(SUM(v.trans_val), 0)::float8 AS total_bhd
+        FROM vouch_mstr v
+        LEFT JOIN lkp_band_details b ON v.band_det_cd = b.band_det_cd
+        WHERE {base_where} AND v.trns_year = :sel_yr
+        GROUP BY v.band_det_cd, band_name
+        ORDER BY total_bhd DESC
+    """), params)
+    by_band = [dict(r._mapping) for r in band_res]
+    band_sum = sum(x["total_bhd"] for x in by_band) or 1.0
+    for x in by_band:
+        x["pct"] = round((x["total_bhd"] / band_sum) * 100.0, 1)
+
+    # 6. Breakdown by Payment Method (Selected Year)
+    pay_res = await db.execute(text(f"""
+        SELECT
+            v.trans_pay_type AS type_cd,
+            COALESCE(pt.type_edesc, pt.type_desc, 'Cash') AS pay_type_name,
+            COUNT(*) AS receipts,
+            COALESCE(SUM(v.trans_val), 0)::float8 AS total_bhd
+        FROM vouch_mstr v
+        LEFT JOIN lkp_payment_types pt ON v.trans_pay_type = pt.type_cd
+        WHERE {base_where} AND v.trns_year = :sel_yr
+        GROUP BY v.trans_pay_type, pay_type_name
+        ORDER BY total_bhd DESC
+    """), params)
+    by_pay_type = [dict(r._mapping) for r in pay_res]
+    pay_sum = sum(x["total_bhd"] for x in by_pay_type) or 1.0
+    for x in by_pay_type:
+        x["pct"] = round((x["total_bhd"] / pay_sum) * 100.0, 1)
+
+    # 7. Multi-Year Annual Trajectory (Last 10 Years up to sel_yr)
+    annual_res = await db.execute(text(f"""
+        SELECT
+            v.trns_year,
+            COUNT(*) AS receipts,
+            COUNT(DISTINCT v.donor_code) AS unique_donors,
+            COALESCE(SUM(v.trans_val), 0)::float8 AS total_bhd
+        FROM vouch_mstr v
+        WHERE {base_where} AND v.trns_year BETWEEN :yr_start AND :sel_yr
+        GROUP BY v.trns_year
+        ORDER BY v.trns_year ASC
+    """), {**params, "yr_start": sel_yr - 9})
+    annual_trajectory = [dict(r._mapping) for r in annual_res]
+
+    # 8. Top 15 Cash Donors (Selected Year + Lifetime Total & Recency)
+    top_donors_res = await db.execute(text(f"""
+        WITH lt AS (
+            SELECT
+                donor_code,
+                SUM(trans_val) AS lifetime_bhd,
+                MAX(trans_date) AS last_don_date
+            FROM vouch_mstr
+            WHERE receipt_status = 1 AND donor_type = 1
+            GROUP BY donor_code
+        )
+        SELECT
+            v.donor_code AS donor_cd,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, 'Donor #' || v.donor_code::text) AS donor_name,
+            COALESCE(d.mobile, d.tel_home, d.tel_office, '') AS mobile,
+            COALESCE(d.donor_importancy_lvl, 1) AS importancy_lvl,
+            COUNT(*) AS year_receipts,
+            COALESCE(SUM(v.trans_val), 0)::float8 AS year_total_bhd,
+            COALESCE(lt.lifetime_bhd, 0)::float8 AS lifetime_bhd,
+            COALESCE(TO_CHAR(lt.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date,
+            GREATEST(0,
+                (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM lt.last_don_date)::int) * 12
+                + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM lt.last_don_date)::int)
+            ) AS delay_months
+        FROM vouch_mstr v
+        LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+        LEFT JOIN lt ON v.donor_code = lt.donor_code
+        WHERE {base_where} AND v.trns_year = :sel_yr
+        GROUP BY v.donor_code, d.donor_ename, d.donor_name, d.mobile, d.tel_home, d.tel_office, d.donor_importancy_lvl, lt.lifetime_bhd, lt.last_don_date
+        ORDER BY year_total_bhd DESC
+        LIMIT 15
+    """), params)
+    top_donors = [dict(r._mapping) for r in top_donors_res]
+
+    # 9. Lapsed High-Value Donors Alert ("Win-Back List": >= 500 BHD lifetime, 13-36 months since last donation)
+    winback_res = await db.execute(text("""
+        WITH donor_stats AS (
+            SELECT
+                d.donor_cd,
+                COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, 'Donor #' || d.donor_cd::text) AS donor_name,
+                COALESCE(d.mobile, d.tel_home, d.tel_office, '') AS mobile,
+                COALESCE(d.donor_importancy_lvl, 1) AS importancy_lvl,
+                COUNT(v.vouch_no) AS total_receipts,
+                COALESCE(SUM(v.trans_val), 0)::float8 AS lifetime_bhd,
+                MAX(v.trans_date) AS last_don_date,
+                GREATEST(0,
+                    (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM MAX(v.trans_date))::int) * 12
+                    + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM MAX(v.trans_date))::int)
+                ) AS delay_months
+            FROM cash_donors d
+            JOIN vouch_mstr v ON v.donor_code = d.donor_cd AND v.receipt_status = 1 AND v.donor_type = 1
+            GROUP BY d.donor_cd, d.donor_ename, d.donor_name, d.mobile, d.tel_home, d.tel_office, d.donor_importancy_lvl
+        )
+        SELECT *, COALESCE(TO_CHAR(last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date
+        FROM donor_stats
+        WHERE lifetime_bhd >= 500 AND delay_months BETWEEN 13 AND 36
+        ORDER BY lifetime_bhd DESC
+        LIMIT 15
+    """))
+    winback_donors = [dict(r._mapping) for r in winback_res]
+
+    # 10. Recent Control & Audit Feed (vouch_history & cancelled receipts — no cashier counter table)
+    audit_feed_res = await db.execute(text("""
+        SELECT
+            h.hist_id,
+            h.vouch_no,
+            h.trns_year,
+            COALESCE(h.action_type, 'CANCEL') AS action_type,
+            COALESCE(h.action_by, h.user_name, '') AS action_by,
+            COALESCE(h.action_reason, '') AS action_reason,
+            COALESCE(TO_CHAR(h.delete_date, 'YYYY-MM-DD'), '') AS action_date,
+            COALESCE(h.don_req_desc, 'Donor #' || COALESCE(h.donor_code, '')) AS donor_name,
+            COALESCE(h.trans_val, 0)::float8 AS old_val_bhd,
+            COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name
+        FROM vouch_history h
+        LEFT JOIN lkp_band_details b ON h.band_det_cd = b.band_det_cd
+        ORDER BY h.hist_id DESC
+        LIMIT 12
+    """))
+    audit_feed = [dict(r._mapping) for r in audit_feed_res]
+
+    return {
+        "kpis": kpi_row,
+        "recency": recency,
+        "audit_counts": audit_counts,
+        "monthly_trend": monthly_trend,
+        "by_band": by_band,
+        "by_pay_type": by_pay_type,
+        "annual_trajectory": annual_trajectory,
+        "top_donors": top_donors,
+        "winback_donors": winback_donors,
+        "audit_feed": audit_feed
+    }
+
 
 
 

@@ -11,29 +11,59 @@
         body { font-family: 'Inter', 'Cairo', sans-serif; }
         [x-cloak] { display: none !important; }
 
-        /* Dedicated Print Styles for Pre-Printed Receipt Form & Full Form */
+        /* Dedicated Print Styles: Strictly 2 Copies Only (Copy 1: Donor Copy, Copy 2: Accountant Copy) */
+        #print-only-two-copies {
+            display: none;
+        }
         @media print {
             @page {
                 size: A5 landscape;
                 margin: 0;
             }
-            body * {
-                visibility: hidden !important;
-            }
-            #printable-receipt-sheet,
-            #printable-receipt-sheet * {
-                visibility: visible !important;
-            }
-            #printable-receipt-sheet {
-                position: fixed !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 210mm !important;
-                height: 148mm !important;
-                box-shadow: none !important;
-                border: none !important;
+            html, body {
                 margin: 0 !important;
+                padding: 0 !important;
+                height: auto !important;
+                min-height: 0 !important;
+                background: #ffffff !important;
+            }
+            #erp-global-sidebar,
+            .no-print {
+                display: none !important;
+            }
+            .erp-shell-wrapper,
+            .erp-main-content {
+                display: block !important;
+                min-height: 0 !important;
+                height: auto !important;
+                margin: 0 !important;
+                padding: 0 !important;
                 background: transparent !important;
+                overflow: visible !important;
+            }
+            #print-only-two-copies {
+                display: block !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            .receipt-print-copy {
+                width: 210mm;
+                height: 145mm;
+                padding: 8mm 10mm;
+                box-sizing: border-box;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                overflow: hidden;
+                position: relative;
+            }
+            .receipt-print-copy.copy-donor {
+                page-break-after: always !important;
+                break-after: page !important;
+            }
+            .receipt-print-copy.copy-accountant {
+                page-break-after: avoid !important;
+                break-after: avoid !important;
             }
             .preprinted-only-mode .receipt-static-chrome {
                 visibility: hidden !important;
@@ -50,7 +80,8 @@
 <body class="bg-slate-50 text-slate-800" x-data="voucherReceiptsApp()" x-init="init()">
     {% include 'sidebar.html' %}
 
-    <div class="p-4 lg:p-6 max-w-7xl mx-auto w-full space-y-4">
+    <!-- SCREEN UI (Hidden completely via display:none during printing so it adds 0 pages) -->
+    <div id="receipt-screen-workspace" class="no-print p-4 lg:p-6 max-w-7xl mx-auto w-full space-y-4">
         <!-- Top Bar -->
         <div class="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
             <div>
@@ -138,18 +169,23 @@
                     <div x-show="form.cancel_replace_notes" class="text-[11px]" x-text="'Reason / Replacement: ' + form.cancel_replace_notes"></div>
                 </div>
 
-                <!-- 1. Voucher Header Row: Year, Auto Receipt No, Date -->
+                <!-- 1. Voucher Header Row: Year (Locked), Auto Receipt No (Locked), Date -->
                 <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 text-xs">
                     <div class="sm:col-span-4">
-                        <label class="block font-semibold text-slate-700 mb-1">Year (Independent Auto Sequence)</label>
-                        <input type="number" x-model.number="form.trns_year" @change="if(form.is_new) fetchNextVoucherNo()"
-                               :readonly="!form.is_new"
-                               class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold bg-slate-50">
+                        <label class="flex items-center justify-between font-semibold text-slate-700 mb-1">
+                            <span>Voucher Year</span>
+                            <span class="text-[9px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 font-bold">AUTO / LOCKED</span>
+                        </label>
+                        <input type="number" x-model.number="form.trns_year" readonly disabled
+                               class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold bg-slate-100 text-slate-700 cursor-not-allowed">
                     </div>
                     <div class="sm:col-span-4">
-                        <label class="block font-semibold text-slate-700 mb-1">Auto Receipt No (RV #)</label>
-                        <input type="number" x-model.number="form.vouch_no" readonly
-                               class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold bg-slate-100 text-blue-700">
+                        <label class="flex items-center justify-between font-semibold text-slate-700 mb-1">
+                            <span>Receipt No (RV #)</span>
+                            <span class="text-[9px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 font-bold">AUTO / LOCKED</span>
+                        </label>
+                        <input type="number" x-model.number="form.vouch_no" readonly disabled
+                               class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold bg-slate-100 text-blue-700 cursor-not-allowed">
                     </div>
                     <div class="sm:col-span-4">
                         <label class="block font-semibold text-slate-700 mb-1">Receipt Date *</label>
@@ -252,31 +288,47 @@
                     </div>
 
                     <!-- Conditional Cheque / Visa / Transfer Details -->
-                    <div x-show="form.trans_pay_type !== 1" x-cloak class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-2 border-t border-slate-200">
-                        <div class="sm:col-span-4">
-                            <label class="block font-semibold text-slate-700 mb-1"
-                                   x-text="form.trans_pay_type === 2 ? 'Cheque No *' : (form.trans_pay_type === 3 ? 'Card / Auth No' : 'Transfer / Fawri+ Ref')"></label>
-                            <input type="text" x-model="form.cheq_visa_no" placeholder="e.g. 002650"
-                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono font-bold">
+                    <div x-show="form.trans_pay_type !== 1" x-cloak class="space-y-2 pt-2 border-t border-slate-200">
+                        <div x-show="form.trans_pay_type === 2 || form.trans_pay_type === 3"
+                             class="px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 font-semibold">
+                            <span x-text="form.trans_pay_type === 2 ? 'Cheque Payment: Fields marked with * (Bank Name and Cheque No) are required.' : 'Visa / Card Payment: Fields marked with * (Bank Name and Visa / Card No) are required.'"></span>
                         </div>
-                        <div class="sm:col-span-5">
-                            <label class="block font-semibold text-slate-700 mb-1">Drawer / Sender Bank (BANK_CD)</label>
-                            <select x-model="form.bank_cd" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
-                                <option value="">-- Select Bank --</option>
-                                <template x-for="bk in lookups.banks" :key="bk.bank_cd">
-                                    <option :value="bk.bank_cd" x-text="bk.bank_cd + ' - ' + bk.bank_e_desc"></option>
-                                </template>
-                            </select>
-                        </div>
-                        <div class="sm:col-span-3" x-show="form.trans_pay_type === 2">
-                            <label class="block font-semibold text-slate-700 mb-1">Cheque Serial</label>
-                            <input type="text" x-model="form.chk_ser" placeholder="Series"
-                                   class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono">
-                        </div>
-                        <div class="sm:col-span-3" x-show="form.trans_pay_type === 3">
-                            <label class="block font-semibold text-slate-700 mb-1">Card Expiry</label>
-                            <input type="date" x-model="form.visa_ex_date"
-                                   class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-mono">
+                        <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                            <div class="sm:col-span-4">
+                                <label class="block font-semibold mb-1"
+                                       :class="(form.trans_pay_type === 2 || form.trans_pay_type === 3) ? 'text-amber-950 font-bold' : 'text-slate-700'">
+                                    <span x-text="form.trans_pay_type === 2 ? 'Cheque No' : (form.trans_pay_type === 3 ? 'Visa / Card No' : 'Transfer / Fawri+ Ref')"></span>
+                                    <span x-show="form.trans_pay_type === 2 || form.trans_pay_type === 3" class="text-rose-600 font-bold">*</span>
+                                </label>
+                                <input type="text" x-model="form.cheq_visa_no" placeholder="e.g. 002650"
+                                       :class="((form.trans_pay_type === 2 || form.trans_pay_type === 3) && (!form.cheq_visa_no || !form.cheq_visa_no.trim())) ? 'border-2 border-rose-400 bg-rose-50/40' : 'border border-slate-300 bg-white'"
+                                       class="w-full rounded-lg px-2.5 py-1.5 font-mono font-bold">
+                            </div>
+                            <div class="sm:col-span-5">
+                                <label class="block font-semibold mb-1"
+                                       :class="(form.trans_pay_type === 2 || form.trans_pay_type === 3) ? 'text-amber-950 font-bold' : 'text-slate-700'">
+                                    <span x-text="(form.trans_pay_type === 2 || form.trans_pay_type === 3) ? 'Bank Name (BANK_CD)' : 'Drawer / Sender Bank (BANK_CD)'"></span>
+                                    <span x-show="form.trans_pay_type === 2 || form.trans_pay_type === 3" class="text-rose-600 font-bold">*</span>
+                                </label>
+                                <select x-model="form.bank_cd"
+                                        :class="((form.trans_pay_type === 2 || form.trans_pay_type === 3) && !form.bank_cd) ? 'border-2 border-rose-400 bg-rose-50/40' : 'border border-slate-300 bg-white'"
+                                        class="w-full rounded-lg px-2 py-1.5 font-semibold">
+                                    <option value="">-- Select Bank --</option>
+                                    <template x-for="bk in lookups.banks" :key="bk.bank_cd">
+                                        <option :value="bk.bank_cd" x-text="bk.bank_cd + ' - ' + bk.bank_e_desc"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="sm:col-span-3" x-show="form.trans_pay_type === 2">
+                                <label class="block font-semibold text-slate-700 mb-1">Cheque Serial</label>
+                                <input type="text" x-model="form.chk_ser" placeholder="Series"
+                                       class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono">
+                            </div>
+                            <div class="sm:col-span-3" x-show="form.trans_pay_type === 3">
+                                <label class="block font-semibold text-slate-700 mb-1">Card Expiry</label>
+                                <input type="date" x-model="form.visa_ex_date"
+                                       class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white font-mono">
+                            </div>
                         </div>
                     </div>
 
@@ -303,12 +355,13 @@
                     <div class="flex flex-wrap items-center justify-between gap-2">
                         <div class="flex items-center gap-2">
                             <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-                            <span class="font-bold uppercase tracking-wider">Pre-Printed Payment Receipt Printer</span>
+                            <span class="font-bold uppercase tracking-wider">Pre-Printed Payment Receipt Printer (2 Copies Only)</span>
                         </div>
                         <div class="flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded bg-slate-800 text-amber-300 font-mono text-[10px] font-bold">Copy 1: Donor • Copy 2: Accountant</span>
                             <button type="button" @click="printCurrentReceipt()"
                                     class="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold transition flex items-center gap-1.5 shadow">
-                                <span>🖨️ Print Now</span>
+                                <span>🖨️ Print 2 Copies</span>
                             </button>
                         </div>
                     </div>
@@ -603,29 +656,184 @@
         </section>
     </div>
 
+    <!-- DEDICATED 2-COPY PRINT CONTAINER (Strictly 2 Pages: Page 1 = Donor Copy, Page 2 = Accountant Copy) -->
+    <div id="print-only-two-copies" :class="printSettings.preprintedOnly ? 'preprinted-only-mode' : ''">
+        <template x-for="(copyMeta, idx) in [{id: 'donor', en: 'COPY 1 — DONOR COPY', ar: 'نسخة المتبرع (الأصل)', cls: 'copy-donor'}, {id: 'accountant', en: 'COPY 2 — ACCOUNTANT COPY', ar: 'نسخة المحاسبة', cls: 'copy-accountant'}]" :key="copyMeta.id">
+            <div :class="'receipt-print-copy ' + copyMeta.cls">
+                <div :style="`transform: translate(${printSettings.offsetX || 0}mm, ${printSettings.offsetY || 0}mm);`"
+                     class="space-y-4">
+
+                    <!-- Official Receipt Header -->
+                    <div class="receipt-static-chrome flex items-start justify-between border-b-2 border-slate-800 pb-2.5">
+                        <div>
+                            <div class="text-sm font-extrabold text-slate-900 tracking-wide uppercase">Discover Islam Society</div>
+                            <div class="text-[11px] text-slate-600">Kingdom of Bahrain • P.O. Box 11622, Manama</div>
+                            <div class="text-[10px] font-mono text-slate-500 mt-0.5">OFFICIAL PAYMENT RECEIPT VOUCHER</div>
+                        </div>
+                        <div class="text-center px-3 py-1 rounded-lg border-2 border-slate-800 bg-slate-50">
+                            <div class="text-[10px] font-bold uppercase tracking-wider text-slate-600">RECEIPT VOUCHER</div>
+                            <div class="text-xs font-bold text-slate-900" style="font-family: 'Cairo', sans-serif;">سند قبض / إيصال استلام</div>
+                        </div>
+                        <div class="text-right" style="font-family: 'Cairo', sans-serif;">
+                            <div class="text-base font-bold text-slate-900">جمعية اكتشف الإسلام</div>
+                            <div class="text-[11px] text-slate-600">مملكة البحرين - المنامة</div>
+                        </div>
+                    </div>
+
+                    <!-- Copy Label Banner (Donor Copy vs Accountant Copy) -->
+                    <div class="flex items-center justify-between px-3 py-1 rounded border border-slate-400 bg-slate-100/80 text-xs font-bold">
+                        <span class="uppercase tracking-wider text-slate-900" x-text="copyMeta.en"></span>
+                        <span class="text-slate-900" style="font-family: 'Cairo', sans-serif;" x-text="copyMeta.ar"></span>
+                    </div>
+
+                    <!-- Row 1: Receipt No, Date, Amount in Figures (BHD) -->
+                    <div class="grid grid-cols-12 gap-3 items-center">
+                        <div class="col-span-4 receipt-field-box border border-slate-300 rounded-lg p-2">
+                            <div class="receipt-static-chrome flex justify-between text-[10px] text-slate-500 font-semibold">
+                                <span>Receipt No.</span>
+                                <span style="font-family: 'Cairo', sans-serif;">رقم الإيصال</span>
+                            </div>
+                            <div class="font-mono text-base font-extrabold text-rose-700 mt-0.5"
+                                 x-text="form.vouch_no + ' / ' + form.trns_year"></div>
+                        </div>
+
+                        <div class="col-span-4 receipt-field-box border border-slate-300 rounded-lg p-2">
+                            <div class="receipt-static-chrome flex justify-between text-[10px] text-slate-500 font-semibold">
+                                <span>Date</span>
+                                <span style="font-family: 'Cairo', sans-serif;">التاريخ</span>
+                            </div>
+                            <div class="font-mono text-sm font-bold text-slate-900 mt-0.5"
+                                 x-text="form.trans_date || '-'"></div>
+                        </div>
+
+                        <div class="col-span-4 receipt-field-box border-2 border-emerald-700 rounded-lg p-2">
+                            <div class="receipt-static-chrome flex justify-between text-[10px] text-emerald-800 font-bold">
+                                <span>Amount (BHD)</span>
+                                <span style="font-family: 'Cairo', sans-serif;">المبلغ (د.ب)</span>
+                            </div>
+                            <div class="font-mono text-base font-extrabold text-slate-950 text-right mt-0.5"
+                                 x-text="'BD ' + Number(form.trans_val || 0).toFixed(3)"></div>
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Received From -->
+                    <div class="receipt-field-box border-b border-dashed border-slate-400 pb-2">
+                        <div class="flex items-baseline justify-between gap-2">
+                            <span class="receipt-static-chrome text-[11px] font-bold text-slate-600 shrink-0">Received with thanks from:</span>
+                            <span class="text-sm font-bold text-slate-950 text-center flex-1 px-2"
+                                  style="font-family: 'Inter', 'Cairo', sans-serif;"
+                                  x-text="form.don_req_desc || '____________________________________'"></span>
+                            <span class="receipt-static-chrome text-xs font-bold text-slate-700 shrink-0" style="font-family: 'Cairo', sans-serif;">استلمنا من الفاضل:</span>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] text-slate-600 mt-1">
+                            <span class="font-mono" x-text="'Donor Code: #' + (form.donor_code || '-')"></span>
+                            <span class="font-mono" x-show="form.tel" x-text="'Tel: ' + form.tel"></span>
+                        </div>
+                    </div>
+
+                    <!-- Row 3: The Sum of (Amount in Words) -->
+                    <div class="receipt-field-box border-b border-dashed border-slate-400 pb-2">
+                        <div class="flex items-baseline justify-between gap-2">
+                            <span class="receipt-static-chrome text-[11px] font-bold text-slate-600 shrink-0">The sum of:</span>
+                            <span class="text-xs font-bold text-slate-900 italic text-center flex-1 px-2"
+                                  x-text="(form.amt_txt || 'Zero Dinar, Zero Fils') + ' Only'"></span>
+                            <span class="receipt-static-chrome text-xs font-bold text-slate-700 shrink-0" style="font-family: 'Cairo', sans-serif;">مبلغاً وقدره:</span>
+                        </div>
+                    </div>
+
+                    <!-- Row 4: Payment Mode (Cash / Cheque / Bank) -->
+                    <div class="receipt-field-box border-b border-dashed border-slate-400 pb-2 grid grid-cols-12 gap-2 text-xs items-center">
+                        <div class="col-span-4">
+                            <span class="receipt-static-chrome text-[11px] font-bold text-slate-600">Payment Mode: </span>
+                            <span class="font-bold text-slate-950 uppercase ml-1" x-text="selectedPayTypeName()"></span>
+                        </div>
+                        <div class="col-span-4">
+                            <span class="receipt-static-chrome text-[11px] font-bold text-slate-600">Cheque / Ref No: </span>
+                            <span class="font-mono font-bold text-slate-900 ml-1" x-text="form.cheq_visa_no || '-'"></span>
+                        </div>
+                        <div class="col-span-4">
+                            <span class="receipt-static-chrome text-[11px] font-bold text-slate-600">Bank: </span>
+                            <span class="font-semibold text-slate-900 ml-1" x-text="selectedBankName() || '-'"></span>
+                        </div>
+                    </div>
+
+                    <!-- Row 5: Being / Donation Purpose & Notes -->
+                    <div class="receipt-field-box border-b border-dashed border-slate-400 pb-2">
+                        <div class="flex items-baseline justify-between gap-2">
+                            <span class="receipt-static-chrome text-[11px] font-bold text-slate-600 shrink-0">Being (Purpose):</span>
+                            <div class="flex-1 px-2 text-center">
+                                <span class="text-xs font-bold text-slate-950" x-text="selectedBandName()"></span>
+                                <span x-show="form.attachments" class="text-xs text-slate-700" x-text="' — ' + form.attachments"></span>
+                            </div>
+                            <span class="receipt-static-chrome text-xs font-bold text-slate-700 shrink-0" style="font-family: 'Cairo', sans-serif;">وذلك عن:</span>
+                        </div>
+                    </div>
+
+                    <!-- Row 6: Cashier Signature & Copy Footer -->
+                    <div class="pt-2 flex items-end justify-between text-xs">
+                        <div>
+                            <div class="receipt-static-chrome text-[10px] text-slate-500 uppercase">Issued By (Cashier)</div>
+                            <div class="font-mono font-bold text-slate-900 text-xs mt-0.5"
+                                 x-text="form.user_name || lookups.current_user || 'SAJJAD'"></div>
+                        </div>
+                        <div class="text-center">
+                            <span x-show="form.receipt_status === 2" class="px-3 py-1 rounded bg-rose-100 text-rose-800 font-bold text-xs uppercase border border-rose-300">
+                                CANCELLED RECEIPT
+                            </span>
+                        </div>
+                        <div class="text-right">
+                            <div class="receipt-static-chrome text-[10px] text-slate-500" style="font-family: 'Cairo', sans-serif;">توقيع المستلم / الختم</div>
+                            <div class="receipt-static-chrome w-36 border-b border-slate-400 mt-4"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
     <!-- Quick New Walk-in Donor Modal -->
-    <div x-show="showQuickDonorModal" x-cloak class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+    <div x-show="showQuickDonorModal" x-cloak class="no-print fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4" @click.away="showQuickDonorModal = false">
             <div class="flex items-center justify-between border-b pb-2.5">
                 <h3 class="text-sm font-bold text-slate-900">Quick Register Walk-in Donor</h3>
                 <button type="button" @click="showQuickDonorModal = false" class="text-slate-400 hover:text-slate-700">✕</button>
             </div>
+            <div class="px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 font-semibold">
+                Fields marked with <span class="text-rose-600 font-bold">*</span> (<strong>Donor English Name</strong> &amp; <strong>Sex / Gender</strong>) are required.
+            </div>
             <div class="space-y-3 text-xs">
                 <div>
-                    <label class="block font-semibold text-slate-700 mb-1">Donor English Name *</label>
-                    <input type="text" x-model="quickDonor.donor_ename" placeholder="Full Name in English"
-                           class="w-full border border-slate-300 rounded-lg px-3 py-1.5">
+                    <label class="block font-bold text-amber-900 mb-1">
+                        <span>Donor English Name (DONOR_ENAME)</span>
+                        <span class="text-rose-600 font-bold">*</span>
+                    </label>
+                    <input type="text" x-model="quickDonor.donor_ename" required placeholder="Full Name in English"
+                           :class="(!quickDonor.donor_ename || !quickDonor.donor_ename.trim()) ? 'border-2 border-rose-400 bg-rose-50/40' : 'border-2 border-amber-300 bg-amber-50/20'"
+                           class="w-full rounded-lg px-3 py-1.5 font-semibold">
                 </div>
                 <div>
                     <label class="block font-semibold text-slate-700 mb-1">Donor Arabic Name</label>
-                    <input type="text" x-model="quickDonor.donor_name" dir="rtl" placeholder="الاسم بالعربية"
+                    <input type="text" x-model="quickDonor.donor_name" dir="rtl" placeholder="الاسم بالعربية (اختياري)"
                            style="font-family: 'Cairo', sans-serif;"
                            class="w-full border border-slate-300 rounded-lg px-3 py-1.5">
                 </div>
-                <div>
-                    <label class="block font-semibold text-slate-700 mb-1">Mobile</label>
-                    <input type="text" x-model="quickDonor.mobile" placeholder="e.g. 39696933"
-                           class="w-full border border-slate-300 rounded-lg px-3 py-1.5 font-mono">
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block font-bold text-amber-900 mb-1">
+                            <span>Sex / Gender</span>
+                            <span class="text-rose-600 font-bold">*</span>
+                        </label>
+                        <select x-model.number="quickDonor.sex_cd" required
+                                class="w-full border-2 border-amber-300 bg-amber-50/30 rounded-lg px-2.5 py-1.5 font-bold">
+                            <option :value="1">1 - Male</option>
+                            <option :value="2">2 - Female</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-slate-700 mb-1">Mobile</label>
+                        <input type="text" x-model="quickDonor.mobile" placeholder="e.g. 39696933"
+                               class="w-full border border-slate-300 rounded-lg px-3 py-1.5 font-mono">
+                    </div>
                 </div>
                 <div>
                     <label class="block font-semibold text-slate-700 mb-1">Address</label>
@@ -678,7 +886,7 @@
                 donorSearchQuery: '',
                 donorSearchResults: [],
                 showQuickDonorModal: false,
-                quickDonor: { donor_ename: '', donor_name: '', mobile: '', donor_type: 1, donor_address: '' },
+                quickDonor: { donor_ename: '', donor_name: '', sex_cd: 1, mobile: '', donor_type: 1, donor_address: '' },
                 filters: { q: '', trns_year: '2026', pay_type: 'ALL', user_name: 'ALL', receipt_status: 'ALL' },
                 rows: [],
                 summary: { total_rows: 0, active_count: 0, cancelled_count: 0, total_active_bhd: 0 },
@@ -793,6 +1001,14 @@
                 },
 
                 async createQuickWalkinDonor() {
+                    if (!this.quickDonor.donor_ename || !this.quickDonor.donor_ename.trim()) {
+                        this.showToast('Donor English Name is required.', 'error');
+                        return;
+                    }
+                    if (![1, 2].includes(Number(this.quickDonor.sex_cd))) {
+                        this.showToast('Donor Sex / Gender is required.', 'error');
+                        return;
+                    }
                     const res = await fetch('/api/cash-donors/save', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -806,7 +1022,7 @@
                     this.showQuickDonorModal = false;
                     this.showToast(data.message, 'success');
                     await this.loadDonorByCode(data.donor_cd);
-                    this.quickDonor = { donor_ename: '', donor_name: '', mobile: '', donor_type: 1, donor_address: '' };
+                    this.quickDonor = { donor_ename: '', donor_name: '', sex_cd: 1, mobile: '', donor_type: 1, donor_address: '' };
                 },
 
                 async updateAmountWords() {
@@ -846,6 +1062,17 @@
                     if (!this.form.trans_val || Number(this.form.trans_val) <= 0) {
                         this.showToast('Please enter a valid Amount (BHD) greater than 0.', 'error');
                         return;
+                    }
+                    if ([2, 3].includes(Number(this.form.trans_pay_type))) {
+                        const payLabel = Number(this.form.trans_pay_type) === 2 ? 'Cheque' : 'Visa / Card';
+                        if (!this.form.cheq_visa_no || !this.form.cheq_visa_no.trim()) {
+                            this.showToast(`${payLabel} No is required when payment method is ${payLabel}.`, 'error');
+                            return;
+                        }
+                        if (!this.form.bank_cd) {
+                            this.showToast(`Bank Name is required when payment method is ${payLabel}.`, 'error');
+                            return;
+                        }
                     }
                     const payload = {
                         ...this.form,

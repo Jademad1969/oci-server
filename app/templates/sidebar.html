@@ -201,7 +201,7 @@
             </div>
             {% endif %}
 
-            {% set has_cash_any = (perms.get('cash_donors', 'none') != 'none') or (perms.get('voucher_receipt', 'none') != 'none') or (perms.get('voucher_control', 'none') != 'none') %}
+            {% set has_cash_any = (perms.get('cash_donors', 'none') != 'none') or (perms.get('voucher_receipt', 'none') != 'none') or (perms.get('voucher_control', 'none') != 'none') or (perms.get('cash_dashboard', 'none') != 'none') %}
             {% if has_cash_any %}
             <div class="pt-1">
                 <button type="button" onclick="toggleErpSubmenu('cash-submenu', 'cash-chevron')" title="Cash Donations"
@@ -254,6 +254,20 @@
                             <span class="sidebar-text whitespace-nowrap">Voucher Control / Cancel</span>
                         </span>
                         {% if perms.get('voucher_control') == 'view' %}<span class="sidebar-badge text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">VIEW</span>{% endif %}
+                    </a>
+                    {% endif %}
+
+                    {% if perms.get('cash_dashboard', 'none') != 'none' %}
+                    <a href="/cash-dashboard" data-nav-path="/cash-dashboard" data-page-key="cash_dashboard" title="Cash Executive Dashboard"
+                       class="erp-nav-link flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-slate-800 hover:text-white transition">
+                        <span class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/>
+                            </svg>
+                            <span class="sidebar-text whitespace-nowrap">Cash Executive Dashboard</span>
+                        </span>
+                        {% if perms.get('cash_dashboard') == 'view' %}<span class="sidebar-badge text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">VIEW</span>{% endif %}
                     </a>
                     {% endif %}
                 </div>

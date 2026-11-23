@@ -1,0 +1,557 @@
+﻿<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cash Executive Dashboard - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
+        [x-cloak] { display: none !important; }
+        @media print {
+            #erp-global-sidebar, .no-print { display: none !important; }
+            .erp-main-content { overflow: visible !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800" x-data="cashDashboardApp()" x-init="init()">
+    {% include 'sidebar.html' %}
+
+    <div class="p-4 lg:p-6 max-w-[1600px] mx-auto w-full space-y-5">
+
+        <!-- 1. Executive Header & Global Filter Bar (No Cashier Level) -->
+        <div class="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white rounded-2xl p-5 shadow-lg border border-slate-700/60">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                            Cash Donations Module
+                        </span>
+                        <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-slate-700/80 text-slate-200"
+                              x-text="'Fiscal Year: ' + filters.trns_year + ' (vs ' + (Number(filters.trns_year) - 1) + ')'"></span>
+                    </div>
+                    <h1 class="text-lg lg:text-xl font-extrabold tracking-tight mt-1.5">
+                        Cash Donations Executive Dashboard
+                    </h1>
+                    <p class="text-xs text-slate-300 mt-0.5">
+                        Walk-in cash, cheque & Fawri+ collections, seasonal trends, donation band mix, donor recency & win-back intelligence
+                    </p>
+                </div>
+
+                <!-- Filter Controls -->
+                <div class="no-print flex flex-wrap items-end gap-2.5 bg-slate-900/70 p-3 rounded-xl border border-slate-700/80">
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">Fiscal Year</label>
+                        <select x-model="filters.trns_year" @change="loadDashboard()"
+                                class="h-9 px-3 rounded-lg bg-slate-800 border border-slate-600 text-white text-xs font-bold font-mono focus:outline-none focus:border-emerald-400">
+                            <template x-for="yr in lookups.years" :key="yr">
+                                <option :value="String(yr)" x-text="yr + ' (vs ' + (yr - 1) + ')'"></option>
+                            </template>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">Donation Purpose / Band</label>
+                        <select x-model="filters.band_det_cd" @change="loadDashboard()"
+                                class="h-9 px-3 rounded-lg bg-slate-800 border border-slate-600 text-white text-xs font-semibold focus:outline-none focus:border-emerald-400 min-w-[170px]">
+                            <option value="ALL">All Purposes / Bands</option>
+                            <template x-for="b in lookups.band_details" :key="b.band_det_cd">
+                                <option :value="String(b.band_det_cd)" x-text="b.band_det_edesc"></option>
+                            </template>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">Payment Method</label>
+                        <select x-model="filters.pay_type" @change="loadDashboard()"
+                                class="h-9 px-3 rounded-lg bg-slate-800 border border-slate-600 text-white text-xs font-semibold focus:outline-none focus:border-emerald-400 min-w-[140px]">
+                            <option value="ALL">All Methods</option>
+                            <template x-for="pt in (lookups.payment_types || []).filter(x => x.type_cd <= 4)" :key="pt.type_cd">
+                                <option :value="String(pt.type_cd)" x-text="pt.type_edesc"></option>
+                            </template>
+                        </select>
+                    </div>
+
+                    <button type="button" @click="loadDashboard()"
+                            class="h-9 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition flex items-center gap-1.5">
+                        <span x-text="loading ? 'Loading...' : '↻ Refresh'"></span>
+                    </button>
+
+                    <button type="button" onclick="window.print()"
+                            class="h-9 px-3.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold transition">
+                        🖨️ Print Brief
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Top KPI Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+            <!-- Card 1: Selected Year Total + YoY -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-1">
+                <div class="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+                    <span x-text="'Total Collected (' + kpis.selected_year + ')'"></span>
+                    <span x-show="kpis.yoy_pct !== null"
+                          :class="kpis.yoy_pct >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
+                          class="px-1.5 py-0.5 rounded font-mono text-[10px] font-bold"
+                          x-text="(kpis.yoy_pct >= 0 ? '+' : '') + kpis.yoy_pct + '% YoY'"></span>
+                </div>
+                <div class="text-xl font-extrabold text-slate-900 font-mono"
+                     x-text="fmtBhd(kpis.year_total_bhd) + ' BHD'"></div>
+                <div class="text-[11px] text-slate-500 font-mono"
+                     x-text="'Prev (' + kpis.prev_year + '): ' + fmtBhd(kpis.prev_year_total_bhd) + ' BHD'"></div>
+            </div>
+
+            <!-- Card 2: Same-Period YTD Comparison -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-1">
+                <div class="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+                    <span x-text="'Same-Period YTD (thru ' + (kpis.ytd_label || '') + ')'"></span>
+                    <span x-show="kpis.ytd_pct !== null"
+                          :class="kpis.ytd_pct >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
+                          class="px-1.5 py-0.5 rounded font-mono text-[10px] font-bold"
+                          x-text="(kpis.ytd_pct >= 0 ? '+' : '') + kpis.ytd_pct + '%'"></span>
+                </div>
+                <div class="text-xl font-extrabold text-blue-700 font-mono"
+                     x-text="fmtBhd(kpis.ytd_total_bhd) + ' BHD'"></div>
+                <div class="text-[11px] text-slate-500 font-mono"
+                     x-text="kpis.prev_year + ' YTD: ' + fmtBhd(kpis.prev_ytd_total_bhd) + ' BHD'"></div>
+            </div>
+
+            <!-- Card 3: Receipts & Ticket Size -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-1">
+                <div class="text-[11px] font-semibold text-slate-500">Receipts & Ticket Size</div>
+                <div class="text-xl font-extrabold text-slate-900 font-mono"
+                     x-text="(kpis.receipts_count || 0).toLocaleString() + ' RVs'"></div>
+                <div class="text-[11px] text-slate-500 font-mono"
+                     x-text="'Avg: ' + fmtBhd(kpis.avg_receipt_bhd) + ' | Med: ' + fmtBhd(kpis.median_receipt_bhd)"></div>
+            </div>
+
+            <!-- Card 4: Active Donors & New vs Repeat -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-1">
+                <div class="text-[11px] font-semibold text-slate-500">Unique Donors (Selected Year)</div>
+                <div class="text-xl font-extrabold text-emerald-700 font-mono"
+                     x-text="(kpis.unique_donors_year || 0) + ' Donors'"></div>
+                <div class="text-[11px] text-slate-600 font-mono"
+                     x-text="'Repeat: ' + (kpis.repeat_donors_year || 0) + ' • New: ' + (kpis.new_donors_year || 0)"></div>
+            </div>
+
+            <!-- Card 5: Donor Recency Health & Control Watch -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-1.5">
+                <div class="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+                    <span>Donor Base Recency</span>
+                    <span class="font-mono text-[10px] text-rose-700 font-bold"
+                          x-text="(audit_counts.cancelled_in_year || 0) + ' Canc / ' + (audit_counts.modified_in_year || 0) + ' Mod'"></span>
+                </div>
+                <div class="grid grid-cols-3 gap-1 text-center font-mono text-[11px]">
+                    <div class="bg-emerald-50 border border-emerald-200 rounded p-1">
+                        <div class="font-extrabold text-emerald-800" x-text="recency.recent_12m || 0"></div>
+                        <div class="text-[9px] text-emerald-700">≤12m</div>
+                    </div>
+                    <div class="bg-amber-50 border border-amber-200 rounded p-1">
+                        <div class="font-extrabold text-amber-800" x-text="recency.delayed_13_24m || 0"></div>
+                        <div class="text-[9px] text-amber-700">13-24m</div>
+                    </div>
+                    <div class="bg-rose-50 border border-rose-200 rounded p-1">
+                        <div class="font-extrabold text-rose-800" x-text="recency.delayed_over_24m || 0"></div>
+                        <div class="text-[9px] text-rose-700">&gt;24m</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Charts Row 1: Monthly Seasonal Trend & Payment Method Mix -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <section class="lg:col-span-8 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-900">Monthly Collection Trend (Selected Year vs Previous Year)</h2>
+                        <p class="text-[11px] text-slate-500">Tracks Ramadan / Zakat / Year-End seasonal peaks across Jan–Dec (BHD)</p>
+                    </div>
+                    <span class="text-[11px] font-mono text-slate-500" x-text="kpis.selected_year + ' vs ' + kpis.prev_year"></span>
+                </div>
+                <div class="h-72">
+                    <canvas id="chart-monthly"></canvas>
+                </div>
+            </section>
+
+            <section class="lg:col-span-4 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col justify-between">
+                <div>
+                    <h2 class="text-sm font-bold text-slate-900">Collections by Payment Method</h2>
+                    <p class="text-[11px] text-slate-500 mb-2">Cash vs Cheque vs Fawri+ / Transfer vs Visa</p>
+                    <div class="h-48">
+                        <canvas id="chart-paytype"></canvas>
+                    </div>
+                </div>
+                <div class="mt-3 divide-y divide-slate-100 text-xs">
+                    <template x-for="p in by_pay_type" :key="p.type_cd">
+                        <div class="py-1.5 flex items-center justify-between">
+                            <div>
+                                <span class="font-semibold text-slate-800" x-text="p.pay_type_name"></span>
+                                <span class="text-[10px] font-mono text-slate-400 ml-1" x-text="'(' + p.receipts + ' RVs)'"></span>
+                            </div>
+                            <div class="font-mono font-bold text-slate-900">
+                                <span x-text="fmtBhd(p.total_bhd)"></span>
+                                <span class="text-[10px] text-slate-500 ml-1" x-text="p.pct + '%'"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </section>
+        </div>
+
+        <!-- 4. Charts Row 2: Donation Purpose / Band Mix & 10-Year Annual Trajectory -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <section class="lg:col-span-6 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="mb-3">
+                    <h2 class="text-sm font-bold text-slate-900">Collections by Donation Purpose / Band</h2>
+                    <p class="text-[11px] text-slate-500">Breakdown across Donation, Zakat, Waqf, Iftar, Hajj/Umrah, etc.</p>
+                </div>
+                <div class="h-64">
+                    <canvas id="chart-band"></canvas>
+                </div>
+            </section>
+
+            <section class="lg:col-span-6 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="mb-3">
+                    <h2 class="text-sm font-bold text-slate-900">10-Year Annual Trajectory (Total BHD & Unique Donors)</h2>
+                    <p class="text-[11px] text-slate-500">Long-term cash donation volume vs active donor count</p>
+                </div>
+                <div class="h-64">
+                    <canvas id="chart-annual"></canvas>
+                </div>
+            </section>
+        </div>
+
+        <!-- 5. Actionable Intelligence Tables: Top Donors & Win-Back Lapsed High-Value Donors -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <!-- Top 15 Cash Donors -->
+            <section class="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+                <div class="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
+                    <div>
+                        <h3 class="text-xs font-bold uppercase tracking-wider" x-text="'Top 15 Cash Donors (' + kpis.selected_year + ')'"></h3>
+                        <p class="text-[10px] text-slate-400">Ranked by selected year BHD total with lifetime contribution</p>
+                    </div>
+                    <span class="text-[11px] font-mono bg-slate-800 px-2 py-0.5 rounded text-emerald-300" x-text="top_donors.length + ' donors'"></span>
+                </div>
+                <div class="overflow-x-auto max-h-[380px]">
+                    <table class="w-full text-xs text-left">
+                        <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] border-b border-slate-200 sticky top-0">
+                            <tr>
+                                <th class="px-3 py-2">#</th>
+                                <th class="px-3 py-2">Donor</th>
+                                <th class="px-3 py-2 text-center">RVs</th>
+                                <th class="px-3 py-2 text-right">Year (BHD)</th>
+                                <th class="px-3 py-2 text-right">Lifetime (BHD)</th>
+                                <th class="px-3 py-2 text-right">Recency</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <template x-for="(d, idx) in top_donors" :key="d.donor_cd">
+                                <tr class="hover:bg-blue-50/40">
+                                    <td class="px-3 py-2 font-mono text-slate-400" x-text="idx + 1"></td>
+                                    <td class="px-3 py-2">
+                                        <a :href="'/cash-donors?donor_cd=' + d.donor_cd"
+                                           class="font-bold text-blue-700 hover:underline"
+                                           x-text="'#' + d.donor_cd + ' ' + d.donor_name"></a>
+                                        <div class="text-[10px] font-mono text-slate-400" x-show="d.mobile" x-text="d.mobile"></div>
+                                    </td>
+                                    <td class="px-3 py-2 text-center font-mono" x-text="d.year_receipts"></td>
+                                    <td class="px-3 py-2 text-right font-mono font-bold text-emerald-700" x-text="fmtBhd(d.year_total_bhd)"></td>
+                                    <td class="px-3 py-2 text-right font-mono text-slate-700" x-text="fmtBhd(d.lifetime_bhd)"></td>
+                                    <td class="px-3 py-2 text-right font-mono text-[10px]" x-text="d.delay_months + 'm'"></td>
+                                </tr>
+                            </template>
+                            <tr x-show="top_donors.length === 0">
+                                <td colspan="6" class="p-6 text-center text-slate-400">No donations in this filter.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Lapsed High-Value Donors ("Win-Back List") -->
+            <section class="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+                <div class="px-4 py-3 bg-amber-900 text-white flex items-center justify-between">
+                    <div>
+                        <h3 class="text-xs font-bold uppercase tracking-wider">Win-Back Alert: Lapsed High-Value Donors</h3>
+                        <p class="text-[10px] text-amber-200">Lifetime ≥ 500 BHD • Last donated 13–36 months ago (ideal for follow-up)</p>
+                    </div>
+                    <span class="text-[11px] font-mono bg-amber-950/70 px-2 py-0.5 rounded text-amber-200" x-text="winback_donors.length + ' prospects'"></span>
+                </div>
+                <div class="overflow-x-auto max-h-[380px]">
+                    <table class="w-full text-xs text-left">
+                        <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] border-b border-slate-200 sticky top-0">
+                            <tr>
+                                <th class="px-3 py-2">Donor</th>
+                                <th class="px-3 py-2">Mobile</th>
+                                <th class="px-3 py-2 text-center">RVs</th>
+                                <th class="px-3 py-2 text-right">Lifetime (BHD)</th>
+                                <th class="px-3 py-2 text-right">Last Donation</th>
+                                <th class="px-3 py-2 text-right">Delay</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <template x-for="w in winback_donors" :key="w.donor_cd">
+                                <tr class="hover:bg-amber-50/40">
+                                    <td class="px-3 py-2">
+                                        <a :href="'/cash-donors?donor_cd=' + w.donor_cd"
+                                           class="font-bold text-blue-700 hover:underline"
+                                           x-text="'#' + w.donor_cd + ' ' + w.donor_name"></a>
+                                    </td>
+                                    <td class="px-3 py-2 font-mono text-[11px] text-slate-700" x-text="w.mobile || '-'"></td>
+                                    <td class="px-3 py-2 text-center font-mono" x-text="w.total_receipts"></td>
+                                    <td class="px-3 py-2 text-right font-mono font-bold text-slate-900" x-text="fmtBhd(w.lifetime_bhd)"></td>
+                                    <td class="px-3 py-2 text-right font-mono text-[11px] text-slate-600" x-text="w.last_donation_date"></td>
+                                    <td class="px-3 py-2 text-right">
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-900"
+                                              x-text="w.delay_months + 'm'"></span>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="winback_donors.length === 0">
+                                <td colspan="6" class="p-6 text-center text-slate-400">No lapsed high-value donors in 13–36m window.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <!-- 6. Recent Control & Audit Feed (VOUCH_HISTORY — No Cashier Counter Table) -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div class="px-4 py-3 bg-slate-800 text-white flex items-center justify-between">
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider">Recent Receipt Control & Audit Log (VOUCH_HISTORY)</h3>
+                    <p class="text-[10px] text-slate-400">Latest modified and cancelled receipt snapshots with responsible user and reason</p>
+                </div>
+                <a href="/voucher-control" class="text-[11px] font-semibold text-amber-300 hover:underline">Open Voucher Control →</a>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs text-left">
+                    <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] border-b border-slate-200">
+                        <tr>
+                            <th class="px-3 py-2">RV No / Year</th>
+                            <th class="px-3 py-2">Action</th>
+                            <th class="px-3 py-2">By User</th>
+                            <th class="px-3 py-2">Date</th>
+                            <th class="px-3 py-2">Donor</th>
+                            <th class="px-3 py-2">Band</th>
+                            <th class="px-3 py-2 text-right">Old Val (BHD)</th>
+                            <th class="px-3 py-2">Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <template x-for="a in audit_feed" :key="a.hist_id">
+                            <tr class="hover:bg-slate-50">
+                                <td class="px-3 py-2 font-mono font-bold text-slate-900" x-text="a.vouch_no + ' / ' + a.trns_year"></td>
+                                <td class="px-3 py-2">
+                                    <span :class="a.action_type === 'MODIFY' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'"
+                                          class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                          x-text="a.action_type"></span>
+                                </td>
+                                <td class="px-3 py-2 font-mono font-bold text-blue-700" x-text="a.action_by"></td>
+                                <td class="px-3 py-2 font-mono text-slate-600" x-text="a.action_date"></td>
+                                <td class="px-3 py-2 font-semibold text-slate-800" x-text="a.donor_name"></td>
+                                <td class="px-3 py-2 text-slate-600" x-text="a.band_name"></td>
+                                <td class="px-3 py-2 text-right font-mono font-bold text-slate-900" x-text="fmtBhd(a.old_val_bhd)"></td>
+                                <td class="px-3 py-2 text-slate-700" x-text="a.action_reason || '-'"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        window.__cashCharts = { monthly: null, paytype: null, band: null, annual: null };
+        function cashDashboardApp() {
+            return {
+                loading: false,
+                lookups: { years: [2026], band_details: [], payment_types: [], current_year: 2026 },
+                filters: { trns_year: '2026', band_det_cd: 'ALL', pay_type: 'ALL' },
+                kpis: { selected_year: 2026, prev_year: 2025, year_total_bhd: 0, prev_year_total_bhd: 0, ytd_total_bhd: 0, prev_ytd_total_bhd: 0, receipts_count: 0, avg_receipt_bhd: 0, median_receipt_bhd: 0, unique_donors_year: 0, new_donors_year: 0, repeat_donors_year: 0, yoy_pct: null, ytd_pct: null },
+                recency: { total_all: 0, recent_12m: 0, delayed_13_24m: 0, delayed_over_24m: 0, no_receipts: 0 },
+                audit_counts: { cancelled_in_year: 0, modified_in_year: 0, history_in_year: 0 },
+                monthly_trend: [],
+                by_band: [],
+                by_pay_type: [],
+                annual_trajectory: [],
+                top_donors: [],
+                winback_donors: [],
+                audit_feed: [],
+
+                fmtBhd(v) {
+                    return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+                },
+
+                async init() {
+                    const lkpRes = await fetch('/api/cash-donations/lookups');
+                    if (lkpRes.ok) {
+                        this.lookups = await lkpRes.json();
+                        this.filters.trns_year = String(this.lookups.current_year || 2026);
+                    }
+                    await this.loadDashboard();
+                },
+
+                async loadDashboard() {
+                    this.loading = true;
+                    try {
+                        const qs = new URLSearchParams({
+                            trns_year: this.filters.trns_year,
+                            band_det_cd: this.filters.band_det_cd,
+                            pay_type: this.filters.pay_type
+                        });
+                        const res = await fetch('/api/cash-dashboard/data?' + qs.toString());
+                        if (res.ok) {
+                            const d = await res.json();
+                            this.kpis = d.kpis;
+                            this.recency = d.recency;
+                            this.audit_counts = d.audit_counts;
+                            this.monthly_trend = d.monthly_trend || [];
+                            this.by_band = d.by_band || [];
+                            this.by_pay_type = d.by_pay_type || [];
+                            this.annual_trajectory = d.annual_trajectory || [];
+                            this.top_donors = d.top_donors || [];
+                            this.winback_donors = d.winback_donors || [];
+                            this.audit_feed = d.audit_feed || [];
+                            this.$nextTick(() => this.renderCharts());
+                        }
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                renderCharts() {
+                    // 1. Monthly Trend
+                    const ctxM = document.getElementById('chart-monthly');
+                    if (ctxM) {
+                        if (window.__cashCharts.monthly) window.__cashCharts.monthly.destroy();
+                        window.__cashCharts.monthly = new Chart(ctxM, {
+                            type: 'bar',
+                            data: {
+                                labels: this.monthly_trend.map(x => x.month_label),
+                                datasets: [
+                                    {
+                                        label: String(this.kpis.selected_year) + ' (BHD)',
+                                        data: this.monthly_trend.map(x => x.cur_bhd),
+                                        backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                                        borderRadius: 6
+                                    },
+                                    {
+                                        label: String(this.kpis.prev_year) + ' (BHD)',
+                                        data: this.monthly_trend.map(x => x.prev_bhd),
+                                        backgroundColor: 'rgba(148, 163, 184, 0.55)',
+                                        borderRadius: 6
+                                    }
+                                ]
+                            },
+                            options: {
+                                responsive: true,
+                                animation: false,
+                                maintainAspectRatio: false,
+                                plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+                                scales: { y: { beginAtZero: true } }
+                            }
+                        });
+                    }
+
+                    // 2. Payment Type Donut
+                    const ctxP = document.getElementById('chart-paytype');
+                    if (ctxP) {
+                        if (window.__cashCharts.paytype) window.__cashCharts.paytype.destroy();
+                        window.__cashCharts.paytype = new Chart(ctxP, {
+                            type: 'doughnut',
+                            data: {
+                                labels: this.by_pay_type.map(x => x.pay_type_name),
+                                datasets: [{
+                                    data: this.by_pay_type.map(x => x.total_bhd),
+                                    backgroundColor: ['#0ea5e9', '#10b981', '#f59e0b', '#8b5cf6', '#64748b']
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                animation: false,
+                                maintainAspectRatio: false,
+                                cutout: '62%',
+                                plugins: { legend: { display: false } }
+                            }
+                        });
+                    }
+
+                    // 3. Donation Band Horizontal Bar
+                    const ctxB = document.getElementById('chart-band');
+                    if (ctxB) {
+                        if (window.__cashCharts.band) window.__cashCharts.band.destroy();
+                        const topBands = this.by_band.slice(0, 8);
+                        window.__cashCharts.band = new Chart(ctxB, {
+                            type: 'bar',
+                            data: {
+                                labels: topBands.map(x => x.band_name),
+                                datasets: [{
+                                    label: 'Collected (BHD)',
+                                    data: topBands.map(x => x.total_bhd),
+                                    backgroundColor: '#3b82f6',
+                                    borderRadius: 5
+                                }]
+                            },
+                            options: {
+                                indexAxis: 'y',
+                                responsive: true,
+                                animation: false,
+                                maintainAspectRatio: false,
+                                plugins: { legend: { display: false } },
+                                scales: { x: { beginAtZero: true } }
+                            }
+                        });
+                    }
+
+                    // 4. 10-Year Annual Trajectory (Mixed Bar + Line)
+                    const ctxA = document.getElementById('chart-annual');
+                    if (ctxA) {
+                        if (window.__cashCharts.annual) window.__cashCharts.annual.destroy();
+                        window.__cashCharts.annual = new Chart(ctxA, {
+                            data: {
+                                labels: this.annual_trajectory.map(x => String(x.trns_year)),
+                                datasets: [
+                                    {
+                                        type: 'bar',
+                                        label: 'Total BHD',
+                                        data: this.annual_trajectory.map(x => x.total_bhd),
+                                        backgroundColor: 'rgba(59, 130, 246, 0.75)',
+                                        borderRadius: 5,
+                                        yAxisID: 'y'
+                                    },
+                                    {
+                                        type: 'line',
+                                        label: 'Unique Donors',
+                                        data: this.annual_trajectory.map(x => x.unique_donors),
+                                        borderColor: '#f59e0b',
+                                        backgroundColor: '#f59e0b',
+                                        tension: 0.3,
+                                        yAxisID: 'y1'
+                                    }
+                                ]
+                            },
+                            options: {
+                                responsive: true,
+                                animation: false,
+                                maintainAspectRatio: false,
+                                plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+                                scales: {
+                                    y: { type: 'linear', position: 'left', beginAtZero: true },
+                                    y1: { type: 'linear', position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }
+                                }
+                            }
+                        });
+                    }
+                }
+            };
+        }
+    </script>
+</body>
+</html>
+

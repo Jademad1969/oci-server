@@ -37,19 +37,23 @@
             </div>
         </div>
 
-        <!-- KPI Strip -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <!-- KPI Strip (Months Since Last Donation Recency) -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
                 <div class="text-[11px] text-slate-500 font-medium">Total Cash Donors</div>
                 <div class="text-lg font-bold text-slate-900 font-mono mt-0.5" x-text="kpis.total_all || 0"></div>
             </div>
-            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-                <div class="text-[11px] text-emerald-700 font-medium">Active Cash Donors (1)</div>
-                <div class="text-lg font-bold text-emerald-700 font-mono mt-0.5" x-text="kpis.total_active || 0"></div>
+            <div class="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-2xs">
+                <div class="text-[11px] text-emerald-700 font-medium">≤ 12 Months Since Last Donation</div>
+                <div class="text-lg font-bold text-emerald-700 font-mono mt-0.5" x-text="kpis.recent_12m || 0"></div>
             </div>
-            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-                <div class="text-[11px] text-slate-500 font-medium">Non-Active (2)</div>
-                <div class="text-lg font-bold text-slate-600 font-mono mt-0.5" x-text="kpis.total_inactive || 0"></div>
+            <div class="bg-white p-3.5 rounded-xl border border-amber-200 shadow-2xs">
+                <div class="text-[11px] text-amber-700 font-medium">13 – 24 Months Since Last Donation</div>
+                <div class="text-lg font-bold text-amber-700 font-mono mt-0.5" x-text="kpis.delayed_13_24m || 0"></div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-rose-200 shadow-2xs">
+                <div class="text-[11px] text-rose-700 font-medium">> 24 Months Since Last Donation</div>
+                <div class="text-lg font-bold text-rose-700 font-mono mt-0.5" x-text="kpis.delayed_over_24m || 0"></div>
             </div>
         </div>
 
@@ -81,11 +85,13 @@
                         </button>
                     </div>
                     <div class="grid grid-cols-2 gap-2 text-[11px]">
-                        <select x-model="filters.donor_status" @change="loadDonors(1)"
+                        <select x-model="filters.delay_filter" @change="loadDonors(1)"
                                 class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200">
-                            <option value="ALL">All Statuses</option>
-                            <option value="1">Active (1)</option>
-                            <option value="2">Non-Active (2)</option>
+                            <option value="ALL">All Donation Recency</option>
+                            <option value="0_12">≤ 12 Months Ago</option>
+                            <option value="13_24">13 – 24 Months Ago</option>
+                            <option value="OVER_24">> 24 Months Ago</option>
+                            <option value="NEVER">No Receipts Yet</option>
                         </select>
                         <div class="flex gap-1">
                             <input type="number" x-model="jumpCode" @keydown.enter="jumpToDonorCode()"
@@ -118,12 +124,12 @@
                             </div>
                             <div class="text-right shrink-0 space-y-1">
                                 <div>
-                                    <span :class="d.donor_status === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'"
-                                          class="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                                          x-text="d.donor_status === 1 ? 'Active' : 'Inactive'"></span>
+                                    <span :class="delayBadgeClass(d.delay_months)"
+                                          class="px-2 py-0.5 rounded-full text-[10px] font-bold font-mono"
+                                          x-text="formatDelayMonths(d.delay_months)"></span>
                                 </div>
                                 <div class="text-[10px] font-mono text-slate-400"
-                                     x-text="d.donor_type === 2 ? 'Rent/Tenant' : 'Cash Donor'"></div>
+                                     x-text="d.last_donation_date ? ('Last: ' + d.last_donation_date) : 'No receipts'"></div>
                             </div>
                         </button>
                     </template>
@@ -171,6 +177,11 @@
                         </div>
                     </div>
 
+                    <!-- Mandatory Fields Hint Banner (New Entry Mode only) -->
+                    <div x-show="selectedDonor.is_new" class="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 flex items-center justify-between">
+                        <span>Fields marked with <span class="text-rose-600 font-bold">*</span> (<span class="font-semibold">Donor English Name</span>, <span class="font-semibold">Sex / Gender</span>, and <span class="font-semibold">Importance Level</span>) are required.</span>
+                    </div>
+
                     <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs">
                         <div class="sm:col-span-4">
                             <label class="block font-semibold text-slate-700 mb-1">Donor Code</label>
@@ -188,25 +199,47 @@
                             </select>
                         </div>
                         <div class="sm:col-span-4">
-                            <label class="block font-semibold text-slate-700 mb-1">Status</label>
-                            <select x-model.number="selectedDonor.donor_status" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-semibold">
-                                <option :value="1">1 - Active</option>
-                                <option :value="2">2 - Non-Active</option>
-                            </select>
+                            <label class="flex items-center justify-between font-semibold text-slate-700 mb-1">
+                                <span>Months Since Last Donation</span>
+                                <span class="text-[9px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 font-bold">AUTO</span>
+                            </label>
+                            <div :class="delayBadgeClass(selectedDonor.delay_months)"
+                                 class="w-full border rounded-lg px-2.5 py-1.5 font-mono font-bold flex items-center justify-between">
+                                <span x-text="formatDelayMonths(selectedDonor.delay_months)"></span>
+                                <span class="text-[10px] opacity-80" x-text="selectedDonor.last_donation_date ? ('Last: ' + selectedDonor.last_donation_date) : ''"></span>
+                            </div>
                         </div>
 
                         <div class="sm:col-span-6">
-                            <label class="block font-semibold text-slate-700 mb-1">Donor English Name *</label>
-                            <input type="text" x-model="selectedDonor.donor_ename" placeholder="Full Name in English"
-                                   class="w-full border border-slate-300 rounded-lg px-3 py-1.5 font-medium">
+                            <label class="block mb-1"
+                                   :class="selectedDonor.is_new ? 'font-bold text-amber-900' : 'font-semibold text-slate-700'">
+                                <span>Donor English Name (DONOR_ENAME)</span>
+                                <span x-show="selectedDonor.is_new" class="text-rose-600 font-bold">*</span>
+                            </label>
+                            <input type="text" x-model="selectedDonor.donor_ename" required placeholder="Full Name in English"
+                                   :class="selectedDonor.is_new ? ((!selectedDonor.donor_ename || !selectedDonor.donor_ename.trim()) ? 'border-2 border-rose-400 bg-rose-50/40' : 'border-2 border-amber-300 bg-amber-50/20') : 'border border-slate-300 bg-white'"
+                                   class="w-full rounded-lg px-3 py-1.5 font-semibold text-slate-900 focus:outline-none focus:border-blue-600">
                         </div>
                         <div class="sm:col-span-6">
                             <label class="block font-semibold text-slate-700 mb-1">Donor Arabic Name</label>
-                            <input type="text" x-model="selectedDonor.donor_name" dir="rtl" placeholder="الاسم بالعربية"
+                            <input type="text" x-model="selectedDonor.donor_name" dir="rtl" placeholder="الاسم بالعربية (اختياري)"
                                    style="font-family: 'Cairo', sans-serif;"
                                    class="w-full border border-slate-300 rounded-lg px-3 py-1.5 font-medium">
                         </div>
 
+                        <div class="sm:col-span-3">
+                            <label class="block mb-1"
+                                   :class="selectedDonor.is_new ? 'font-bold text-amber-900' : 'font-semibold text-slate-700'">
+                                <span>Sex / Gender</span>
+                                <span x-show="selectedDonor.is_new" class="text-rose-600 font-bold">*</span>
+                            </label>
+                            <select x-model.number="selectedDonor.sex_cd" required
+                                    :class="selectedDonor.is_new ? ((!selectedDonor.sex_cd) ? 'border-2 border-rose-400 bg-rose-50/40' : 'border-2 border-amber-300 bg-amber-50/30') : 'border border-slate-300 bg-white'"
+                                    class="w-full rounded-lg px-2.5 py-1.5 font-bold text-slate-900">
+                                <option :value="1">1 - Male</option>
+                                <option :value="2">2 - Female</option>
+                            </select>
+                        </div>
                         <div class="sm:col-span-3">
                             <label class="block font-semibold text-slate-700 mb-1">Mobile</label>
                             <input type="text" x-model="selectedDonor.mobile" placeholder="e.g. 39696933"
@@ -222,13 +255,13 @@
                             <input type="text" x-model="selectedDonor.tel_office" placeholder="Office Phone"
                                    class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono">
                         </div>
-                        <div class="sm:col-span-3">
+
+                        <div class="sm:col-span-2">
                             <label class="block font-semibold text-slate-700 mb-1">Block No</label>
                             <input type="text" x-model="selectedDonor.block_no" placeholder="Block #"
                                    class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono">
                         </div>
-
-                        <div class="sm:col-span-8">
+                        <div class="sm:col-span-6">
                             <label class="block font-semibold text-slate-700 mb-1">Full Address</label>
                             <input type="text" x-model="selectedDonor.donor_address" placeholder="House / Road / Block / Area"
                                    class="w-full border border-slate-300 rounded-lg px-3 py-1.5">
@@ -239,29 +272,28 @@
                                    class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5">
                         </div>
 
-                        <div class="sm:col-span-3">
-                            <label class="block font-semibold text-slate-700 mb-1">Gender</label>
-                            <select x-model.number="selectedDonor.sex_cd" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
-                                <option :value="1">1 - Male</option>
-                                <option :value="2">2 - Female</option>
-                            </select>
-                        </div>
-                        <div class="sm:col-span-3">
+                        <div class="sm:col-span-4">
                             <label class="block font-semibold text-slate-700 mb-1">Residency</label>
                             <select x-model.number="selectedDonor.bahrain_status" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
                                 <option :value="1">Inside Bahrain</option>
                                 <option :value="2">Outside Bahrain</option>
                             </select>
                         </div>
-                        <div class="sm:col-span-3">
-                            <label class="block font-semibold text-slate-700 mb-1">Importance Level</label>
-                            <select x-model.number="selectedDonor.donor_importancy_lvl" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+                        <div class="sm:col-span-4">
+                            <label class="block mb-1"
+                                   :class="selectedDonor.is_new ? 'font-bold text-amber-900' : 'font-semibold text-slate-700'">
+                                <span>Importance Level</span>
+                                <span x-show="selectedDonor.is_new" class="text-rose-600 font-bold">*</span>
+                            </label>
+                            <select x-model.number="selectedDonor.donor_importancy_lvl"
+                                    :class="selectedDonor.is_new ? 'border-2 border-amber-300 bg-amber-50/30 font-semibold' : 'border border-slate-300 bg-white'"
+                                    class="w-full rounded-lg px-2.5 py-1.5">
                                 <option :value="1">1 - High</option>
                                 <option :value="2">2 - Medium</option>
                                 <option :value="3">3 - Low</option>
                             </select>
                         </div>
-                        <div class="sm:col-span-3">
+                        <div class="sm:col-span-4">
                             <label class="block font-semibold text-slate-700 mb-1">DIC Representative</label>
                             <input type="text" x-model="selectedDonor.dic_representitive" placeholder="Representative"
                                    class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5">
@@ -338,13 +370,27 @@
         function cashDonorsApp() {
             return {
                 lookups: { prefixes: [], cares: [] },
-                kpis: { total_all: 0, total_active: 0, total_inactive: 0, total_type_cash: 0, total_type_rent: 0, max_donor_cd: 0 },
+                kpis: { total_all: 0, recent_12m: 0, delayed_13_24m: 0, delayed_over_24m: 0, no_receipts: 0, max_donor_cd: 0 },
                 rows: [],
                 pagination: { page: 1, page_size: 50, total_rows: 0, total_pages: 1 },
-                filters: { q: '', donor_type: 'ALL', donor_status: 'ALL' },
+                filters: { q: '', delay_filter: 'ALL' },
                 jumpCode: '',
-                selectedDonor: { is_new: true, prefix: 1, donor_type: 1, donor_status: 1, sex_cd: 1, bahrain_status: 1, donor_importancy_lvl: 1, vouchers: [] },
+                selectedDonor: { is_new: true, prefix: 1, donor_type: 1, donor_status: 1, sex_cd: 1, bahrain_status: 1, donor_importancy_lvl: 1, delay_months: null, last_donation_date: '', vouchers: [] },
                 toast: { message: '', type: 'success' },
+
+                formatDelayMonths(m) {
+                    if (m === null || m === undefined) return 'No Receipts';
+                    if (Number(m) === 0) return '0 Months (This Month)';
+                    if (Number(m) === 1) return '1 Month Ago';
+                    return m + ' Months Ago';
+                },
+
+                delayBadgeClass(m) {
+                    if (m === null || m === undefined) return 'bg-slate-100 text-slate-600 border-slate-300';
+                    if (Number(m) <= 12) return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+                    if (Number(m) <= 24) return 'bg-amber-100 text-amber-800 border-amber-300';
+                    return 'bg-rose-100 text-rose-800 border-rose-300';
+                },
 
                 async init() {
                     const lkpRes = await fetch('/api/cash-donations/lookups');
@@ -369,8 +415,7 @@
                 async loadDonors(page = 1) {
                     const qs = new URLSearchParams({
                         q: this.filters.q || '',
-                        donor_type: this.filters.donor_type,
-                        donor_status: this.filters.donor_status,
+                        delay_filter: this.filters.delay_filter,
                         page: String(page),
                         page_size: '50'
                     });
@@ -423,6 +468,14 @@
                 },
 
                 async saveDonor() {
+                    if (!this.selectedDonor.donor_ename || !this.selectedDonor.donor_ename.trim()) {
+                        this.showToast('Donor English Name is required.', 'error');
+                        return;
+                    }
+                    if (![1, 2].includes(Number(this.selectedDonor.sex_cd))) {
+                        this.showToast('Donor Sex / Gender is required.', 'error');
+                        return;
+                    }
                     const res = await fetch('/api/cash-donors/save', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },

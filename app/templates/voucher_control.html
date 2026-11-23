@@ -202,13 +202,26 @@
                                 </div>
 
                                 <div class="sm:col-span-4" x-show="modifyForm.trans_pay_type !== 1">
-                                    <label class="block font-semibold text-slate-700 mb-1">Cheque / Ref No</label>
+                                    <label class="flex items-center justify-between font-semibold mb-1"
+                                           :class="(modifyForm.trans_pay_type === 2 || modifyForm.trans_pay_type === 3) ? 'text-amber-950 font-bold' : 'text-slate-700'">
+                                        <span x-text="modifyForm.trans_pay_type === 2 ? 'Cheque No *' : (modifyForm.trans_pay_type === 3 ? 'Visa / Card No *' : 'Transfer Ref')"></span>
+                                        <span x-show="modifyForm.trans_pay_type === 2 || modifyForm.trans_pay_type === 3"
+                                              class="text-[9px] px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 font-bold">REQUIRED</span>
+                                    </label>
                                     <input type="text" x-model="modifyForm.cheq_visa_no"
-                                           class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono">
+                                           :class="((modifyForm.trans_pay_type === 2 || modifyForm.trans_pay_type === 3) && (!modifyForm.cheq_visa_no || !modifyForm.cheq_visa_no.trim())) ? 'border-2 border-rose-400 bg-rose-50/40' : 'border border-slate-300 bg-white'"
+                                           class="w-full rounded-lg px-2.5 py-1.5 font-mono font-bold">
                                 </div>
                                 <div class="sm:col-span-4" x-show="modifyForm.trans_pay_type !== 1">
-                                    <label class="block font-semibold text-slate-700 mb-1">Bank</label>
-                                    <select x-model="modifyForm.bank_cd" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
+                                    <label class="flex items-center justify-between font-semibold mb-1"
+                                           :class="(modifyForm.trans_pay_type === 2 || modifyForm.trans_pay_type === 3) ? 'text-amber-950 font-bold' : 'text-slate-700'">
+                                        <span x-text="(modifyForm.trans_pay_type === 2 || modifyForm.trans_pay_type === 3) ? 'Bank Name *' : 'Bank'"></span>
+                                        <span x-show="modifyForm.trans_pay_type === 2 || modifyForm.trans_pay_type === 3"
+                                              class="text-[9px] px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 font-bold">REQUIRED</span>
+                                    </label>
+                                    <select x-model="modifyForm.bank_cd"
+                                            :class="((modifyForm.trans_pay_type === 2 || modifyForm.trans_pay_type === 3) && !modifyForm.bank_cd) ? 'border-2 border-rose-400 bg-rose-50/40' : 'border border-slate-300 bg-white'"
+                                            class="w-full rounded-lg px-2 py-1.5 font-semibold">
                                         <option value="">-- Select Bank --</option>
                                         <template x-for="bk in lookups.banks" :key="bk.bank_cd">
                                             <option :value="bk.bank_cd" x-text="bk.bank_cd + ' - ' + bk.bank_e_desc"></option>
@@ -594,6 +607,17 @@
 
                 async submitModification() {
                     if (!this.targetVoucher) return;
+                    if ([2, 3].includes(Number(this.modifyForm.trans_pay_type))) {
+                        const payLabel = Number(this.modifyForm.trans_pay_type) === 2 ? 'Cheque' : 'Visa / Card';
+                        if (!this.modifyForm.cheq_visa_no || !this.modifyForm.cheq_visa_no.trim()) {
+                            this.showToast(`${payLabel} No is required when payment method is ${payLabel}.`, 'error');
+                            return;
+                        }
+                        if (!this.modifyForm.bank_cd) {
+                            this.showToast(`Bank Name is required when payment method is ${payLabel}.`, 'error');
+                            return;
+                        }
+                    }
                     if (!this.modifyForm.modify_reason || this.modifyForm.modify_reason.trim().length < 3) {
                         this.showToast('Please enter the reason for modification before confirming.', 'error');
                         return;

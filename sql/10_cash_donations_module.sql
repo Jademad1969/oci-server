@@ -6436,3 +6436,27 @@ INSERT INTO vouch_history (vouch_no, donor_type, donor_code, band_det_cd, trans_
 (301, 1, '656', 1, '2014-05-22', 6000, '??? E?E ???I E? ?EC?? A? I???E', NULL, 'Third Payment of Total Amount BD 20,000/- to Build Masjid in Philippine', 2, '464137', 20, NULL, NULL, 2014, 'VOUCHER', 'Six Thousand Dinar, Zero Fils', NULL, NULL, NULL, 1, '2014-05-22', 1, '2014-07-10', 'CANCEL', 'VOUCHER'),
 (300, 1, '656', 1, '2014-05-22', 6000, '??? E?E ???I E? ?EC?? A? I???E', NULL, 'Third Payment of Total Amount BD 20,000/- to Build Masjid in Philippine', 2, '464137', 20, NULL, NULL, 2014, 'VOUCHER', 'Six Thousand Dinar, Zero Fils', NULL, NULL, NULL, 1, '2014-05-22', 1, '2014-07-10', 'CANCEL', 'VOUCHER'),
 (494, 1, '920', 1, '2014-07-19', 1000, NULL, NULL, 'For Qurans', 1, NULL, NULL, NULL, NULL, 2014, 'VOUCHER', 'One Thousand Dinar, Zero Fils', NULL, NULL, NULL, 1, '2014-07-19', 1, '2014-07-19', 'CANCEL', 'VOUCHER');
+-- Enforce NOT NULL & CHECK Constraints on cash_donors and vouch_mstr
+UPDATE cash_donors
+SET donor_ename = COALESCE(NULLIF(TRIM(donor_name), ''), 'Donor #' || donor_cd::text)
+WHERE donor_ename IS NULL OR TRIM(donor_ename) = '';
+
+UPDATE cash_donors SET sex_cd = 1 WHERE sex_cd IS NULL OR sex_cd NOT IN (1, 2);
+
+ALTER TABLE cash_donors ALTER COLUMN donor_ename SET NOT NULL;
+ALTER TABLE cash_donors ALTER COLUMN sex_cd SET NOT NULL;
+ALTER TABLE cash_donors DROP CONSTRAINT IF EXISTS chk_cash_donors_ename_not_empty;
+ALTER TABLE cash_donors ADD CONSTRAINT chk_cash_donors_ename_not_empty CHECK (LENGTH(TRIM(donor_ename)) > 0);
+ALTER TABLE cash_donors DROP CONSTRAINT IF EXISTS chk_cash_donors_sex_cd;
+ALTER TABLE cash_donors ADD CONSTRAINT chk_cash_donors_sex_cd CHECK (sex_cd IN (1, 2));
+ALTER TABLE cash_donors DROP CONSTRAINT IF EXISTS chk_cash_donors_status;
+ALTER TABLE cash_donors ADD CONSTRAINT chk_cash_donors_status CHECK (donor_status IN (1, 2));
+ALTER TABLE cash_donors DROP CONSTRAINT IF EXISTS chk_cash_donors_importancy;
+ALTER TABLE cash_donors ADD CONSTRAINT chk_cash_donors_importancy CHECK (donor_importancy_lvl IN (1, 2, 3));
+
+ALTER TABLE vouch_mstr DROP CONSTRAINT IF EXISTS chk_vouch_mstr_cheque_visa_required;
+ALTER TABLE vouch_mstr ADD CONSTRAINT chk_vouch_mstr_cheque_visa_required
+CHECK (
+    trans_pay_type NOT IN (2, 3)
+    OR (bank_cd IS NOT NULL AND cheq_visa_no IS NOT NULL AND LENGTH(TRIM(cheq_visa_no)) > 0)
+) NOT VALID;

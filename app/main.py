@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Depends, HTTPException, Form
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -162,8 +163,9 @@ def verify_session_token(token: str) -> Optional[dict]:
     except Exception:
         return None
 
-app = FastAPI(title="DIC Standing Orders System - Bahrain")
+app = FastAPI(title="Discover Islam Society — ERP System")
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["APP_ENV_INFO"] = APP_ENV_INFO
 
@@ -178,7 +180,7 @@ async def auth_and_rbac_middleware(request: Request, call_next):
     page_key = resolve_page_key(path)
     request.state.current_page_key = page_key
 
-    if path in public_paths:
+    if path in public_paths or path.startswith("/static/"):
         return await call_next(request)
 
     if not user:
@@ -690,7 +692,7 @@ async def bank_codes_audit_screen(request: Request):
 async def get_bank_codes_audit_data(bank_cd: int = 1, month_str: str = "2026-11", db: AsyncSession = Depends(get_db)):
     month_date = datetime.strptime(f"{month_str}-01", "%Y-%m-%d").date()
 
-    banks_res = await db.execute(text("SELECT bank_cd, bank_desc, bank_e_desc FROM lkp_banks ORDER BY bank_cd"))
+    banks_res = await db.execute(text(ACTIVE_SO_BANKS_SQL))
     banks = [dict(r._mapping) for r in banks_res]
 
     # 1. جلب قائمة الاستقطاعات (SO List) لهذا البنك
@@ -981,7 +983,7 @@ async def _process_and_insert_statement_rows(db: AsyncSession, bank_cd: int, mon
 async def get_bank_reconcile_data(bank_cd: int = 1, month_str: str = "2026-11", db: AsyncSession = Depends(get_db)):
     month_date = datetime.strptime(f"{month_str}-01", "%Y-%m-%d").date()
 
-    banks_res = await db.execute(text("SELECT bank_cd, bank_desc, bank_e_desc FROM lkp_banks ORDER BY bank_cd"))
+    banks_res = await db.execute(text(ACTIVE_SO_BANKS_SQL))
     banks = [dict(r._mapping) for r in banks_res]
 
     closed_res = await db.execute(
@@ -1977,9 +1979,18 @@ async def update_user_password_api(user_id: int, payload: UserPasswordUpdateSche
 async def reports_page(request: Request):
     return templates.TemplateResponse("reports.html", {"request": request})
 
+ACTIVE_SO_BANKS_SQL = """
+    SELECT b.bank_cd, b.bank_desc, COALESCE(NULLIF(TRIM(b.bank_e_desc), ''), b.bank_desc) AS bank_e_desc
+    FROM lkp_banks b
+    WHERE EXISTS (SELECT 1 FROM donor_item i WHERE i.bank2_cd = b.bank_cd)
+       OR EXISTS (SELECT 1 FROM money_trans m WHERE m.bank_cd = b.bank_cd)
+       OR EXISTS (SELECT 1 FROM bank_statement_load s WHERE s.bank_cd = b.bank_cd)
+    ORDER BY b.bank_cd
+"""
+
 @app.get("/api/reports/meta")
 async def get_reports_meta(db: AsyncSession = Depends(get_db)):
-    banks_res = await db.execute(text("SELECT bank_cd, bank_desc, bank_e_desc FROM lkp_banks ORDER BY bank_cd"))
+    banks_res = await db.execute(text(ACTIVE_SO_BANKS_SQL))
     banks = [dict(r._mapping) for r in banks_res]
     return {"banks": banks}
 
@@ -2315,7 +2326,7 @@ async def get_reports_matrix_api(
 
     period_keys = [p["key"] for p in periods]
 
-    banks_res = await db.execute(text("SELECT bank_cd, bank_desc, bank_e_desc FROM lkp_banks ORDER BY bank_cd"))
+    banks_res = await db.execute(text(ACTIVE_SO_BANKS_SQL))
     all_banks = [dict(r._mapping) for r in banks_res]
     if bank_cd and int(bank_cd) > 0:
         target_banks = [b for b in all_banks if int(b["bank_cd"]) == int(bank_cd)]
@@ -2379,6 +2390,9 @@ async def get_reports_matrix_api(
 
         grand_gen_total = round(grand_gen_total + row_gen, 3)
         grand_so_total = round(grand_so_total + row_so, 3)
+
+        if not (bank_cd and int(bank_cd) > 0) and row_gen == 0.0 and row_so == 0.0:
+            continue
 
         bank_rows.append({
             "bank_cd": bcd,
@@ -2577,7 +2591,7 @@ async def get_so_executive_dashboard_api(
     accepted_delay = int(setup_row.accepted_delayed_months or 6) if setup_row else 6
     grace_months = int(setup_row.grace_period_months or 2) if setup_row else 2
 
-    banks_res = await db.execute(text("SELECT bank_cd, bank_desc, bank_e_desc FROM lkp_banks ORDER BY bank_cd"))
+    banks_res = await db.execute(text(ACTIVE_SO_BANKS_SQL))
     all_banks = [dict(r._mapping) for r in banks_res]
 
     items_res = await db.execute(text("SELECT item_cd, item_desc, item_e_desc FROM lkp_charity_items ORDER BY item_cd"))
@@ -5043,6 +5057,88 @@ async def cash_followup_queue_api(
 
     return {
         "kpis": kpis,
+        "rows": [dict(r._mapping) for r in rows_res],
+        "pagination": {
+            "page": p,
+            "page_size": ps,
+            "total_rows": total_rows,
+            "total_pages": total_pages
+        }
+    }
+
+
+@app.get("/api/donors/browse")
+async def browse_so_donors_api(
+    filter_mode: str = "ALL",
+    q: str = "",
+    page: int = 1,
+    page_size: int = 40,
+    db: AsyncSession = Depends(get_db)
+):
+    where_clauses = ["1=1"]
+    params: dict[str, Any] = {}
+
+    fm = (filter_mode or "ALL").upper()
+    if fm == "ACTIVE":
+        where_clauses.append("EXISTS (SELECT 1 FROM donor_item i WHERE i.donor_no = d.donor_no AND i.status_no = 1)")
+    elif fm == "INACTIVE":
+        where_clauses.append("EXISTS (SELECT 1 FROM donor_item i WHERE i.donor_no = d.donor_no) AND NOT EXISTS (SELECT 1 FROM donor_item i WHERE i.donor_no = d.donor_no AND i.status_no = 1)")
+    elif fm == "NO_ITEMS":
+        where_clauses.append("NOT EXISTS (SELECT 1 FROM donor_item i WHERE i.donor_no = d.donor_no)")
+
+    q_clean = (q or "").strip()
+    if q_clean:
+        where_clauses.append("""(
+            CAST(d.donor_no AS TEXT) ILIKE :q
+            OR COALESCE(d.donor_name, '') ILIKE :q
+            OR COALESCE(d.donor_ename, '') ILIKE :q
+            OR COALESCE(d.donor_cpr, '') ILIKE :q
+            OR COALESCE(d.donor_mobile, '') ILIKE :q
+            OR COALESCE(d.donor_tel1, '') ILIKE :q
+            OR COALESCE(d.donor_tel2, '') ILIKE :q
+        )""")
+        params["q"] = f"%{q_clean}%"
+
+    where_sql = " AND ".join(where_clauses)
+
+    cnt_res = await db.execute(text(f"SELECT COUNT(*) FROM donor_master d WHERE {where_sql}"), params)
+    total_rows = int(cnt_res.scalar() or 0)
+
+    p = max(int(page or 1), 1)
+    ps = min(max(int(page_size or 40), 10), 100)
+    total_pages = max((total_rows + ps - 1) // ps, 1)
+    if p > total_pages:
+        p = total_pages
+    params["limit"] = ps
+    params["offset"] = (p - 1) * ps
+
+    rows_res = await db.execute(text(f"""
+        SELECT
+            d.donor_no,
+            COALESCE(d.donor_name, '') AS donor_name,
+            COALESCE(d.donor_ename, '') AS donor_ename,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), NULLIF(TRIM(d.donor_name), ''), 'Donor #' || d.donor_no::text) AS display_name,
+            COALESCE(d.donor_mobile, d.donor_tel2, d.donor_tel1, '') AS mobile,
+            COALESCE(d.donor_cpr, '') AS donor_cpr,
+            COALESCE(d.status_no, 1) AS status_no,
+            COALESCE(s.total_so, 0) AS total_so_count,
+            COALESCE(s.active_so, 0) AS active_so_count,
+            COALESCE(s.active_monthly, 0)::float8 AS active_monthly_bhd
+        FROM donor_master d
+        LEFT JOIN (
+            SELECT donor_no,
+                   COUNT(*) AS total_so,
+                   COUNT(*) FILTER (WHERE status_no = 1) AS active_so,
+                   COALESCE(SUM(monthly_pay) FILTER (WHERE status_no = 1), 0) AS active_monthly
+            FROM donor_item
+            GROUP BY donor_no
+        ) s ON s.donor_no = d.donor_no
+        WHERE {where_sql}
+        ORDER BY d.donor_no ASC
+        LIMIT :limit OFFSET :offset
+    """), params)
+
+    return {
         "rows": [dict(r._mapping) for r in rows_res],
         "pagination": {
             "page": p,

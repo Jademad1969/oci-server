@@ -75,14 +75,22 @@
             </div>
 
             <div class="flex items-center gap-2.5">
-                <div class="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-xs h-9">
-                    <button @click="firstDonor()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="First">|&lt;</button>
-                    <button @click="prevDonor()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Previous">&lt;</button>
-                    <span class="px-3 font-mono font-bold text-slate-700 whitespace-nowrap">
+                <div class="dis-pager">
+                    <button type="button" @click="firstDonor()" class="dis-pager-btn" title="First Record">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+                    </button>
+                    <button type="button" @click="prevDonor()" class="dis-pager-btn" title="Previous Record">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <span class="dis-pager-info">
                         <span x-text="donorNos.length ? currentIndex + 1 : 0"></span> / <span x-text="donorNos.length"></span>
                     </span>
-                    <button @click="nextDonor()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Next">&gt;</button>
-                    <button @click="lastDonor()" class="px-2.5 h-full hover:bg-white rounded font-bold" title="Last">&gt;|</button>
+                    <button type="button" @click="nextDonor()" class="dis-pager-btn" title="Next Record">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                    <button type="button" @click="lastDonor()" class="dis-pager-btn" title="Last Record">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                    </button>
                 </div>
 
                 <a href="/api/followup/export-csv" target="_blank"

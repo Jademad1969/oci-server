@@ -113,18 +113,27 @@
         <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div class="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span id="rep-page-range" class="font-semibold text-slate-600">Showing 0–0 of 0 records</span>
-                <div class="flex items-center gap-1.5">
-                    <span class="text-slate-500 font-semibold">Per page:</span>
-                    <select id="rep-page-size" class="border border-slate-300 rounded px-1.5 py-0.5 font-mono font-bold text-slate-800 bg-white">
+                <div class="dis-pager">
+                    <span class="text-[11px] font-semibold text-[#757277] pl-1.5 pr-0.5">Rows</span>
+                    <select id="rep-page-size" class="dis-pager-select">
                         <option value="50">50</option>
                         <option value="100" selected>100</option>
                         <option value="250">250</option>
                     </select>
-                    <button type="button" id="rep-page-first" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-100 font-bold text-slate-700">|&lt;</button>
-                    <button type="button" id="rep-page-prev" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-100 font-bold text-slate-700">&lt;</button>
-                    <span id="rep-page-info" class="px-2 font-mono font-bold text-slate-700">Page 1 / 1</span>
-                    <button type="button" id="rep-page-next" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-100 font-bold text-slate-700">&gt;</button>
-                    <button type="button" id="rep-page-last" class="px-2 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-100 font-bold text-slate-700">&gt;|</button>
+                    <div class="h-4 w-px bg-[#d7d3cb] mx-1"></div>
+                    <button type="button" id="rep-page-first" class="dis-pager-btn" title="First Page">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+                    </button>
+                    <button type="button" id="rep-page-prev" class="dis-pager-btn" title="Previous Page">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <span id="rep-page-info" class="dis-pager-info">Page 1 / 1</span>
+                    <button type="button" id="rep-page-next" class="dis-pager-btn" title="Next Page">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                    <button type="button" id="rep-page-last" class="dis-pager-btn" title="Last Page">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                    </button>
                 </div>
             </div>
             <div class="overflow-x-auto">

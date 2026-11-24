@@ -12,34 +12,37 @@
     {% include 'sidebar.html' %}
 
     <div class="flex-1 flex flex-col items-center justify-center min-h-screen p-8">
-        <div class="bg-white p-12 rounded-2xl border border-slate-200 shadow-sm text-center max-w-xl w-full">
-            <div class="w-16 h-16 rounded-2xl bg-blue-600 text-white font-bold text-2xl flex items-center justify-center mx-auto mb-5 shadow-md">
-                DIS
-            </div>
-            <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Discover Islam Society</h1>
-            <h2 class="text-xl font-bold text-blue-700 mt-2" style="font-family: 'Cairo', sans-serif;">جمعية اكتشف الإسلام</h2>
+        <div class="bg-white rounded-2xl border border-[#d7d3cb] shadow-sm text-center max-w-2xl w-full overflow-hidden">
+            <div class="h-1.5 w-full" style="background: linear-gradient(90deg, #003d58 0%, #d29535 50%, #003d58 100%);"></div>
+            <div class="p-10">
+                <div class="inline-flex items-center justify-center bg-[#fffaea] border border-[#d7d3cb] rounded-2xl px-6 py-4 mb-5 shadow-2xs">
+                    <img src="/static/logo.webp" alt="Discover Islam Society" class="h-16 w-auto object-contain">
+                </div>
+                <h1 class="text-2xl font-bold tracking-tight" style="color: #003d58;">Discover Islam Society</h1>
+                <h2 class="text-xl font-bold mt-1.5" style="font-family: 'Cairo', sans-serif; color: #d29535;">جمعية اكتشف الإسلام</h2>
 
-            <div class="mt-7 pt-6 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
-                <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                    <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Environment</div>
-                    <div class="mt-1.5 flex items-center gap-2">
-                        <span class="px-2 py-0.5 rounded-full text-xs font-bold {% if APP_ENV_INFO.is_production %}bg-emerald-100 text-emerald-800 border border-emerald-300{% elif APP_ENV_INFO.is_testing %}bg-amber-100 text-amber-900 border border-amber-300{% else %}bg-indigo-100 text-indigo-800 border border-indigo-300{% endif %}">
-                            {{ APP_ENV_INFO.label }}
-                        </span>
+                <div class="mt-7 pt-6 border-t border-[#d7d3cb]/70 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+                    <div class="p-3.5 rounded-xl bg-[#fffaea]/70 border border-[#d7d3cb]/80">
+                        <div class="text-[11px] uppercase tracking-wider font-semibold" style="color: #757277;">Environment</div>
+                        <div class="mt-1.5 flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded-full text-xs font-bold {% if APP_ENV_INFO.is_production %}bg-emerald-100 text-emerald-800 border border-emerald-300{% elif APP_ENV_INFO.is_testing %}bg-amber-100 text-amber-900 border border-amber-300{% else %}bg-indigo-100 text-indigo-800 border border-indigo-300{% endif %}">
+                                {{ APP_ENV_INFO.label }}
+                            </span>
+                        </div>
+                        <div class="text-xs mt-1" style="font-family: 'Cairo', sans-serif; color: #003d58;">{{ APP_ENV_INFO.label_ar }}</div>
                     </div>
-                    <div class="text-xs text-slate-500 mt-1" style="font-family: 'Cairo', sans-serif;">{{ APP_ENV_INFO.label_ar }}</div>
-                </div>
 
-                <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                    <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Version</div>
-                    <div class="mt-1.5 text-sm font-bold font-mono text-slate-800">{{ APP_ENV_INFO.version }}</div>
-                    <div class="text-xs text-slate-500 mt-1">ERP Platform</div>
-                </div>
+                    <div class="p-3.5 rounded-xl bg-[#fffaea]/70 border border-[#d7d3cb]/80">
+                        <div class="text-[11px] uppercase tracking-wider font-semibold" style="color: #757277;">Version</div>
+                        <div class="mt-1.5 text-sm font-bold font-mono" style="color: #003d58;">{{ APP_ENV_INFO.version }}</div>
+                        <div class="text-xs mt-1" style="color: #757277;">ERP Platform</div>
+                    </div>
 
-                <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                    <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Database</div>
-                    <div class="mt-1.5 text-sm font-bold font-mono text-slate-800 truncate" title="{{ APP_ENV_INFO.db_name }}">{{ APP_ENV_INFO.db_name }}</div>
-                    <div class="text-xs text-slate-500 mt-1">Active Schema</div>
+                    <div class="p-3.5 rounded-xl bg-[#fffaea]/70 border border-[#d7d3cb]/80">
+                        <div class="text-[11px] uppercase tracking-wider font-semibold" style="color: #757277;">Database</div>
+                        <div class="mt-1.5 text-sm font-bold font-mono truncate" style="color: #003d58;" title="{{ APP_ENV_INFO.db_name }}">{{ APP_ENV_INFO.db_name }}</div>
+                        <div class="text-xs mt-1" style="color: #757277;">Active Schema</div>
+                    </div>
                 </div>
             </div>
         </div>

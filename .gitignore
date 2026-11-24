@@ -5,3 +5,6 @@ old_schemas/
 *.DMP
 *.key
 *_backup.sql
+ico_server_notes.txt
+subdomains.txt
+backups/

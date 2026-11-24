@@ -246,6 +246,7 @@
                                 <th class="px-3 py-2 text-right">Year (BHD)</th>
                                 <th class="px-3 py-2 text-right">Lifetime (BHD)</th>
                                 <th class="px-3 py-2 text-right">Recency</th>
+                                <th class="px-3 py-2 text-center no-print">Follow-up</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
@@ -262,10 +263,19 @@
                                     <td class="px-3 py-2 text-right font-mono font-bold text-emerald-700" x-text="fmtBhd(d.year_total_bhd)"></td>
                                     <td class="px-3 py-2 text-right font-mono text-slate-700" x-text="fmtBhd(d.lifetime_bhd)"></td>
                                     <td class="px-3 py-2 text-right font-mono text-[10px]" x-text="d.delay_months + 'm'"></td>
+                                    <td class="px-3 py-2 text-center no-print">
+                                        <button type="button"
+                                                @click="window.openCashFollowupModal && window.openCashFollowupModal(d.donor_cd, () => loadDashboard())"
+                                                :title="d.last_followup_date ? ('Follow-ups: ' + d.followup_count + ' | Last: ' + d.last_followup_date) : 'Log Follow-up'"
+                                                :class="d.followup_count > 0 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'"
+                                                class="px-2 py-0.5 rounded-md border text-[10px] font-bold inline-flex items-center gap-0.5">
+                                            📞<span x-show="d.followup_count > 0" class="font-mono" x-text="d.followup_count"></span>
+                                        </button>
+                                    </td>
                                 </tr>
                             </template>
                             <tr x-show="top_donors.length === 0">
-                                <td colspan="6" class="p-6 text-center text-slate-400">No donations in this filter.</td>
+                                <td colspan="7" class="p-6 text-center text-slate-400">No donations in this filter.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -291,6 +301,7 @@
                                 <th class="px-3 py-2 text-right">Lifetime (BHD)</th>
                                 <th class="px-3 py-2 text-right">Last Donation</th>
                                 <th class="px-3 py-2 text-right">Delay</th>
+                                <th class="px-3 py-2 text-center no-print">Follow-up</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
@@ -309,10 +320,19 @@
                                         <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-900"
                                               x-text="w.delay_months + 'm'"></span>
                                     </td>
+                                    <td class="px-3 py-2 text-center no-print">
+                                        <button type="button"
+                                                @click="window.openCashFollowupModal && window.openCashFollowupModal(w.donor_cd, () => loadDashboard())"
+                                                :title="w.last_followup_date ? ('Follow-ups: ' + w.followup_count + ' | Last: ' + w.last_followup_date) : 'Log Follow-up'"
+                                                :class="w.followup_count > 0 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'"
+                                                class="px-2 py-0.5 rounded-md border text-[10px] font-bold inline-flex items-center gap-0.5">
+                                            📞<span x-show="w.followup_count > 0" class="font-mono" x-text="w.followup_count"></span>
+                                        </button>
+                                    </td>
                                 </tr>
                             </template>
                             <tr x-show="winback_donors.length === 0">
-                                <td colspan="6" class="p-6 text-center text-slate-400">No lapsed high-value donors in 13–36m window.</td>
+                                <td colspan="7" class="p-6 text-center text-slate-400">No lapsed high-value donors in 13–36m window.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -552,6 +572,7 @@
             };
         }
     </script>
+    {% include '_cash_followup_modal.html' %}
 </body>
 </html>
 

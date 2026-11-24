@@ -26,6 +26,11 @@
                 <p class="text-xs text-slate-500 mt-0.5">Manage walk-in cash and cheque donors, inspect their historical receipts, or issue a new receipt voucher</p>
             </div>
             <div class="flex items-center gap-2">
+                <button type="button" x-show="selectedDonor.donor_cd && !selectedDonor.is_new"
+                        @click="window.openCashFollowupModal && window.openCashFollowupModal(selectedDonor.donor_cd, () => loadDonors(pagination.page))"
+                        class="bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-2xs transition flex items-center gap-1.5">
+                    <span>📞 Follow-up</span>
+                </button>
                 <button type="button" @click="prepareNewDonor()"
                         class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-2xs transition flex items-center gap-1.5">
                     <span>+ New Cash Donor</span>
@@ -123,10 +128,17 @@
                                 </div>
                             </div>
                             <div class="text-right shrink-0 space-y-1">
-                                <div>
+                                <div class="flex items-center justify-end gap-1.5">
                                     <span :class="delayBadgeClass(d.delay_months)"
                                           class="px-2 py-0.5 rounded-full text-[10px] font-bold font-mono"
                                           x-text="formatDelayMonths(d.delay_months)"></span>
+                                    <span role="button" tabindex="0"
+                                          @click.stop="window.openCashFollowupModal && window.openCashFollowupModal(d.donor_cd, () => loadDonors(pagination.page))"
+                                          :title="d.last_followup_date ? ('Follow-ups: ' + d.followup_count + ' | Last: ' + d.last_followup_date) : 'Log Follow-up'"
+                                          :class="d.followup_count > 0 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'"
+                                          class="px-1.5 py-0.5 rounded-md border text-[10px] font-bold cursor-pointer inline-flex items-center gap-0.5">
+                                        📞<span x-show="d.followup_count > 0" class="font-mono" x-text="d.followup_count"></span>
+                                    </span>
                                 </div>
                                 <div class="text-[10px] font-mono text-slate-400"
                                      x-text="d.last_donation_date ? ('Last: ' + d.last_donation_date) : 'No receipts'"></div>
@@ -493,5 +505,6 @@
             };
         }
     </script>
+    {% include '_cash_followup_modal.html' %}
 </body>
 </html>

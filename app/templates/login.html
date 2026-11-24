@@ -3,13 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign In - Discover Islam Society</title>
+    <title>{{ APP_ENV_INFO.tab_prefix }}Sign In - Discover Islam Society</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
 <body class="bg-slate-900 flex items-center justify-center min-h-screen p-4">
     <div class="bg-white w-full max-w-md p-8 rounded-2xl shadow-2xl border border-slate-200">
+        {% if not APP_ENV_INFO.is_production %}
+        <div class="mb-5 px-3 py-2 rounded-xl text-center text-xs font-bold border {% if APP_ENV_INFO.is_testing %}bg-amber-50 border-amber-300 text-amber-900{% else %}bg-indigo-50 border-indigo-300 text-indigo-900{% endif %}">
+            {% if APP_ENV_INFO.is_testing %}⚠️{% else %}🛠️{% endif %} {{ APP_ENV_INFO.banner_text }}
+        </div>
+        {% endif %}
+
         <div class="text-center mb-7">
             <div class="w-12 h-12 rounded-xl bg-blue-600 text-white font-bold text-lg flex items-center justify-center mx-auto mb-3 shadow-lg">
                 DIS
@@ -41,6 +47,7 @@
             </button>
         </form>
 
+        {% if not APP_ENV_INFO.is_production %}
         <div class="mt-6 pt-4 border-t border-slate-100 text-[11px] text-slate-500 space-y-1">
             <div class="font-semibold text-slate-700">Quick Test Accounts (Password: <span class="font-mono text-slate-900">123456</span>):</div>
             <div class="flex justify-between">
@@ -56,6 +63,7 @@
                 <span class="text-amber-600 font-semibold">View Only (Read-Only)</span>
             </div>
         </div>
+        {% endif %}
     </div>
 </body>
 </html>

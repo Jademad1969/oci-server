@@ -31,7 +31,12 @@
                 </div>
                 <div class="sidebar-text whitespace-nowrap">
                     <h2 class="text-xs font-bold text-white tracking-wide leading-tight">Discover Islam Society</h2>
-                    <p class="text-[10px] text-slate-400">ERP SYSTEM</p>
+                    <div class="flex items-center gap-1.5 mt-0.5">
+                        <p class="text-[10px] text-slate-400">ERP SYSTEM</p>
+                        <span class="px-1.5 py-0.2 rounded text-[9px] font-bold tracking-wider {% if APP_ENV_INFO.is_production %}bg-emerald-500/20 text-emerald-300 border border-emerald-500/30{% elif APP_ENV_INFO.is_testing %}bg-amber-500/25 text-amber-300 border border-amber-400/40{% else %}bg-indigo-500/25 text-indigo-300 border border-indigo-400/40{% endif %}">
+                            {{ APP_ENV_INFO.short_badge }}
+                        </span>
+                    </div>
                 </div>
             </div>
             <button type="button" onclick="toggleErpSidebarCollapse()" title="Toggle Sidebar"
@@ -313,6 +318,11 @@
 </div>
 
 <script>
+    window.ERP_ENV = {{ APP_ENV_INFO | tojson }};
+    if (window.ERP_ENV && window.ERP_ENV.tab_prefix && !document.title.startsWith(window.ERP_ENV.tab_prefix)) {
+        document.title = window.ERP_ENV.tab_prefix + document.title;
+    }
+
     window.ERP_USER = {
         username: "{{ request.state.user.username if request.state.user else '' }}",
         page_key: "{{ cur_page }}",
@@ -379,6 +389,18 @@
                 banner.className = "bg-amber-500/15 border-b border-amber-400/40 text-amber-900 px-4 py-1.5 text-xs font-semibold flex items-center justify-between";
                 banner.innerHTML = `<span>🔒 <strong>View-Only on this page (${window.ERP_USER.page_key}):</strong> Modifications are disabled on this screen.</span><span>Access: VIEW</span>`;
                 mainContent.insertBefore(banner, mainContent.firstChild);
+            }
+
+            if (window.ERP_ENV && !window.ERP_ENV.is_production) {
+                const envBanner = document.createElement("div");
+                envBanner.dir = "ltr";
+                const isTest = window.ERP_ENV.is_testing;
+                envBanner.className = isTest
+                    ? "bg-amber-500 text-slate-950 px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm"
+                    : "bg-indigo-600 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm";
+                const icon = isTest ? "⚠️" : "🛠️";
+                envBanner.innerHTML = `<span>${icon} ${window.ERP_ENV.banner_text}</span><span class="font-mono text-[11px] opacity-90">${window.ERP_ENV.short_badge} • DB: ${window.ERP_ENV.db_name}</span>`;
+                mainContent.insertBefore(envBanner, mainContent.firstChild);
             }
 
             wrapper.appendChild(sidebar);

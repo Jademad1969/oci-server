@@ -9,7 +9,64 @@ from typing import Optional, Any
 from datetime import date, datetime
 import hashlib, hmac, json, base64, os
 
-from app.database import get_db
+from app.database import get_db, DATABASE_URL
+
+APP_VERSION = "v1.2.0"
+
+def build_app_env_info() -> dict:
+    db_name = DATABASE_URL.rsplit("/", 1)[-1].split("?")[0] if "/" in DATABASE_URL else "unknown"
+    raw_env = (os.getenv("APP_ENV") or "").strip().lower()
+    if raw_env in ("production", "prod", "live"):
+        env_key = "production"
+    elif raw_env in ("testing", "test", "staging", "stage"):
+        env_key = "testing"
+    elif raw_env in ("development", "dev", "local"):
+        env_key = "development"
+    else:
+        db_lower = db_name.lower()
+        if "prod" in db_lower:
+            env_key = "production"
+        elif "test" in db_lower:
+            env_key = "testing"
+        else:
+            env_key = "development"
+
+    meta = {
+        "production": {
+            "label": "Production",
+            "label_ar": "بيئة التشغيل",
+            "short_badge": "PROD",
+            "tab_prefix": "",
+            "banner_text": "",
+        },
+        "testing": {
+            "label": "Testing",
+            "label_ar": "بيئة الاختبار",
+            "short_badge": "TEST",
+            "tab_prefix": "[TEST] ",
+            "banner_text": "TESTING ENVIRONMENT — نسخة اختبار (البيانات هنا للتجربة فقط)",
+        },
+        "development": {
+            "label": "Development",
+            "label_ar": "بيئة التطوير",
+            "short_badge": "DEV",
+            "tab_prefix": "[DEV] ",
+            "banner_text": "LOCAL DEVELOPMENT — بيئة التطوير المحلية",
+        },
+    }[env_key]
+
+    return {
+        "key": env_key,
+        "raw": raw_env or "auto",
+        "is_production": env_key == "production",
+        "is_testing": env_key == "testing",
+        "is_development": env_key == "development",
+        "db_name": db_name,
+        "version": APP_VERSION,
+        **meta,
+    }
+
+APP_ENV_INFO = build_app_env_info()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dic_bahrain_erp_secret_key_2026")
 
@@ -106,6 +163,7 @@ def verify_session_token(token: str) -> Optional[dict]:
 app = FastAPI(title="DIC Standing Orders System - Bahrain")
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["APP_ENV_INFO"] = APP_ENV_INFO
 
 @app.middleware("http")
 async def auth_and_rbac_middleware(request: Request, call_next):
@@ -215,7 +273,13 @@ class ToggleSoStatusSchema(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "environment": os.getenv("APP_ENV", "testing")}
+    return {
+        "status": "ok",
+        "environment": APP_ENV_INFO["key"],
+        "raw_app_env": APP_ENV_INFO["raw"],
+        "database": APP_ENV_INFO["db_name"],
+        "version": APP_ENV_INFO["version"],
+    }
 
 @app.get("/", response_class=HTMLResponse)
 async def main_donor_screen(request: Request):

@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cash Donor Follow-up - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800" x-data="cashFollowupPageApp()" x-init="init()">
+    {% include 'sidebar.html' %}
+
+    <div class="p-4 lg:p-6 max-w-[1600px] mx-auto w-full space-y-4">
+        <!-- Header -->
+        <div class="bg-gradient-to-r from-slate-900 via-slate-800 to-rose-950 text-white rounded-2xl p-4 lg:p-5 shadow-md flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[10px] font-bold uppercase tracking-wider">Cash Donations Module</span>
+                    <h1 class="text-base lg:text-lg font-extrabold tracking-tight">Delayed Cash Donors Follow-up Center</h1>
+                </div>
+                <p class="text-xs text-slate-300 mt-0.5">Track overdue cash donors, log contact attempts with delay reasons & outcomes, and schedule follow-up reminders</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <a href="/cash-donors" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 transition">
+                    Cash Donors Registry
+                </a>
+                <a href="/cash-dashboard" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition">
+                    Cash Dashboard
+                </a>
+            </div>
+        </div>
+
+        <!-- KPI Strip -->
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div class="bg-white p-3.5 rounded-xl border border-rose-200 shadow-2xs">
+                <div class="text-[11px] font-semibold text-rose-700">Delayed &gt; 12 Months</div>
+                <div class="text-xl font-extrabold font-mono text-rose-700 mt-0.5" x-text="(kpis.delayed_over_12m || 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-amber-200 shadow-2xs">
+                <div class="text-[11px] font-semibold text-amber-700">Delayed &amp; Never Followed</div>
+                <div class="text-xl font-extrabold font-mono text-amber-700 mt-0.5" x-text="(kpis.delayed_never_followed || 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-blue-200 shadow-2xs">
+                <div class="text-[11px] font-semibold text-blue-700">Donors Followed</div>
+                <div class="text-xl font-extrabold font-mono text-blue-700 mt-0.5" x-text="(kpis.donors_followed || 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-purple-200 shadow-2xs">
+                <div class="text-[11px] font-semibold text-purple-700">Due Within 7 Days</div>
+                <div class="text-xl font-extrabold font-mono text-purple-700 mt-0.5" x-text="(kpis.due_within_7d || 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div class="text-[11px] font-semibold text-slate-500">Total Follow-up Logs</div>
+                <div class="text-xl font-extrabold font-mono text-slate-900 mt-0.5" x-text="(kpis.total_logs || 0).toLocaleString()"></div>
+            </div>
+        </div>
+
+        <!-- Toast -->
+        <div x-show="toast.message" x-cloak
+             :class="toast.type === 'error' ? 'bg-rose-50 border-rose-300 text-rose-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'"
+             class="p-3 rounded-xl border text-xs font-semibold flex items-center justify-between">
+            <span x-text="toast.message"></span>
+            <button type="button" @click="toast.message = ''" class="opacity-60 hover:opacity-100">✕</button>
+        </div>
+
+        <!-- Main Workspace: Left Queue (7 cols) + Right Follow-up Panel (5 cols) -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+            <!-- LEFT: Delayed Donors Queue -->
+            <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden flex flex-col">
+                <div class="p-3 bg-slate-900 text-white space-y-2.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <span class="text-xs font-bold uppercase tracking-wider">Overdue Cash Donors Queue</span>
+                        <span class="text-[11px] font-mono bg-slate-800 px-2 py-0.5 rounded text-amber-300"
+                              x-text="pagination.total_rows + ' donors'"></span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 text-xs">
+                        <input type="text" x-model="filters.q" @keydown.enter="loadQueue(1)"
+                               placeholder="Search Code, Name, Mobile..."
+                               class="sm:col-span-4 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white placeholder-slate-400 focus:outline-none focus:border-blue-400">
+                        <select x-model="filters.delay_filter" @change="loadQueue(1)"
+                                class="sm:col-span-3 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200">
+                            <option value="OVER_12">Delayed &gt; 12m</option>
+                            <option value="13_24">13 – 24 Months</option>
+                            <option value="OVER_24">&gt; 24 Months</option>
+                            <option value="0_12">≤ 12 Months</option>
+                            <option value="NEVER">No Receipts</option>
+                            <option value="ALL">All Recency</option>
+                        </select>
+                        <select x-model="filters.followup_status" @change="loadQueue(1)"
+                                class="sm:col-span-3 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200">
+                            <option value="ALL">All Follow-up Status</option>
+                            <option value="NEVER_FOLLOWED">Never Followed</option>
+                            <option value="FOLLOWED">Already Followed</option>
+                            <option value="DUE_SOON">Due Within 7 Days</option>
+                        </select>
+                        <select x-model="filters.min_lifetime" @change="loadQueue(1)"
+                                class="sm:col-span-2 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200">
+                            <option value="0">Any BHD</option>
+                            <option value="100">≥ 100 BHD</option>
+                            <option value="500">≥ 500 BHD</option>
+                            <option value="1000">≥ 1,000 BHD</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto max-h-[620px]">
+                    <table class="w-full text-xs text-left">
+                        <thead class="bg-slate-50 text-[10px] uppercase text-slate-600 border-b border-slate-200 sticky top-0">
+                            <tr>
+                                <th class="px-3 py-2">Donor</th>
+                                <th class="px-3 py-2">Mobile</th>
+                                <th class="px-3 py-2 text-right">Lifetime</th>
+                                <th class="px-3 py-2 text-right">Delay</th>
+                                <th class="px-3 py-2">Last Follow-up</th>
+                                <th class="px-3 py-2 text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <template x-for="r in rows" :key="r.donor_cd">
+                                <tr @click="selectDonor(r.donor_cd)"
+                                    :class="selectedDonor.donor_cd === r.donor_cd ? 'bg-blue-50/90' : 'hover:bg-slate-50'"
+                                    class="cursor-pointer transition">
+                                    <td class="px-3 py-2">
+                                        <div class="font-bold text-slate-900">
+                                            <span class="font-mono text-blue-700" x-text="'#' + r.donor_cd"></span>
+                                            <span x-text="r.display_name"></span>
+                                        </div>
+                                        <div class="text-[10px] text-slate-500 font-mono"
+                                             x-text="r.last_donation_date ? ('Last: ' + r.last_donation_date + ' (' + r.vouch_count + ' RVs)') : 'No receipts'"></div>
+                                    </td>
+                                    <td class="px-3 py-2 font-mono text-[11px] text-slate-700 whitespace-nowrap" x-text="r.mobile || '-'"></td>
+                                    <td class="px-3 py-2 text-right font-mono font-bold text-emerald-700 whitespace-nowrap" x-text="Number(r.lifetime_bhd || 0).toFixed(3)"></td>
+                                    <td class="px-3 py-2 text-right whitespace-nowrap">
+                                        <span :class="delayBadgeClass(r.delay_months)"
+                                              class="px-2 py-0.5 rounded-full text-[10px] font-bold font-mono"
+                                              x-text="r.delay_months === null ? 'Never' : (r.delay_months + 'm')"></span>
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        <template x-if="r.followup_count > 0">
+                                            <div>
+                                                <div class="font-mono text-[10px] text-slate-700 font-bold"
+                                                     x-text="r.last_followup_date + ' ' + r.last_followup_time"></div>
+                                                <div class="text-[10px] text-blue-700 truncate max-w-[140px]" x-text="r.last_result"></div>
+                                                <div x-show="r.next_followup_date" class="text-[10px] font-mono text-amber-700"
+                                                     x-text="'Next: ' + r.next_followup_date"></div>
+                                            </div>
+                                        </template>
+                                        <template x-if="!r.followup_count">
+                                            <span class="text-[10px] text-slate-400 italic">Not followed</span>
+                                        </template>
+                                    </td>
+                                    <td class="px-3 py-2 text-center">
+                                        <button type="button" @click.stop="selectDonor(r.donor_cd)"
+                                                class="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold">
+                                            📞 <span x-text="r.followup_count || 0"></span>
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="!loading && rows.length === 0">
+                                <td colspan="6" class="p-8 text-center text-slate-400">No cash donors match the selected filters.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="p-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+                    <button type="button" @click="loadQueue(pagination.page - 1)" :disabled="pagination.page <= 1"
+                            class="px-2.5 py-1 rounded border border-slate-300 bg-white disabled:opacity-40 font-semibold">Prev</button>
+                    <span class="font-mono text-[11px] text-slate-600"
+                          x-text="'Page ' + pagination.page + ' of ' + pagination.total_pages"></span>
+                    <button type="button" @click="loadQueue(pagination.page + 1)" :disabled="pagination.page >= pagination.total_pages"
+                            class="px-2.5 py-1 rounded border border-slate-300 bg-white disabled:opacity-40 font-semibold">Next</button>
+                </div>
+            </section>
+
+            <!-- RIGHT: Selected Donor Follow-up Workspace (5 cols) -->
+            <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden space-y-0">
+                <template x-if="!selectedDonor.donor_cd">
+                    <div class="p-10 text-center text-xs text-slate-400">
+                        Select a donor from the queue on the left to log a follow-up or view history.
+                    </div>
+                </template>
+
+                <template x-if="selectedDonor.donor_cd">
+                    <div>
+                        <!-- Selected Donor Summary Header -->
+                        <div class="p-4 bg-slate-900 text-white">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-mono text-xs font-bold text-amber-300" x-text="'#' + selectedDonor.donor_cd"></span>
+                                        <h2 class="text-sm font-bold truncate" x-text="selectedDonor.display_name"></h2>
+                                    </div>
+                                    <div class="text-xs text-slate-300 mt-0.5" style="font-family: 'Cairo', sans-serif;"
+                                         x-show="selectedDonor.donor_name && selectedDonor.donor_name !== selectedDonor.display_name"
+                                         x-text="selectedDonor.donor_name"></div>
+                                </div>
+                                <a :href="'/cash-donors?donor_cd=' + selectedDonor.donor_cd"
+                                   class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-sky-300 font-semibold shrink-0">
+                                    Profile →
+                                </a>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 mt-3 text-[11px] font-mono">
+                                <div class="bg-slate-800/80 rounded-lg p-2">
+                                    <div class="text-[9px] text-slate-400 uppercase">Mobile</div>
+                                    <div class="font-bold text-white truncate" x-text="selectedDonor.mobile || selectedDonor.tel_home || '-'"></div>
+                                </div>
+                                <div class="bg-slate-800/80 rounded-lg p-2">
+                                    <div class="text-[9px] text-slate-400 uppercase">Lifetime</div>
+                                    <div class="font-bold text-emerald-300" x-text="Number(selectedDonor.total_donated || 0).toFixed(3) + ' BHD'"></div>
+                                </div>
+                                <div class="bg-slate-800/80 rounded-lg p-2">
+                                    <div class="text-[9px] text-slate-400 uppercase">Last Donation</div>
+                                    <div class="font-bold text-amber-300" x-text="selectedDonor.last_donation_date || 'Never'"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Follow-up Form (1. Delay Reason -> 2. Result -> 3. Auto Date & Time) -->
+                        <form @submit.prevent="submitFollowup()" class="p-4 border-b border-slate-200 bg-slate-50/70 space-y-3">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-800">📞 New Follow-up Entry</h3>
+                                <button type="button" @click="refreshAutoDateTime()"
+                                        class="text-[10px] font-mono text-blue-600 hover:underline">↻ Set Current Time</button>
+                            </div>
+
+                            <!-- 1. Delay Reason (Required) -->
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-700 mb-1">1. Delay Reason / سبب التأخير <span class="text-rose-600">*</span></label>
+                                <select x-model="form.delay_reason_cd" required
+                                        class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600">
+                                    <option value="">-- Select Delay Reason --</option>
+                                    <template x-for="r in lookups.delay_reasons" :key="r.reason_cd">
+                                        <option :value="String(r.reason_cd)" x-text="r.reason_enm + ' — ' + r.reason_nm"></option>
+                                    </template>
+                                </select>
+                            </div>
+
+                            <!-- 2. Follow-up Result -->
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-700 mb-1">2. Follow-up Result / نتيجة المتابعة <span class="text-rose-600">*</span></label>
+                                <select x-model="form.call_result_cd" required
+                                        class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600">
+                                    <option value="">-- Select Result --</option>
+                                    <template x-for="res in lookups.follow_results" :key="res.result_cd">
+                                        <option :value="String(res.result_cd)" x-text="res.result_enm + ' — ' + res.result_nm"></option>
+                                    </template>
+                                </select>
+                            </div>
+
+                            <!-- 3. Auto Date & 4. Auto Time (HTML time input) -->
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[11px] font-bold text-slate-700 mb-1">3. Call Date (Today) <span class="text-rose-600">*</span></label>
+                                    <input type="date" x-model="form.call_date" required
+                                           class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-600">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-bold text-slate-700 mb-1">4. Call Time (HH:MM) <span class="text-rose-600">*</span></label>
+                                    <input type="time" x-model="form.call_time" required
+                                           class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-600">
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[11px] font-bold text-slate-700 mb-1">Contact Method</label>
+                                    <select x-model="form.contact_method"
+                                            class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600">
+                                        <template x-for="m in lookups.contact_methods" :key="m.id">
+                                            <option :value="String(m.id)" x-text="m.name_en"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-bold text-slate-700 mb-1">Next Follow-up Date</label>
+                                    <input type="date" x-model="form.next_followup_date"
+                                           class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-600">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-700 mb-1">Notes / ملاحظات</label>
+                                <textarea x-model="form.call_result_notes" rows="2" maxlength="500"
+                                          placeholder="Record call details, promises, or updated info..."
+                                          class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600"></textarea>
+                            </div>
+
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-700 mb-1">Additional Notes / ملاحظات إضافية</label>
+                                <textarea x-model="form.extra_notes" rows="2" maxlength="500"
+                                          placeholder="Any extra details or follow-up instructions..."
+                                          class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600"></textarea>
+                            </div>
+
+                            <button type="submit" :disabled="saving"
+                                    class="w-full h-9 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold shadow-xs transition">
+                                <span x-text="saving ? 'Saving Follow-up...' : 'Save Follow-up Record'"></span>
+                            </button>
+                        </form>
+
+                        <!-- Selected Donor Follow-up History -->
+                        <div class="p-4 space-y-2">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700">Previous Follow-ups</h3>
+                                <span class="text-[11px] font-mono text-slate-500" x-text="followups.length + ' record(s)'"></span>
+                            </div>
+                            <div class="space-y-2 max-h-[260px] overflow-y-auto">
+                                <template x-for="f in followups" :key="f.followup_id">
+                                    <div class="p-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs space-y-1">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="font-mono font-bold text-slate-800" x-text="f.call_date + ' • ' + f.call_time"></span>
+                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800" x-text="f.result_en"></span>
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                                            <span><strong>Reason:</strong> <span x-text="f.delay_reason_en"></span></span>
+                                            <span>• <span x-text="f.contact_method_label"></span></span>
+                                            <span>• <strong class="font-mono" x-text="f.call_by"></strong></span>
+                                            <span x-show="f.next_followup_date" class="text-amber-700 font-mono">• Next: <span x-text="f.next_followup_date"></span></span>
+                                        </div>
+                                        <div x-show="f.call_result_notes" class="text-[11px] text-slate-700 bg-white p-1.5 rounded border border-slate-200/70" x-text="f.call_result_notes"></div>
+                                        <div x-show="f.extra_notes" class="text-[11px] text-slate-600 italic bg-amber-50/50 p-1.5 rounded border border-amber-200/60" x-text="'Additional: ' + f.extra_notes"></div>
+                                    </div>
+                                </template>
+                                <div x-show="followups.length === 0" class="p-4 text-center text-xs text-slate-400">
+                                    No follow-ups logged for this donor yet.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        function cashFollowupPageApp() {
+            return {
+                loading: false,
+                saving: false,
+                lookups: { delay_reasons: [], follow_results: [], contact_methods: [] },
+                kpis: { delayed_over_12m: 0, delayed_never_followed: 0, donors_followed: 0, due_within_7d: 0, total_logs: 0 },
+                filters: { q: '', delay_filter: 'OVER_12', followup_status: 'ALL', min_lifetime: '0' },
+                rows: [],
+                pagination: { page: 1, page_size: 50, total_rows: 0, total_pages: 1 },
+                selectedDonor: {},
+                followups: [],
+                toast: { message: '', type: 'success' },
+                form: {
+                    delay_reason_cd: '',
+                    call_result_cd: '',
+                    call_date: '',
+                    call_time: '',
+                    contact_method: '1',
+                    next_followup_date: '',
+                    call_result_notes: '',
+                    extra_notes: ''
+                },
+
+                getNowDateTime() {
+                    const now = new Date();
+                    const pad = n => String(n).padStart(2, '0');
+                    return {
+                        dateStr: now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()),
+                        timeStr: pad(now.getHours()) + ':' + pad(now.getMinutes())
+                    };
+                },
+
+                refreshAutoDateTime() {
+                    const { dateStr, timeStr } = this.getNowDateTime();
+                    this.form.call_date = dateStr;
+                    this.form.call_time = timeStr;
+                },
+
+                delayBadgeClass(m) {
+                    if (m === null || m === undefined) return 'bg-slate-100 text-slate-600';
+                    if (Number(m) <= 12) return 'bg-emerald-100 text-emerald-800';
+                    if (Number(m) <= 24) return 'bg-amber-100 text-amber-900';
+                    return 'bg-rose-100 text-rose-800';
+                },
+
+                showToast(message, type = 'success') {
+                    this.toast = { message, type };
+                    setTimeout(() => { if (this.toast.message === message) this.toast.message = ''; }, 4500);
+                },
+
+                resetForm(autoFillDateTime = true) {
+                    const { dateStr, timeStr } = this.getNowDateTime();
+                    this.form = {
+                        delay_reason_cd: '',
+                        call_result_cd: '',
+                        call_date: autoFillDateTime ? dateStr : '',
+                        call_time: autoFillDateTime ? timeStr : '',
+                        contact_method: '1',
+                        next_followup_date: '',
+                        call_result_notes: '',
+                        extra_notes: ''
+                    };
+                },
+
+                async init() {
+                    const lkpRes = await fetch('/api/cash-followup/lookups');
+                    if (lkpRes.ok) {
+                        this.lookups = await lkpRes.json();
+                    }
+                    await this.loadQueue(1);
+                    const reqCd = new URLSearchParams(window.location.search).get('donor_cd');
+                    if (reqCd) {
+                        await this.selectDonor(parseInt(reqCd, 10));
+                    } else if (this.rows.length > 0) {
+                        await this.selectDonor(this.rows[0].donor_cd);
+                    }
+                },
+
+                async loadQueue(page = 1) {
+                    this.loading = true;
+                    try {
+                        const qs = new URLSearchParams({
+                            q: this.filters.q || '',
+                            delay_filter: this.filters.delay_filter,
+                            followup_status: this.filters.followup_status,
+                            min_lifetime: String(this.filters.min_lifetime || '0'),
+                            page: String(page),
+                            page_size: '50'
+                        });
+                        const res = await fetch('/api/cash-followup/queue?' + qs.toString());
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.kpis = data.kpis;
+                            this.rows = data.rows || [];
+                            this.pagination = data.pagination;
+                        }
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async selectDonor(donorCd, autoFillDateTime = true) {
+                    const res = await fetch('/api/cash-followup/donor/' + encodeURIComponent(donorCd));
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.selectedDonor = data.donor || {};
+                        this.followups = data.followups || [];
+                        this.resetForm(autoFillDateTime);
+                    }
+                },
+
+                async submitFollowup() {
+                    if (!this.selectedDonor.donor_cd) return;
+                    if (!this.form.delay_reason_cd) {
+                        this.showToast('Delay Reason is required (سبب التأخير إلزامي).', 'error');
+                        return;
+                    }
+                    if (!this.form.call_result_cd) {
+                        this.showToast('Follow-up Result is required (نتيجة المتابعة إلزامية).', 'error');
+                        return;
+                    }
+                    if (!this.form.call_date || !this.form.call_time) {
+                        this.showToast('Call Date and Call Time are required (التاريخ والوقت إلزاميان).', 'error');
+                        return;
+                    }
+                    this.saving = true;
+                    try {
+                        const res = await fetch('/api/cash-followup/add', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                donor_cd: Number(this.selectedDonor.donor_cd),
+                                delay_reason_cd: Number(this.form.delay_reason_cd),
+                                call_result_cd: Number(this.form.call_result_cd),
+                                call_date: this.form.call_date,
+                                call_time: this.form.call_time,
+                                contact_method: Number(this.form.contact_method || 1),
+                                next_followup_date: this.form.next_followup_date || null,
+                                call_result_notes: this.form.call_result_notes || '',
+                                extra_notes: this.form.extra_notes || ''
+                            })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                            this.showToast(data.detail || 'Error saving follow-up.', 'error');
+                            return;
+                        }
+                        this.showToast('Follow-up saved successfully! Form cleared.', 'success');
+                        await this.selectDonor(this.selectedDonor.donor_cd, false);
+                        await this.loadQueue(this.pagination.page);
+                    } finally {
+                        this.saving = false;
+                    }
+                }
+            };
+        }
+    </script>
+</body>
+</html>

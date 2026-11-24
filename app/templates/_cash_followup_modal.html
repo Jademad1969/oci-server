@@ -1,0 +1,311 @@
+<!-- Reusable Cash Donor Follow-up Modal -->
+<div x-data="cashFollowupModalApp()" x-show="open" x-cloak
+     @keydown.escape.window="close()"
+     class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4">
+    <div @click.away="close()"
+         class="bg-white w-full max-w-3xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+        <!-- Modal Header -->
+        <div class="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between gap-3">
+            <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-400/30 text-[10px] font-bold uppercase tracking-wider">Cash Follow-up</span>
+                    <span class="font-mono text-xs text-amber-300 font-bold" x-text="'#' + (donor.donor_cd || '')"></span>
+                    <h3 class="text-sm font-bold truncate" x-text="donor.display_name || 'Loading...'"></h3>
+                </div>
+                <div class="flex flex-wrap items-center gap-3 mt-1 text-[11px] text-slate-300 font-mono">
+                    <span x-show="donor.mobile" x-text="'📱 ' + donor.mobile"></span>
+                    <span x-show="donor.tel_home" x-text="'☎️ ' + donor.tel_home"></span>
+                    <span x-text="'Last Donation: ' + (donor.last_donation_date || 'Never')"></span>
+                    <span x-show="donor.delay_months !== null && donor.delay_months !== undefined"
+                          class="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-200 font-bold"
+                          x-text="donor.delay_months + 'm delay'"></span>
+                    <span class="text-emerald-300 font-bold" x-text="Number(donor.total_donated || 0).toFixed(3) + ' BHD'"></span>
+                </div>
+            </div>
+            <button type="button" @click="close()"
+                    class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold shrink-0">✕</button>
+        </div>
+
+        <!-- Modal Body -->
+        <div class="p-4 sm:p-5 overflow-y-auto space-y-4">
+            <!-- Status Alert -->
+            <div x-show="msg.text" x-cloak
+                 :class="msg.type === 'error' ? 'bg-rose-50 border-rose-300 text-rose-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'"
+                 class="px-3 py-2 rounded-lg border text-xs font-semibold flex items-center justify-between">
+                <span x-text="msg.text"></span>
+                <button type="button" @click="msg.text = ''" class="opacity-60 hover:opacity-100">✕</button>
+            </div>
+
+            <!-- Add Follow-up Form (Order: 1. Delay Reason -> 2. Result -> 3. Auto Date & Time) -->
+            <form @submit.prevent="submitFollowup()" class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                <div class="flex items-center justify-between">
+                    <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider">📞 Log New Follow-up (تسجيل متابعة جديدة)</h4>
+                    <button type="button" @click="setCurrentDateTime()" class="text-[10px] text-blue-600 hover:underline font-mono">↻ Set Current Date &amp; Time</button>
+                </div>
+
+                <!-- Row 1: Delay Reason FIRST (Required), then Result SECOND (Required) -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">1. Delay Reason / سبب التأخير <span class="text-rose-600">*</span></label>
+                        <select x-model="form.delay_reason_cd" required
+                                class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600">
+                            <option value="">-- Select Delay Reason --</option>
+                            <template x-for="r in lookups.delay_reasons" :key="r.reason_cd">
+                                <option :value="String(r.reason_cd)" x-text="r.reason_enm + ' — ' + r.reason_nm"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">2. Follow-up Result / نتيجة المتابعة <span class="text-rose-600">*</span></label>
+                        <select x-model="form.call_result_cd" required
+                                class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600">
+                            <option value="">-- Select Result --</option>
+                            <template x-for="res in lookups.follow_results" :key="res.result_cd">
+                                <option :value="String(res.result_cd)" x-text="res.result_enm + ' — ' + res.result_nm"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Row 2: Auto Date & Auto Time (TIME input), Contact Method, Next Follow-up -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">3. Call Date / التاريخ <span class="text-rose-600">*</span></label>
+                        <input type="date" x-model="form.call_date" required
+                               class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-600">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">4. Call Time / الوقت <span class="text-rose-600">*</span></label>
+                        <input type="time" x-model="form.call_time" required
+                               class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-600">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Contact Method</label>
+                        <select x-model="form.contact_method"
+                                class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600">
+                            <template x-for="m in lookups.contact_methods" :key="m.id">
+                                <option :value="String(m.id)" x-text="m.name_en"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Next Follow-up</label>
+                        <input type="date" x-model="form.next_followup_date"
+                               class="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-600">
+                    </div>
+                </div>
+
+                <!-- Row 3: Notes, Additional Notes & Submit -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Notes / ملاحظات</label>
+                        <input type="text" x-model="form.call_result_notes" maxlength="500"
+                               placeholder="Enter call summary or donor feedback..."
+                               class="w-full h-9 px-3 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">Additional Notes / ملاحظات إضافية</label>
+                        <input type="text" x-model="form.extra_notes" maxlength="500"
+                               placeholder="Any extra details or follow-up instructions..."
+                               class="w-full h-9 px-3 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-600">
+                    </div>
+                </div>
+                <div class="flex justify-end">
+                    <button type="submit" :disabled="saving"
+                            class="h-9 px-5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold shadow-xs transition shrink-0">
+                        <span x-text="saving ? 'Saving...' : 'Save Follow-up'"></span>
+                    </button>
+                </div>
+            </form>
+
+            <!-- Previous Follow-up History -->
+            <div class="border border-slate-200 rounded-xl overflow-hidden">
+                <div class="px-3.5 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
+                    <span class="text-[11px] font-bold uppercase tracking-wider text-slate-700">Follow-up History</span>
+                    <span class="text-[11px] font-mono text-slate-500" x-text="followups.length + ' log(s)'"></span>
+                </div>
+                <div class="overflow-x-auto max-h-60">
+                    <table class="w-full text-xs text-left">
+                        <thead class="bg-slate-50 text-[10px] uppercase text-slate-500 border-b border-slate-200 sticky top-0">
+                            <tr>
+                                <th class="px-3 py-2">Date / Time</th>
+                                <th class="px-3 py-2">Delay Reason</th>
+                                <th class="px-3 py-2">Result</th>
+                                <th class="px-3 py-2">Method</th>
+                                <th class="px-3 py-2">By</th>
+                                <th class="px-3 py-2">Next Date</th>
+                                <th class="px-3 py-2">Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <template x-for="f in followups" :key="f.followup_id">
+                                <tr class="hover:bg-slate-50">
+                                    <td class="px-3 py-2 font-mono whitespace-nowrap">
+                                        <div class="font-bold text-slate-800" x-text="f.call_date"></div>
+                                        <div class="text-[10px] text-slate-500" x-text="f.call_time"></div>
+                                    </td>
+                                    <td class="px-3 py-2 text-slate-700" x-text="f.delay_reason_en"></td>
+                                    <td class="px-3 py-2">
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200"
+                                              x-text="f.result_en"></span>
+                                    </td>
+                                    <td class="px-3 py-2 text-slate-600 whitespace-nowrap" x-text="f.contact_method_label"></td>
+                                    <td class="px-3 py-2 font-mono font-bold text-slate-700" x-text="f.call_by"></td>
+                                    <td class="px-3 py-2 font-mono text-amber-700 whitespace-nowrap" x-text="f.next_followup_date || '-'"></td>
+                                    <td class="px-3 py-2 text-slate-600 max-w-[220px]">
+                                        <div class="truncate" :title="f.call_result_notes" x-text="f.call_result_notes || '-'"></div>
+                                        <div x-show="f.extra_notes" class="text-[10px] text-slate-500 italic truncate" :title="f.extra_notes" x-text="'Extra: ' + f.extra_notes"></div>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="!loading && followups.length === 0">
+                                <td colspan="7" class="p-5 text-center text-slate-400">No follow-ups recorded for this donor yet.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function _getNowDateAndTime() {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const dateStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+        const timeStr = pad(now.getHours()) + ':' + pad(now.getMinutes());
+        return { dateStr, timeStr };
+    }
+
+    function cashFollowupModalApp() {
+        return {
+            open: false,
+            loading: false,
+            saving: false,
+            onSavedCallback: null,
+            lookupsLoaded: false,
+            lookups: { delay_reasons: [], follow_results: [], contact_methods: [] },
+            donor: {},
+            followups: [],
+            msg: { text: '', type: 'success' },
+            form: {
+                donor_cd: null,
+                delay_reason_cd: '',
+                call_result_cd: '',
+                call_date: '',
+                call_time: '',
+                contact_method: '1',
+                next_followup_date: '',
+                call_result_notes: '',
+                extra_notes: ''
+            },
+
+            init() {
+                window.openCashFollowupModal = (donorCd, onSaved) => this.openForDonor(donorCd, onSaved);
+            },
+
+            async ensureLookups() {
+                if (this.lookupsLoaded) return;
+                const res = await fetch('/api/cash-followup/lookups');
+                if (res.ok) {
+                    this.lookups = await res.json();
+                    this.lookupsLoaded = true;
+                }
+            },
+
+            setCurrentDateTime() {
+                const { dateStr, timeStr } = _getNowDateAndTime();
+                this.form.call_date = dateStr;
+                this.form.call_time = timeStr;
+            },
+
+            resetForm(donorCd, autoFillDateTime = true) {
+                const { dateStr, timeStr } = _getNowDateAndTime();
+                this.form = {
+                    donor_cd: donorCd,
+                    delay_reason_cd: '',
+                    call_result_cd: '',
+                    call_date: autoFillDateTime ? dateStr : '',
+                    call_time: autoFillDateTime ? timeStr : '',
+                    contact_method: '1',
+                    next_followup_date: '',
+                    call_result_notes: '',
+                    extra_notes: ''
+                };
+            },
+
+            async openForDonor(donorCd, onSaved = null) {
+                this.onSavedCallback = onSaved;
+                this.msg = { text: '', type: 'success' };
+                this.open = true;
+                this.loading = true;
+                await this.ensureLookups();
+                this.resetForm(donorCd, true);
+                await this.loadDonorFollowups(donorCd);
+                this.loading = false;
+            },
+
+            async loadDonorFollowups(donorCd) {
+                const res = await fetch('/api/cash-followup/donor/' + encodeURIComponent(donorCd));
+                if (res.ok) {
+                    const data = await res.json();
+                    this.donor = data.donor || {};
+                    this.followups = data.followups || [];
+                } else {
+                    this.msg = { text: 'Failed to load donor follow-up records.', type: 'error' };
+                }
+            },
+
+            async submitFollowup() {
+                if (!this.form.delay_reason_cd) {
+                    this.msg = { text: 'Delay Reason is required (سبب التأخير إلزامي).', type: 'error' };
+                    return;
+                }
+                if (!this.form.call_result_cd) {
+                    this.msg = { text: 'Follow-up Result is required (نتيجة المتابعة إلزامية).', type: 'error' };
+                    return;
+                }
+                if (!this.form.call_date || !this.form.call_time) {
+                    this.msg = { text: 'Call Date and valid Call Time are required (التاريخ والوقت إلزاميان).', type: 'error' };
+                    return;
+                }
+                this.saving = true;
+                try {
+                    const res = await fetch('/api/cash-followup/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            donor_cd: Number(this.form.donor_cd),
+                            delay_reason_cd: Number(this.form.delay_reason_cd),
+                            call_result_cd: Number(this.form.call_result_cd),
+                            call_date: this.form.call_date,
+                            call_time: this.form.call_time,
+                            contact_method: Number(this.form.contact_method || 1),
+                            next_followup_date: this.form.next_followup_date || null,
+                            call_result_notes: this.form.call_result_notes || '',
+                            extra_notes: this.form.extra_notes || ''
+                        })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        this.msg = { text: data.detail || 'Error saving follow-up.', type: 'error' };
+                        return;
+                    }
+                    this.msg = { text: 'Follow-up saved successfully. Form cleared for next entry.', type: 'success' };
+                    await this.loadDonorFollowups(this.form.donor_cd);
+                    this.resetForm(this.form.donor_cd, false);
+                    if (typeof this.onSavedCallback === 'function') {
+                        await this.onSavedCallback();
+                    }
+                } finally {
+                    this.saving = false;
+                }
+            },
+
+            close() {
+                this.open = false;
+            }
+        };
+    }
+</script>

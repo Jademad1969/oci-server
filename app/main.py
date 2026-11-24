@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel, field_validator
 from typing import Optional, Any
-from datetime import date, datetime
+from datetime import date, datetime, time
 import hashlib, hmac, json, base64, os
 
 from app.database import get_db, DATABASE_URL
@@ -78,7 +78,7 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
-DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "users")
+DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "cash_followup", "users")
 
 def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_keys: tuple = DEFAULT_PAGE_KEYS) -> dict:
     if isinstance(raw_perms, str):
@@ -118,6 +118,8 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_k
 def resolve_page_key(path: str) -> str:
     if path.startswith("/users") or path.startswith("/api/users"):
         return "users"
+    if path.startswith("/cash-followup") or path.startswith("/api/cash-followup"):
+        return "cash_followup"
     if path.startswith("/cash-dashboard") or path.startswith("/api/cash-dashboard"):
         return "cash_dashboard"
     if path.startswith("/cash-donors") or path.startswith("/api/cash-donors"):
@@ -192,9 +194,9 @@ async def auth_and_rbac_middleware(request: Request, call_next):
             access_level = page_perms.get("reports_matrix", "view")
         elif page_perms.get("so_dashboard", "none") != "none":
             access_level = page_perms.get("so_dashboard", "view")
-    if (path.startswith("/api/cash-donations/") or path.startswith("/api/cash-donors/") or path.startswith("/api/voucher-receipts/")) and access_level == "none":
-        # Shared lookups/donor search/print record across cash_donors, voucher_receipt, and voucher_control
-        for ck in ("voucher_receipt", "cash_donors", "voucher_control"):
+    if (path.startswith("/api/cash-donations/") or path.startswith("/api/cash-donors/") or path.startswith("/api/voucher-receipts/") or path.startswith("/api/cash-followup/")) and access_level == "none":
+        # Shared lookups/donor search/print record/follow-up modal across cash_donors, voucher_receipt, voucher_control, cash_dashboard, cash_followup
+        for ck in ("cash_followup", "cash_donors", "cash_dashboard", "voucher_receipt", "voucher_control"):
             if page_perms.get(ck, "none") != "none":
                 access_level = page_perms.get(ck, "view")
                 break
@@ -3625,10 +3627,17 @@ async def list_cash_donors_api(
             COALESCE(v.vouch_cnt, 0) AS vouch_count,
             COALESCE(v.total_donated, 0)::float8 AS total_donated,
             COALESCE(TO_CHAR(v.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date,
-            v.delay_months
+            v.delay_months,
+            COALESCE(fu.fu_cnt, 0) AS followup_count,
+            COALESCE(TO_CHAR(fu.last_call_date, 'YYYY-MM-DD'), '') AS last_followup_date
         FROM cash_donors d
         LEFT JOIN lkp_name_prefixes p ON d.prefix = p.prefix_cd
         LEFT JOIN ({v_subquery}) v ON v.donor_code = d.donor_cd
+        LEFT JOIN (
+            SELECT donor_cd, COUNT(*) AS fu_cnt, MAX(call_date) AS last_call_date
+            FROM cash_donor_followup
+            GROUP BY donor_cd
+        ) fu ON fu.donor_cd = d.donor_cd
         WHERE {where_sql}
         ORDER BY d.donor_cd DESC
         LIMIT :limit OFFSET :offset
@@ -4617,12 +4626,19 @@ async def get_cash_dashboard_data_api(
             GREATEST(0,
                 (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM lt.last_don_date)::int) * 12
                 + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM lt.last_don_date)::int)
-            ) AS delay_months
+            ) AS delay_months,
+            COALESCE(fu.fu_cnt, 0) AS followup_count,
+            COALESCE(TO_CHAR(fu.last_call_date, 'YYYY-MM-DD'), '') AS last_followup_date
         FROM vouch_mstr v
         LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
         LEFT JOIN lt ON v.donor_code = lt.donor_code
+        LEFT JOIN (
+            SELECT donor_cd, COUNT(*) AS fu_cnt, MAX(call_date) AS last_call_date
+            FROM cash_donor_followup
+            GROUP BY donor_cd
+        ) fu ON fu.donor_cd = v.donor_code
         WHERE {base_where} AND v.trns_year = :sel_yr
-        GROUP BY v.donor_code, d.donor_ename, d.donor_name, d.mobile, d.tel_home, d.tel_office, d.donor_importancy_lvl, lt.lifetime_bhd, lt.last_don_date
+        GROUP BY v.donor_code, d.donor_ename, d.donor_name, d.mobile, d.tel_home, d.tel_office, d.donor_importancy_lvl, lt.lifetime_bhd, lt.last_don_date, fu.fu_cnt, fu.last_call_date
         ORDER BY year_total_bhd DESC
         LIMIT 15
     """), params)
@@ -4647,10 +4663,19 @@ async def get_cash_dashboard_data_api(
             JOIN vouch_mstr v ON v.donor_code = d.donor_cd AND v.receipt_status = 1 AND v.donor_type = 1
             GROUP BY d.donor_cd, d.donor_ename, d.donor_name, d.mobile, d.tel_home, d.tel_office, d.donor_importancy_lvl
         )
-        SELECT *, COALESCE(TO_CHAR(last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date
-        FROM donor_stats
-        WHERE lifetime_bhd >= 500 AND delay_months BETWEEN 13 AND 36
-        ORDER BY lifetime_bhd DESC
+        SELECT
+            ds.*,
+            COALESCE(TO_CHAR(ds.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date,
+            COALESCE(fu.fu_cnt, 0) AS followup_count,
+            COALESCE(TO_CHAR(fu.last_call_date, 'YYYY-MM-DD'), '') AS last_followup_date
+        FROM donor_stats ds
+        LEFT JOIN (
+            SELECT donor_cd, COUNT(*) AS fu_cnt, MAX(call_date) AS last_call_date
+            FROM cash_donor_followup
+            GROUP BY donor_cd
+        ) fu ON fu.donor_cd = ds.donor_cd
+        WHERE ds.lifetime_bhd >= 500 AND ds.delay_months BETWEEN 13 AND 36
+        ORDER BY ds.lifetime_bhd DESC
         LIMIT 15
     """))
     winback_donors = [dict(r._mapping) for r in winback_res]
@@ -4691,3 +4716,338 @@ async def get_cash_dashboard_data_api(
 
 
 
+
+# =================================================================================
+# CASH DONORS FOLLOW-UP MODULE (Dedicated Page + Quick Modal APIs)
+# =================================================================================
+
+class CashFollowupCreateSchema(BaseModel):
+    donor_cd: int
+    delay_reason_cd: int
+    call_result_cd: int
+    call_date: date
+    call_time: time
+    contact_method: int = 1
+    next_followup_date: Optional[date] = None
+    call_result_notes: Optional[str] = ""
+    extra_notes: Optional[str] = ""
+
+    @field_validator("next_followup_date", mode="before")
+    @classmethod
+    def empty_to_none(cls, v: Any):
+        if v == "" or v is None:
+            return None
+        return v
+
+    @field_validator("call_time", mode="before")
+    @classmethod
+    def parse_call_time(cls, v: Any):
+        if isinstance(v, time):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            for fmt in ("%H:%M", "%H:%M:%S"):
+                try:
+                    return datetime.strptime(s, fmt).time()
+                except ValueError:
+                    continue
+        raise ValueError("Invalid call_time format. Expected HH:MM (24-hour time format).")
+
+
+@app.get("/cash-followup", response_class=HTMLResponse)
+async def cash_followup_page(request: Request):
+    return templates.TemplateResponse("cash_followup.html", {"request": request})
+
+
+@app.get("/api/cash-followup/lookups")
+async def cash_followup_lookups_api(db: AsyncSession = Depends(get_db)):
+    res_reasons = await db.execute(text("SELECT reason_cd, reason_nm, COALESCE(reason_enm, reason_nm) AS reason_enm FROM lkp_delay_reasons ORDER BY reason_cd"))
+    res_results = await db.execute(text("SELECT result_cd, result_nm, COALESCE(result_enm, result_nm) AS result_enm FROM lkp_follow_results ORDER BY result_cd"))
+    return {
+        "delay_reasons": [dict(r._mapping) for r in res_reasons],
+        "follow_results": [dict(r._mapping) for r in res_results],
+        "contact_methods": [
+            {"id": 1, "name_en": "Phone Call", "name_ar": "اتصال هاتفي"},
+            {"id": 2, "name_en": "WhatsApp / SMS", "name_ar": "واتساب / رسالة"},
+            {"id": 3, "name_en": "Email", "name_ar": "بريد إلكتروني"},
+            {"id": 4, "name_en": "In-Person Visit", "name_ar": "زيارة شخصية"},
+        ]
+    }
+
+
+@app.get("/api/cash-followup/donor/{donor_cd}")
+async def get_cash_donor_followups_api(donor_cd: int, db: AsyncSession = Depends(get_db)):
+    d_res = await db.execute(text("""
+        SELECT
+            d.donor_cd,
+            COALESCE(d.donor_name, '') AS donor_name,
+            COALESCE(d.donor_ename, '') AS donor_ename,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), NULLIF(TRIM(d.donor_name), ''), 'Donor #' || d.donor_cd::text) AS display_name,
+            COALESCE(d.mobile, '') AS mobile,
+            COALESCE(d.tel_home, '') AS tel_home,
+            COALESCE(d.tel_office, '') AS tel_office,
+            COALESCE(d.donor_address, '') AS donor_address,
+            COALESCE(v.vouch_cnt, 0) AS vouch_count,
+            COALESCE(v.total_donated, 0)::float8 AS total_donated,
+            COALESCE(TO_CHAR(v.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date,
+            CASE
+                WHEN v.last_don_date IS NULL THEN NULL
+                ELSE GREATEST(0,
+                    (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM v.last_don_date)::int) * 12
+                    + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM v.last_don_date)::int)
+                )
+            END AS delay_months
+        FROM cash_donors d
+        LEFT JOIN (
+            SELECT donor_code,
+                   COUNT(*) FILTER (WHERE receipt_status = 1) AS vouch_cnt,
+                   SUM(trans_val) FILTER (WHERE receipt_status = 1) AS total_donated,
+                   MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date
+            FROM vouch_mstr
+            WHERE donor_code = :dcd
+            GROUP BY donor_code
+        ) v ON v.donor_code = d.donor_cd
+        WHERE d.donor_cd = :dcd
+    """), {"dcd": donor_cd})
+    donor_row = d_res.first()
+    if not donor_row:
+        raise HTTPException(status_code=404, detail=f"Cash donor #{donor_cd} not found.")
+
+    fu_res = await db.execute(text("""
+        SELECT
+            f.followup_id,
+            f.donor_cd,
+            f.delay_reason_cd,
+            COALESCE(dr.reason_enm, dr.reason_nm, '-') AS delay_reason_en,
+            COALESCE(dr.reason_nm, '-') AS delay_reason_ar,
+            f.call_result_cd,
+            COALESCE(r.result_enm, r.result_nm, '-') AS result_en,
+            COALESCE(r.result_nm, '-') AS result_ar,
+            TO_CHAR(f.call_date, 'YYYY-MM-DD') AS call_date,
+            TO_CHAR(f.call_time, 'HH24:MI') AS call_time,
+            f.call_by,
+            f.contact_method,
+            CASE f.contact_method
+                WHEN 1 THEN 'Phone Call'
+                WHEN 2 THEN 'WhatsApp / SMS'
+                WHEN 3 THEN 'Email'
+                WHEN 4 THEN 'In-Person Visit'
+                ELSE 'Phone Call'
+            END AS contact_method_label,
+            COALESCE(TO_CHAR(f.next_followup_date, 'YYYY-MM-DD'), '') AS next_followup_date,
+            COALESCE(f.call_result_notes, '') AS call_result_notes,
+            COALESCE(f.extra_notes, '') AS extra_notes,
+            f.delay_months_snap,
+            COALESCE(TO_CHAR(f.last_don_date_snap, 'YYYY-MM-DD'), '') AS last_don_date_snap
+        FROM cash_donor_followup f
+        LEFT JOIN lkp_delay_reasons dr ON f.delay_reason_cd = dr.reason_cd
+        LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
+        WHERE f.donor_cd = :dcd
+        ORDER BY f.call_date DESC, f.call_time DESC, f.followup_id DESC
+    """), {"dcd": donor_cd})
+
+    return {
+        "donor": dict(donor_row._mapping),
+        "followups": [dict(r._mapping) for r in fu_res]
+    }
+
+
+@app.post("/api/cash-followup/add")
+async def add_cash_donor_followup_api(payload: CashFollowupCreateSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    current_user = (request.state.user or {}).get("username") or "ADMIN"
+    snap_res = await db.execute(text("""
+        SELECT
+            MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date,
+            CASE
+                WHEN MAX(trans_date) FILTER (WHERE receipt_status = 1) IS NULL THEN NULL
+                ELSE GREATEST(0,
+                    (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int) * 12
+                    + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int)
+                )
+            END AS delay_months
+        FROM vouch_mstr
+        WHERE donor_code = :dcd
+    """), {"dcd": payload.donor_cd})
+    snap = snap_res.first()
+    last_don_date_snap = snap._mapping["last_don_date"] if snap else None
+    delay_months_snap = snap._mapping["delay_months"] if snap else None
+
+    ins = await db.execute(text("""
+        INSERT INTO cash_donor_followup (
+            donor_cd, delay_reason_cd, call_result_cd, call_date, call_time,
+            call_by, contact_method, next_followup_date, call_result_notes, extra_notes,
+            delay_months_snap, last_don_date_snap
+        ) VALUES (
+            :donor_cd, :delay_reason_cd, :call_result_cd, :call_date, :call_time,
+            :call_by, :contact_method, :next_followup_date, :call_result_notes, :extra_notes,
+            :delay_months_snap, :last_don_date_snap
+        )
+        RETURNING followup_id
+    """), {
+        "donor_cd": payload.donor_cd,
+        "delay_reason_cd": payload.delay_reason_cd,
+        "call_result_cd": payload.call_result_cd,
+        "call_date": payload.call_date,
+        "call_time": payload.call_time,
+        "call_by": current_user,
+        "contact_method": int(payload.contact_method or 1),
+        "next_followup_date": payload.next_followup_date,
+        "call_result_notes": (payload.call_result_notes or "").strip(),
+        "extra_notes": (payload.extra_notes or "").strip(),
+        "delay_months_snap": delay_months_snap,
+        "last_don_date_snap": last_don_date_snap
+    })
+    new_id = ins.scalar()
+    await db.commit()
+    return {"status": "success", "followup_id": new_id, "message": "Follow-up logged successfully."}
+
+
+@app.get("/api/cash-followup/queue")
+async def cash_followup_queue_api(
+    q: str = "",
+    delay_filter: str = "OVER_12",
+    followup_status: str = "ALL",
+    min_lifetime: float = 0.0,
+    page: int = 1,
+    page_size: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    base_cte = """
+        WITH v_stats AS (
+            SELECT
+                donor_code,
+                COUNT(*) FILTER (WHERE receipt_status = 1) AS vouch_cnt,
+                COALESCE(SUM(trans_val) FILTER (WHERE receipt_status = 1), 0)::float8 AS lifetime_bhd,
+                MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date,
+                CASE
+                    WHEN MAX(trans_date) FILTER (WHERE receipt_status = 1) IS NULL THEN NULL
+                    ELSE GREATEST(0,
+                        (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int) * 12
+                        + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int)
+                    )
+                END AS delay_months
+            FROM vouch_mstr
+            GROUP BY donor_code
+        ),
+        fu_latest AS (
+            SELECT DISTINCT ON (f.donor_cd)
+                f.donor_cd,
+                f.call_date AS last_call_date,
+                TO_CHAR(f.call_time, 'HH24:MI') AS last_call_time,
+                f.call_by AS last_call_by,
+                COALESCE(dr.reason_enm, dr.reason_nm, '-') AS last_delay_reason,
+                COALESCE(r.result_enm, r.result_nm, '-') AS last_result,
+                f.next_followup_date,
+                COUNT(*) OVER (PARTITION BY f.donor_cd) AS followup_count
+            FROM cash_donor_followup f
+            LEFT JOIN lkp_delay_reasons dr ON f.delay_reason_cd = dr.reason_cd
+            LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
+            ORDER BY f.donor_cd, f.call_date DESC, f.call_time DESC, f.followup_id DESC
+        )
+    """
+
+    kpi_res = await db.execute(text(f"""
+        {base_cte}
+        SELECT
+            COUNT(*) FILTER (WHERE v.delay_months > 12) AS delayed_over_12m,
+            COUNT(*) FILTER (WHERE v.delay_months > 12 AND COALESCE(fl.followup_count, 0) = 0) AS delayed_never_followed,
+            COUNT(*) FILTER (WHERE COALESCE(fl.followup_count, 0) > 0) AS donors_followed,
+            COUNT(*) FILTER (WHERE fl.next_followup_date IS NOT NULL AND fl.next_followup_date <= CURRENT_DATE + INTERVAL '7 days') AS due_within_7d,
+            (SELECT COUNT(*) FROM cash_donor_followup) AS total_logs
+        FROM cash_donors d
+        LEFT JOIN v_stats v ON v.donor_code = d.donor_cd
+        LEFT JOIN fu_latest fl ON fl.donor_cd = d.donor_cd
+    """))
+    kpis = dict(kpi_res.first()._mapping)
+
+    where_clauses = ["1=1"]
+    params: dict[str, Any] = {}
+    if delay_filter == "OVER_12":
+        where_clauses.append("(v.delay_months > 12)")
+    elif delay_filter == "13_24":
+        where_clauses.append("(v.delay_months BETWEEN 13 AND 24)")
+    elif delay_filter == "OVER_24":
+        where_clauses.append("(v.delay_months > 24)")
+    elif delay_filter == "0_12":
+        where_clauses.append("(v.delay_months IS NOT NULL AND v.delay_months <= 12)")
+    elif delay_filter == "NEVER":
+        where_clauses.append("(v.delay_months IS NULL)")
+
+    if followup_status == "NEVER_FOLLOWED":
+        where_clauses.append("(COALESCE(fl.followup_count, 0) = 0)")
+    elif followup_status == "FOLLOWED":
+        where_clauses.append("(COALESCE(fl.followup_count, 0) > 0)")
+    elif followup_status == "DUE_SOON":
+        where_clauses.append("(fl.next_followup_date IS NOT NULL AND fl.next_followup_date <= CURRENT_DATE + INTERVAL '7 days')")
+
+    if min_lifetime and float(min_lifetime) > 0:
+        where_clauses.append("(COALESCE(v.lifetime_bhd, 0) >= :min_lt)")
+        params["min_lt"] = float(min_lifetime)
+
+    q_clean = (q or "").strip()
+    if q_clean:
+        where_clauses.append("""(
+            CAST(d.donor_cd AS TEXT) ILIKE :q
+            OR COALESCE(d.donor_name, '') ILIKE :q
+            OR COALESCE(d.donor_ename, '') ILIKE :q
+            OR COALESCE(d.mobile, '') ILIKE :q
+            OR COALESCE(d.tel_home, '') ILIKE :q
+        )""")
+        params["q"] = f"%{q_clean}%"
+
+    where_sql = " AND ".join(where_clauses)
+
+    cnt_res = await db.execute(text(f"""
+        {base_cte}
+        SELECT COUNT(*)
+        FROM cash_donors d
+        LEFT JOIN v_stats v ON v.donor_code = d.donor_cd
+        LEFT JOIN fu_latest fl ON fl.donor_cd = d.donor_cd
+        WHERE {where_sql}
+    """), params)
+    total_rows = int(cnt_res.scalar() or 0)
+
+    p = max(int(page or 1), 1)
+    ps = min(max(int(page_size or 50), 10), 200)
+    total_pages = max((total_rows + ps - 1) // ps, 1)
+    if p > total_pages:
+        p = total_pages
+    params["limit"] = ps
+    params["offset"] = (p - 1) * ps
+
+    rows_res = await db.execute(text(f"""
+        {base_cte}
+        SELECT
+            d.donor_cd,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), NULLIF(TRIM(d.donor_name), ''), 'Donor #' || d.donor_cd::text) AS display_name,
+            COALESCE(d.donor_name, '') AS donor_name,
+            COALESCE(d.mobile, d.tel_home, d.tel_office, '') AS mobile,
+            COALESCE(v.vouch_cnt, 0) AS vouch_count,
+            COALESCE(v.lifetime_bhd, 0)::float8 AS lifetime_bhd,
+            COALESCE(TO_CHAR(v.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date,
+            v.delay_months,
+            COALESCE(fl.followup_count, 0) AS followup_count,
+            COALESCE(TO_CHAR(fl.last_call_date, 'YYYY-MM-DD'), '') AS last_followup_date,
+            COALESCE(fl.last_call_time, '') AS last_followup_time,
+            COALESCE(fl.last_call_by, '') AS last_call_by,
+            COALESCE(fl.last_delay_reason, '') AS last_delay_reason,
+            COALESCE(fl.last_result, '') AS last_result,
+            COALESCE(TO_CHAR(fl.next_followup_date, 'YYYY-MM-DD'), '') AS next_followup_date
+        FROM cash_donors d
+        LEFT JOIN v_stats v ON v.donor_code = d.donor_cd
+        LEFT JOIN fu_latest fl ON fl.donor_cd = d.donor_cd
+        WHERE {where_sql}
+        ORDER BY COALESCE(v.lifetime_bhd, 0) DESC, COALESCE(v.delay_months, 9999) DESC, d.donor_cd DESC
+        LIMIT :limit OFFSET :offset
+    """), params)
+
+    return {
+        "kpis": kpis,
+        "rows": [dict(r._mapping) for r in rows_res],
+        "pagination": {
+            "page": p,
+            "page_size": ps,
+            "total_rows": total_rows,
+            "total_pages": total_pages
+        }
+    }

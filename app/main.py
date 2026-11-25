@@ -5261,6 +5261,7 @@ async def _run_cash_report_query(
     report_type: str,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
+    years: str = "",
     band_det_cd: str = "ALL",
     pay_type: str = "ALL",
     user_name: str = "ALL",
@@ -5274,6 +5275,8 @@ async def _run_cash_report_query(
     today_dt = date.today()
     d_from = datetime.strptime(from_date[:10], "%Y-%m-%d").date() if from_date else date(today_dt.year, 1, 1)
     d_to = datetime.strptime(to_date[:10], "%Y-%m-%d").date() if to_date else today_dt
+    years_list = sorted({int(y.strip()) for y in (years or "").split(",") if y.strip().isdigit()})
+    period_label = f"Years: {', '.join(str(y) for y in years_list)}" if years_list else f"{d_from} to {d_to}"
 
     rt = (report_type or "high_risk_missed").strip().lower()
 
@@ -5357,8 +5360,12 @@ async def _run_cash_report_query(
 
     # Shared voucher filter builder for receipt-based reports
     def _vouch_where(extra=None):
-        wc = ["v.donor_type = 1", "v.trans_date >= :d_from", "v.trans_date <= :d_to"]
-        p: dict[str, Any] = {"d_from": d_from, "d_to": d_to}
+        if years_list:
+            wc = ["v.donor_type = 1", "v.trns_year = ANY(:yrs)"]
+            p: dict[str, Any] = {"yrs": years_list}
+        else:
+            wc = ["v.donor_type = 1", "v.trans_date >= :d_from", "v.trans_date <= :d_to"]
+            p = {"d_from": d_from, "d_to": d_to}
         if receipt_status == "VALID":
             wc.append("v.receipt_status = 1")
         elif receipt_status == "CANCELLED":
@@ -5410,7 +5417,7 @@ async def _run_cash_report_query(
         uniq_donors = len({x["donor_cd"] for x in valid_rows})
         avg_bhd = round(total_bhd / len(valid_rows), 3) if valid_rows else 0.0
         return {
-            "title": f"Detailed Cash Receipts Register ({d_from} to {d_to})",
+            "title": f"Detailed Cash Receipts Register ({period_label})",
             "subtitle": "Complete transaction ledger with purpose, payment method, cashier, and status",
             "supports_followup_action": False,
             "summary": [
@@ -5462,7 +5469,7 @@ async def _run_cash_report_query(
         for x in rows:
             x["share_pct"] = round((float(x["total_bhd"]) / grand_total) * 100.0, 1) if grand_total > 0 else 0.0
         return {
-            "title": f"Revenues Summary by Purpose / Band ({d_from} to {d_to})",
+            "title": f"Revenues Summary by Purpose / Band ({period_label})",
             "subtitle": "Breakdown of collections by charity purpose and payment method",
             "supports_followup_action": False,
             "summary": [
@@ -5509,7 +5516,7 @@ async def _run_cash_report_query(
         cash_total = round(sum(float(x["cash_bhd"]) for x in rows), 3)
         non_cash = round(grand_total - cash_total, 3)
         return {
-            "title": f"Cashier & Drawer Settlement Summary ({d_from} to {d_to})",
+            "title": f"Cashier & Drawer Settlement Summary ({period_label})",
             "subtitle": "Collections grouped by cashier user, split by Cash, Cheque, Visa, and Bank Transfer",
             "supports_followup_action": False,
             "summary": [
@@ -5559,7 +5566,7 @@ async def _run_cash_report_query(
         rows = [dict(r._mapping) for r in res]
         total_bhd = round(sum(float(x["amount_bhd"]) for x in rows), 3)
         return {
-            "title": f"Cheques, Visa & Bank Transfers Register ({d_from} to {d_to})",
+            "title": f"Cheques, Visa & Bank Transfers Register ({period_label})",
             "subtitle": "Non-cash receipts with reference numbers, donor banks, and DIC deposit accounts",
             "supports_followup_action": False,
             "summary": [
@@ -5583,8 +5590,12 @@ async def _run_cash_report_query(
 
     # 6. AUDIT, CANCELLATIONS & MODIFICATIONS LOG
     if rt == "audit_cancellations":
-        params = {"d_from": d_from, "d_to": d_to}
-        wc = ["COALESCE(h.delete_date, h.trans_date) >= :d_from", "COALESCE(h.delete_date, h.trans_date) <= :d_to"]
+        if years_list:
+            params = {"yrs": years_list}
+            wc = ["h.trns_year = ANY(:yrs)"]
+        else:
+            params = {"d_from": d_from, "d_to": d_to}
+            wc = ["COALESCE(h.delete_date, h.trans_date) >= :d_from", "COALESCE(h.delete_date, h.trans_date) <= :d_to"]
         if user_name and user_name != "ALL":
             wc.append("UPPER(COALESCE(h.action_by, h.user_name, '')) = UPPER(:uname)")
             params["uname"] = user_name.strip()
@@ -5614,7 +5625,7 @@ async def _run_cash_report_query(
         mod_cnt = sum(1 for x in rows if x["action_type"] == "MODIFY")
         tot_val = round(sum(float(x["old_val_bhd"]) for x in rows), 3)
         return {
-            "title": f"Audit, Cancellations & Modifications Log ({d_from} to {d_to})",
+            "title": f"Audit, Cancellations & Modifications Log ({period_label})",
             "subtitle": "Complete governance trail from VOUCH_HISTORY for internal & external audit",
             "supports_followup_action": False,
             "summary": [
@@ -5715,6 +5726,7 @@ async def run_cash_report_api(
     report_type: str = "high_risk_missed",
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
+    years: str = "",
     band_det_cd: str = "ALL",
     pay_type: str = "ALL",
     user_name: str = "ALL",
@@ -5727,7 +5739,7 @@ async def run_cash_report_api(
     db: AsyncSession = Depends(get_db)
 ):
     return await _run_cash_report_query(
-        db=db, report_type=report_type, from_date=from_date, to_date=to_date,
+        db=db, report_type=report_type, from_date=from_date, to_date=to_date, years=years,
         band_det_cd=band_det_cd, pay_type=pay_type, user_name=user_name,
         receipt_status=receipt_status, risk_tier=risk_tier, delay_filter=delay_filter,
         followup_status=followup_status, donor_cd=donor_cd, q=q
@@ -5739,6 +5751,7 @@ async def export_cash_report_csv_api(
     report_type: str = "high_risk_missed",
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
+    years: str = "",
     band_det_cd: str = "ALL",
     pay_type: str = "ALL",
     user_name: str = "ALL",
@@ -5754,7 +5767,7 @@ async def export_cash_report_csv_api(
     from fastapi.responses import StreamingResponse
 
     data = await _run_cash_report_query(
-        db=db, report_type=report_type, from_date=from_date, to_date=to_date,
+        db=db, report_type=report_type, from_date=from_date, to_date=to_date, years=years,
         band_det_cd=band_det_cd, pay_type=pay_type, user_name=user_name,
         receipt_status=receipt_status, risk_tier=risk_tier, delay_filter=delay_filter,
         followup_status=followup_status, donor_cd=donor_cd, q=q

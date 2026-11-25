@@ -79,7 +79,7 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
-DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "cash_followup", "users")
+DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "cash_followup", "cash_reports", "users", "system_settings")
 
 def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_keys: tuple = DEFAULT_PAGE_KEYS) -> dict:
     if isinstance(raw_perms, str):
@@ -117,8 +117,12 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_k
     }
 
 def resolve_page_key(path: str) -> str:
+    if path.startswith("/settings") or path.startswith("/api/settings"):
+        return "system_settings"
     if path.startswith("/users") or path.startswith("/api/users"):
         return "users"
+    if path.startswith("/cash-reports") or path.startswith("/api/cash-reports"):
+        return "cash_reports"
     if path.startswith("/cash-followup") or path.startswith("/api/cash-followup"):
         return "cash_followup"
     if path.startswith("/cash-dashboard") or path.startswith("/api/cash-dashboard"):
@@ -197,8 +201,8 @@ async def auth_and_rbac_middleware(request: Request, call_next):
         elif page_perms.get("so_dashboard", "none") != "none":
             access_level = page_perms.get("so_dashboard", "view")
     if (path.startswith("/api/cash-donations/") or path.startswith("/api/cash-donors/") or path.startswith("/api/voucher-receipts/") or path.startswith("/api/cash-followup/")) and access_level == "none":
-        # Shared lookups/donor search/print record/follow-up modal across cash_donors, voucher_receipt, voucher_control, cash_dashboard, cash_followup
-        for ck in ("cash_followup", "cash_donors", "cash_dashboard", "voucher_receipt", "voucher_control"):
+        # Shared lookups/donor search/print record/follow-up modal across cash_donors, voucher_receipt, voucher_control, cash_dashboard, cash_followup, cash_reports
+        for ck in ("cash_followup", "cash_reports", "cash_donors", "cash_dashboard", "voucher_receipt", "voucher_control"):
             if page_perms.get(ck, "none") != "none":
                 access_level = page_perms.get(ck, "view")
                 break
@@ -3657,8 +3661,10 @@ async def list_cash_donors_api(
         LIMIT :limit OFFSET :offset
     """), params)
 
+    risk_cfg = await _fetch_cash_risk_config(db)
     return {
         "kpis": kpis,
+        "risk_config": risk_cfg,
         "rows": [dict(r._mapping) for r in rows_res],
         "pagination": {
             "page": p,
@@ -4916,109 +4922,211 @@ async def add_cash_donor_followup_api(payload: CashFollowupCreateSchema, request
     return {"status": "success", "followup_id": new_id, "message": "Follow-up logged successfully."}
 
 
+CASH_RISK_SCORE_CTE = """
+    WITH cfg AS (
+        SELECT
+            COALESCE(weight_monetary, 35)::numeric AS w_mon,
+            COALESCE(weight_frequency, 25)::numeric AS w_frq,
+            COALESCE(weight_recency, 25)::numeric AS w_rec,
+            COALESCE(weight_followup, 15)::numeric AS w_fu,
+            COALESCE(tier_critical_min, 75)::int AS t_crit,
+            COALESCE(tier_high_min, 55)::int AS t_high,
+            COALESCE(tier_medium_min, 35)::int AS t_med,
+            COALESCE(followup_stale_days, 60)::int AS stale_days
+        FROM cash_risk_config
+        WHERE config_id = 1
+        UNION ALL
+        SELECT 35::numeric, 25::numeric, 25::numeric, 15::numeric, 75, 55, 35, 60
+        LIMIT 1
+    ),
+    v_stats AS (
+        SELECT
+            donor_code,
+            COUNT(*) FILTER (WHERE receipt_status = 1) AS vouch_cnt,
+            COUNT(DISTINCT trns_year) FILTER (WHERE receipt_status = 1) AS active_years,
+            COALESCE(SUM(trans_val) FILTER (WHERE receipt_status = 1), 0)::float8 AS lifetime_bhd,
+            MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date,
+            CASE
+                WHEN MAX(trans_date) FILTER (WHERE receipt_status = 1) IS NULL THEN NULL
+                ELSE GREATEST(0,
+                    (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int) * 12
+                    + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int)
+                )
+            END AS delay_months
+        FROM vouch_mstr
+        GROUP BY donor_code
+    ),
+    fu_latest AS (
+        SELECT DISTINCT ON (f.donor_cd)
+            f.donor_cd,
+            f.call_date AS last_call_date,
+            TO_CHAR(f.call_time, 'HH24:MI') AS last_call_time,
+            f.call_by AS last_call_by,
+            COALESCE(dr.reason_enm, dr.reason_nm, '-') AS last_delay_reason,
+            COALESCE(r.result_enm, r.result_nm, '-') AS last_result,
+            f.next_followup_date,
+            COUNT(*) OVER (PARTITION BY f.donor_cd) AS followup_count
+        FROM cash_donor_followup f
+        LEFT JOIN lkp_delay_reasons dr ON f.delay_reason_cd = dr.reason_cd
+        LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
+        ORDER BY f.donor_cd, f.call_date DESC, f.call_time DESC, f.followup_id DESC
+    ),
+    scored_parts AS (
+        SELECT
+            d.donor_cd,
+            COALESCE(NULLIF(TRIM(d.donor_ename), ''), NULLIF(TRIM(d.donor_name), ''), 'Donor #' || d.donor_cd::text) AS display_name,
+            COALESCE(d.donor_name, '') AS donor_name,
+            COALESCE(d.mobile, d.tel_home, d.tel_office, '') AS mobile,
+            COALESCE(v.vouch_cnt, 0) AS vouch_count,
+            COALESCE(v.active_years, 0) AS active_years,
+            COALESCE(v.lifetime_bhd, 0)::float8 AS lifetime_bhd,
+            ROUND((COALESCE(v.lifetime_bhd, 0) / GREATEST(COALESCE(v.active_years, 1), 1))::numeric, 3)::float8 AS annual_value_at_risk,
+            v.last_don_date,
+            COALESCE(TO_CHAR(v.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date,
+            v.delay_months,
+            COALESCE(fl.followup_count, 0) AS followup_count,
+            fl.last_call_date,
+            COALESCE(TO_CHAR(fl.last_call_date, 'YYYY-MM-DD'), '') AS last_followup_date,
+            COALESCE(fl.last_call_time, '') AS last_followup_time,
+            COALESCE(fl.last_call_by, '') AS last_call_by,
+            COALESCE(fl.last_delay_reason, '') AS last_delay_reason,
+            COALESCE(fl.last_result, '') AS last_result,
+            fl.next_followup_date AS next_followup_date_raw,
+            COALESCE(TO_CHAR(fl.next_followup_date, 'YYYY-MM-DD'), '') AS next_followup_date,
+            cfg.t_crit, cfg.t_high, cfg.t_med,
+            ROUND(cfg.w_mon * CASE
+                WHEN COALESCE(v.lifetime_bhd, 0) >= 5000 THEN 1.00
+                WHEN COALESCE(v.lifetime_bhd, 0) >= 2000 THEN 0.80
+                WHEN COALESCE(v.lifetime_bhd, 0) >= 500  THEN 0.57
+                WHEN COALESCE(v.lifetime_bhd, 0) >= 100  THEN 0.34
+                WHEN COALESCE(v.lifetime_bhd, 0) > 0     THEN 0.14
+                ELSE 0.00
+            END)::int AS monetary_pts,
+            ROUND(cfg.w_frq * CASE
+                WHEN COALESCE(v.vouch_cnt, 0) >= 10 THEN 1.00
+                WHEN COALESCE(v.vouch_cnt, 0) >= 5  THEN 0.72
+                WHEN COALESCE(v.vouch_cnt, 0) >= 2  THEN 0.48
+                WHEN COALESCE(v.vouch_cnt, 0) = 1   THEN 0.16
+                ELSE 0.00
+            END)::int AS freq_pts,
+            ROUND(cfg.w_rec * CASE
+                WHEN v.delay_months BETWEEN 13 AND 24 THEN 1.00
+                WHEN v.delay_months BETWEEN 25 AND 36 THEN 0.88
+                WHEN v.delay_months BETWEEN 7  AND 12 THEN 0.60
+                WHEN v.delay_months BETWEEN 37 AND 60 THEN 0.48
+                WHEN v.delay_months > 60              THEN 0.24
+                ELSE 0.00
+            END)::int AS recency_pts,
+            ROUND(cfg.w_fu * CASE
+                WHEN COALESCE(fl.followup_count, 0) = 0 THEN 1.00
+                WHEN (fl.next_followup_date IS NOT NULL AND fl.next_followup_date <= CURRENT_DATE)
+                     OR (fl.last_call_date < CURRENT_DATE - (cfg.stale_days || ' days')::interval) THEN 0.80
+                ELSE 0.20
+            END)::int AS followup_pts
+        FROM cash_donors d
+        CROSS JOIN cfg
+        LEFT JOIN v_stats v ON v.donor_code = d.donor_cd
+        LEFT JOIN fu_latest fl ON fl.donor_cd = d.donor_cd
+    ),
+    scored AS (
+        SELECT
+            sp.*,
+            (sp.monetary_pts + sp.freq_pts + sp.recency_pts + sp.followup_pts) AS risk_score,
+            CASE
+                WHEN (sp.monetary_pts + sp.freq_pts + sp.recency_pts + sp.followup_pts) >= sp.t_crit THEN 'CRITICAL'
+                WHEN (sp.monetary_pts + sp.freq_pts + sp.recency_pts + sp.followup_pts) >= sp.t_high THEN 'HIGH'
+                WHEN (sp.monetary_pts + sp.freq_pts + sp.recency_pts + sp.followup_pts) >= sp.t_med  THEN 'MEDIUM'
+                ELSE 'LOW'
+            END AS risk_tier
+        FROM scored_parts sp
+    )
+"""
+
+
+async def _fetch_cash_risk_config(db: AsyncSession) -> dict:
+    res = await db.execute(text("""
+        SELECT weight_monetary, weight_frequency, weight_recency, weight_followup,
+               tier_critical_min, tier_high_min, tier_medium_min, followup_stale_days,
+               COALESCE(updated_by, 'SYSTEM') AS updated_by,
+               COALESCE(TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI'), '') AS updated_at
+        FROM cash_risk_config WHERE config_id = 1
+    """))
+    row = res.first()
+    if row:
+        return dict(row._mapping)
+    return {
+        "weight_monetary": 35, "weight_frequency": 25, "weight_recency": 25, "weight_followup": 15,
+        "tier_critical_min": 75, "tier_high_min": 55, "tier_medium_min": 35, "followup_stale_days": 60,
+        "updated_by": "SYSTEM", "updated_at": ""
+    }
+
+
 @app.get("/api/cash-followup/queue")
 async def cash_followup_queue_api(
     q: str = "",
     delay_filter: str = "OVER_12",
     followup_status: str = "ALL",
+    risk_tier: str = "ALL",
     min_lifetime: float = 0.0,
     page: int = 1,
     page_size: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
-    base_cte = """
-        WITH v_stats AS (
-            SELECT
-                donor_code,
-                COUNT(*) FILTER (WHERE receipt_status = 1) AS vouch_cnt,
-                COALESCE(SUM(trans_val) FILTER (WHERE receipt_status = 1), 0)::float8 AS lifetime_bhd,
-                MAX(trans_date) FILTER (WHERE receipt_status = 1) AS last_don_date,
-                CASE
-                    WHEN MAX(trans_date) FILTER (WHERE receipt_status = 1) IS NULL THEN NULL
-                    ELSE GREATEST(0,
-                        (EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int) * 12
-                        + (EXTRACT(MONTH FROM CURRENT_DATE)::int - EXTRACT(MONTH FROM MAX(trans_date) FILTER (WHERE receipt_status = 1))::int)
-                    )
-                END AS delay_months
-            FROM vouch_mstr
-            GROUP BY donor_code
-        ),
-        fu_latest AS (
-            SELECT DISTINCT ON (f.donor_cd)
-                f.donor_cd,
-                f.call_date AS last_call_date,
-                TO_CHAR(f.call_time, 'HH24:MI') AS last_call_time,
-                f.call_by AS last_call_by,
-                COALESCE(dr.reason_enm, dr.reason_nm, '-') AS last_delay_reason,
-                COALESCE(r.result_enm, r.result_nm, '-') AS last_result,
-                f.next_followup_date,
-                COUNT(*) OVER (PARTITION BY f.donor_cd) AS followup_count
-            FROM cash_donor_followup f
-            LEFT JOIN lkp_delay_reasons dr ON f.delay_reason_cd = dr.reason_cd
-            LEFT JOIN lkp_follow_results r ON f.call_result_cd = r.result_cd
-            ORDER BY f.donor_cd, f.call_date DESC, f.call_time DESC, f.followup_id DESC
-        )
-    """
-
     kpi_res = await db.execute(text(f"""
-        {base_cte}
+        {CASH_RISK_SCORE_CTE}
         SELECT
-            COUNT(*) FILTER (WHERE v.delay_months > 12) AS delayed_over_12m,
-            COUNT(*) FILTER (WHERE v.delay_months > 12 AND COALESCE(fl.followup_count, 0) = 0) AS delayed_never_followed,
-            COUNT(*) FILTER (WHERE COALESCE(fl.followup_count, 0) > 0) AS donors_followed,
-            COUNT(*) FILTER (WHERE fl.next_followup_date IS NOT NULL AND fl.next_followup_date <= CURRENT_DATE + INTERVAL '7 days') AS due_within_7d,
+            COUNT(*) FILTER (WHERE delay_months > 12) AS delayed_over_12m,
+            COUNT(*) FILTER (WHERE delay_months > 12 AND followup_count = 0) AS delayed_never_followed,
+            COUNT(*) FILTER (WHERE followup_count > 0) AS donors_followed,
+            COUNT(*) FILTER (WHERE next_followup_date_raw IS NOT NULL AND next_followup_date_raw <= CURRENT_DATE + INTERVAL '7 days') AS due_within_7d,
+            COUNT(*) FILTER (WHERE delay_months > 12 AND risk_tier = 'CRITICAL') AS critical_risk_cnt,
             (SELECT COUNT(*) FROM cash_donor_followup) AS total_logs
-        FROM cash_donors d
-        LEFT JOIN v_stats v ON v.donor_code = d.donor_cd
-        LEFT JOIN fu_latest fl ON fl.donor_cd = d.donor_cd
+        FROM scored
     """))
     kpis = dict(kpi_res.first()._mapping)
 
     where_clauses = ["1=1"]
     params: dict[str, Any] = {}
     if delay_filter == "OVER_12":
-        where_clauses.append("(v.delay_months > 12)")
+        where_clauses.append("(delay_months > 12)")
     elif delay_filter == "13_24":
-        where_clauses.append("(v.delay_months BETWEEN 13 AND 24)")
+        where_clauses.append("(delay_months BETWEEN 13 AND 24)")
     elif delay_filter == "OVER_24":
-        where_clauses.append("(v.delay_months > 24)")
+        where_clauses.append("(delay_months > 24)")
     elif delay_filter == "0_12":
-        where_clauses.append("(v.delay_months IS NOT NULL AND v.delay_months <= 12)")
+        where_clauses.append("(delay_months IS NOT NULL AND delay_months <= 12)")
     elif delay_filter == "NEVER":
-        where_clauses.append("(v.delay_months IS NULL)")
+        where_clauses.append("(delay_months IS NULL)")
 
     if followup_status == "NEVER_FOLLOWED":
-        where_clauses.append("(COALESCE(fl.followup_count, 0) = 0)")
+        where_clauses.append("(followup_count = 0)")
     elif followup_status == "FOLLOWED":
-        where_clauses.append("(COALESCE(fl.followup_count, 0) > 0)")
+        where_clauses.append("(followup_count > 0)")
     elif followup_status == "DUE_SOON":
-        where_clauses.append("(fl.next_followup_date IS NOT NULL AND fl.next_followup_date <= CURRENT_DATE + INTERVAL '7 days')")
+        where_clauses.append("(next_followup_date_raw IS NOT NULL AND next_followup_date_raw <= CURRENT_DATE + INTERVAL '7 days')")
+
+    rt = (risk_tier or "ALL").upper()
+    if rt in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        where_clauses.append("(risk_tier = :rt)")
+        params["rt"] = rt
 
     if min_lifetime and float(min_lifetime) > 0:
-        where_clauses.append("(COALESCE(v.lifetime_bhd, 0) >= :min_lt)")
+        where_clauses.append("(lifetime_bhd >= :min_lt)")
         params["min_lt"] = float(min_lifetime)
 
     q_clean = (q or "").strip()
     if q_clean:
         where_clauses.append("""(
-            CAST(d.donor_cd AS TEXT) ILIKE :q
-            OR COALESCE(d.donor_name, '') ILIKE :q
-            OR COALESCE(d.donor_ename, '') ILIKE :q
-            OR COALESCE(d.mobile, '') ILIKE :q
-            OR COALESCE(d.tel_home, '') ILIKE :q
+            CAST(donor_cd AS TEXT) ILIKE :q
+            OR donor_name ILIKE :q
+            OR display_name ILIKE :q
+            OR mobile ILIKE :q
         )""")
         params["q"] = f"%{q_clean}%"
 
     where_sql = " AND ".join(where_clauses)
 
-    cnt_res = await db.execute(text(f"""
-        {base_cte}
-        SELECT COUNT(*)
-        FROM cash_donors d
-        LEFT JOIN v_stats v ON v.donor_code = d.donor_cd
-        LEFT JOIN fu_latest fl ON fl.donor_cd = d.donor_cd
-        WHERE {where_sql}
-    """), params)
+    cnt_res = await db.execute(text(f"{CASH_RISK_SCORE_CTE} SELECT COUNT(*) FROM scored WHERE {where_sql}"), params)
     total_rows = int(cnt_res.scalar() or 0)
 
     p = max(int(page or 1), 1)
@@ -5030,33 +5138,23 @@ async def cash_followup_queue_api(
     params["offset"] = (p - 1) * ps
 
     rows_res = await db.execute(text(f"""
-        {base_cte}
+        {CASH_RISK_SCORE_CTE}
         SELECT
-            d.donor_cd,
-            COALESCE(NULLIF(TRIM(d.donor_ename), ''), NULLIF(TRIM(d.donor_name), ''), 'Donor #' || d.donor_cd::text) AS display_name,
-            COALESCE(d.donor_name, '') AS donor_name,
-            COALESCE(d.mobile, d.tel_home, d.tel_office, '') AS mobile,
-            COALESCE(v.vouch_cnt, 0) AS vouch_count,
-            COALESCE(v.lifetime_bhd, 0)::float8 AS lifetime_bhd,
-            COALESCE(TO_CHAR(v.last_don_date, 'YYYY-MM-DD'), '') AS last_donation_date,
-            v.delay_months,
-            COALESCE(fl.followup_count, 0) AS followup_count,
-            COALESCE(TO_CHAR(fl.last_call_date, 'YYYY-MM-DD'), '') AS last_followup_date,
-            COALESCE(fl.last_call_time, '') AS last_followup_time,
-            COALESCE(fl.last_call_by, '') AS last_call_by,
-            COALESCE(fl.last_delay_reason, '') AS last_delay_reason,
-            COALESCE(fl.last_result, '') AS last_result,
-            COALESCE(TO_CHAR(fl.next_followup_date, 'YYYY-MM-DD'), '') AS next_followup_date
-        FROM cash_donors d
-        LEFT JOIN v_stats v ON v.donor_code = d.donor_cd
-        LEFT JOIN fu_latest fl ON fl.donor_cd = d.donor_cd
+            donor_cd, display_name, donor_name, mobile, vouch_count, active_years,
+            lifetime_bhd, annual_value_at_risk, last_donation_date, delay_months,
+            followup_count, last_followup_date, last_followup_time, last_call_by,
+            last_delay_reason, last_result, next_followup_date,
+            monetary_pts, freq_pts, recency_pts, followup_pts, risk_score, risk_tier
+        FROM scored
         WHERE {where_sql}
-        ORDER BY COALESCE(v.lifetime_bhd, 0) DESC, COALESCE(v.delay_months, 9999) DESC, d.donor_cd DESC
+        ORDER BY risk_score DESC, lifetime_bhd DESC, COALESCE(delay_months, 0) DESC, donor_cd ASC
         LIMIT :limit OFFSET :offset
     """), params)
 
+    risk_cfg = await _fetch_cash_risk_config(db)
     return {
         "kpis": kpis,
+        "risk_config": risk_cfg,
         "rows": [dict(r._mapping) for r in rows_res],
         "pagination": {
             "page": p,
@@ -5147,3 +5245,602 @@ async def browse_so_donors_api(
             "total_pages": total_pages
         }
     }
+
+
+# =================================================================================
+# CASH DONATIONS ANALYTICAL REPORTS CENTER (/cash-reports)
+# =================================================================================
+
+@app.get("/cash-reports", response_class=HTMLResponse)
+async def cash_reports_page(request: Request):
+    return templates.TemplateResponse("cash_reports.html", {"request": request})
+
+
+async def _run_cash_report_query(
+    db: AsyncSession,
+    report_type: str,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    band_det_cd: str = "ALL",
+    pay_type: str = "ALL",
+    user_name: str = "ALL",
+    receipt_status: str = "VALID",
+    risk_tier: str = "ALL",
+    delay_filter: str = "OVER_12",
+    followup_status: str = "ALL",
+    donor_cd: Optional[str] = None,
+    q: str = "",
+):
+    today_dt = date.today()
+    d_from = datetime.strptime(from_date[:10], "%Y-%m-%d").date() if from_date else date(today_dt.year, 1, 1)
+    d_to = datetime.strptime(to_date[:10], "%Y-%m-%d").date() if to_date else today_dt
+
+    rt = (report_type or "high_risk_missed").strip().lower()
+
+    # 1. HIGH-RISK MISSED DONATIONS (Composite Risk Score 0-100)
+    if rt == "high_risk_missed":
+        where_clauses = ["vouch_count > 0"]
+        params: dict[str, Any] = {}
+
+        if delay_filter == "OVER_6":
+            where_clauses.append("(delay_months >= 7)")
+        elif delay_filter == "OVER_12":
+            where_clauses.append("(delay_months > 12)")
+        elif delay_filter == "13_24":
+            where_clauses.append("(delay_months BETWEEN 13 AND 24)")
+        elif delay_filter == "13_36":
+            where_clauses.append("(delay_months BETWEEN 13 AND 36)")
+        elif delay_filter == "OVER_24":
+            where_clauses.append("(delay_months > 24)")
+
+        if risk_tier and risk_tier.upper() in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+            where_clauses.append("(risk_tier = :rtier)")
+            params["rtier"] = risk_tier.upper()
+
+        if followup_status == "NEVER_FOLLOWED":
+            where_clauses.append("(followup_count = 0)")
+        elif followup_status == "FOLLOWED":
+            where_clauses.append("(followup_count > 0)")
+        elif followup_status == "DUE_SOON":
+            where_clauses.append("(next_followup_date_raw IS NOT NULL AND next_followup_date_raw <= CURRENT_DATE + INTERVAL '7 days')")
+
+        q_clean = (q or "").strip()
+        if q_clean:
+            where_clauses.append("(CAST(donor_cd AS TEXT) ILIKE :q OR display_name ILIKE :q OR donor_name ILIKE :q OR mobile ILIKE :q)")
+            params["q"] = f"%{q_clean}%"
+
+        wsql = " AND ".join(where_clauses)
+        res = await db.execute(text(f"""
+            {CASH_RISK_SCORE_CTE}
+            SELECT
+                donor_cd, display_name, mobile, risk_score, risk_tier,
+                monetary_pts, freq_pts, recency_pts, followup_pts,
+                lifetime_bhd, annual_value_at_risk, vouch_count, active_years,
+                last_donation_date, delay_months,
+                followup_count, last_followup_date, last_result, next_followup_date
+            FROM scored
+            WHERE {wsql}
+            ORDER BY risk_score DESC, lifetime_bhd DESC, COALESCE(delay_months, 0) DESC, donor_cd ASC
+        """), params)
+        rows = [dict(r._mapping) for r in res]
+        total_at_risk = round(sum(float(x.get("annual_value_at_risk") or 0) for x in rows), 3)
+        total_lifetime = round(sum(float(x.get("lifetime_bhd") or 0) for x in rows), 3)
+        crit_cnt = sum(1 for x in rows if x.get("risk_tier") == "CRITICAL")
+        high_cnt = sum(1 for x in rows if x.get("risk_tier") == "HIGH")
+        risk_cfg = await _fetch_cash_risk_config(db)
+        return {
+            "title": "High-Risk Missed Cash Donations (Composite Risk Score 0–100)",
+            "subtitle": f"Dynamic Rule: Monetary ({risk_cfg['weight_monetary']}) + Frequency ({risk_cfg['weight_frequency']}) + Recency ({risk_cfg['weight_recency']}) + Follow-up Gap ({risk_cfg['weight_followup']})",
+            "supports_followup_action": True,
+            "risk_config": risk_cfg,
+            "summary": [
+                {"label": "Matching Delayed Donors", "value": f"{len(rows):,}", "tone": "navy"},
+                {"label": "Critical / High Risk", "value": f"{crit_cnt:,} Critical • {high_cnt:,} High", "tone": "rose"},
+                {"label": "Est. Annual Value at Risk", "value": f"{total_at_risk:,.3f} BHD/yr", "tone": "amber"},
+                {"label": "Combined Lifetime Value", "value": f"{total_lifetime:,.3f} BHD", "tone": "emerald"},
+            ],
+            "columns": [
+                {"key": "risk_score", "label": "Risk Score", "type": "risk"},
+                {"key": "donor_cd", "label": "Donor #", "type": "mono"},
+                {"key": "display_name", "label": "Donor Name", "type": "text"},
+                {"key": "mobile", "label": "Mobile", "type": "mono"},
+                {"key": "lifetime_bhd", "label": "Lifetime (BHD)", "type": "bhd"},
+                {"key": "annual_value_at_risk", "label": "Est. Annual (BHD)", "type": "bhd"},
+                {"key": "vouch_count", "label": "RVs", "type": "num"},
+                {"key": "last_donation_date", "label": "Last Donation", "type": "mono"},
+                {"key": "delay_months", "label": "Delay (m)", "type": "delay"},
+                {"key": "last_followup_date", "label": "Last Follow-up", "type": "mono"},
+                {"key": "last_result", "label": "Last Outcome", "type": "text"},
+            ],
+            "rows": rows
+        }
+
+    # Shared voucher filter builder for receipt-based reports
+    def _vouch_where(extra=None):
+        wc = ["v.donor_type = 1", "v.trans_date >= :d_from", "v.trans_date <= :d_to"]
+        p: dict[str, Any] = {"d_from": d_from, "d_to": d_to}
+        if receipt_status == "VALID":
+            wc.append("v.receipt_status = 1")
+        elif receipt_status == "CANCELLED":
+            wc.append("v.receipt_status <> 1")
+        if band_det_cd and band_det_cd != "ALL":
+            wc.append("v.band_det_cd = :band")
+            p["band"] = int(band_det_cd)
+        if pay_type and pay_type != "ALL":
+            wc.append("v.trans_pay_type = :pt")
+            p["pt"] = int(pay_type)
+        if user_name and user_name != "ALL":
+            wc.append("UPPER(COALESCE(v.user_name, '')) = UPPER(:uname)")
+            p["uname"] = user_name.strip()
+        if extra:
+            wc.extend(extra)
+        q_clean = (q or "").strip()
+        if q_clean:
+            wc.append("(CAST(v.vouch_no AS TEXT) ILIKE :q OR CAST(v.donor_code AS TEXT) ILIKE :q OR COALESCE(d.donor_ename, '') ILIKE :q OR COALESCE(d.donor_name, '') ILIKE :q OR COALESCE(v.cheq_visa_no, '') ILIKE :q)")
+            p["q"] = f"%{q_clean}%"
+        return " AND ".join(wc), p
+
+    # 2. DETAILED RECEIPTS REGISTER
+    if rt == "detailed_receipts":
+        wsql, params = _vouch_where()
+        res = await db.execute(text(f"""
+            SELECT
+                v.vouch_no,
+                v.trns_year,
+                TO_CHAR(v.trans_date, 'YYYY-MM-DD') AS trans_date,
+                v.donor_code AS donor_cd,
+                COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, 'Donor #' || v.donor_code::text) AS donor_name,
+                COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name,
+                COALESCE(pt.type_edesc, pt.type_desc, 'Cash') AS pay_method,
+                COALESCE(v.cheq_visa_no, '') AS ref_no,
+                COALESCE(v.trans_val, 0)::float8 AS amount_bhd,
+                COALESCE(v.user_name, '') AS cashier,
+                CASE WHEN v.receipt_status = 1 THEN 'Valid' ELSE 'Cancelled' END AS status_label
+            FROM vouch_mstr v
+            LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+            LEFT JOIN lkp_band_details b ON v.band_det_cd = b.band_det_cd
+            LEFT JOIN lkp_payment_types pt ON v.trans_pay_type = pt.type_cd
+            WHERE {wsql}
+            ORDER BY v.trans_date DESC, v.vouch_no DESC
+            LIMIT 5000
+        """), params)
+        rows = [dict(r._mapping) for r in res]
+        valid_rows = [x for x in rows if x["status_label"] == "Valid"]
+        total_bhd = round(sum(float(x["amount_bhd"]) for x in valid_rows), 3)
+        uniq_donors = len({x["donor_cd"] for x in valid_rows})
+        avg_bhd = round(total_bhd / len(valid_rows), 3) if valid_rows else 0.0
+        return {
+            "title": f"Detailed Cash Receipts Register ({d_from} to {d_to})",
+            "subtitle": "Complete transaction ledger with purpose, payment method, cashier, and status",
+            "supports_followup_action": False,
+            "summary": [
+                {"label": "Total Receipts", "value": f"{len(rows):,}", "tone": "navy"},
+                {"label": "Valid Collected (BHD)", "value": f"{total_bhd:,.3f} BHD", "tone": "emerald"},
+                {"label": "Unique Donors", "value": f"{uniq_donors:,}", "tone": "amber"},
+                {"label": "Average Receipt", "value": f"{avg_bhd:,.3f} BHD", "tone": "navy"},
+            ],
+            "columns": [
+                {"key": "vouch_no", "label": "RV #", "type": "mono"},
+                {"key": "trns_year", "label": "Year", "type": "mono"},
+                {"key": "trans_date", "label": "Date", "type": "mono"},
+                {"key": "donor_cd", "label": "Donor #", "type": "mono"},
+                {"key": "donor_name", "label": "Donor Name", "type": "text"},
+                {"key": "band_name", "label": "Purpose / Band", "type": "text"},
+                {"key": "pay_method", "label": "Method", "type": "text"},
+                {"key": "ref_no", "label": "Cheque / Ref", "type": "mono"},
+                {"key": "amount_bhd", "label": "Amount (BHD)", "type": "bhd"},
+                {"key": "cashier", "label": "Cashier", "type": "mono"},
+                {"key": "status_label", "label": "Status", "type": "status"},
+            ],
+            "rows": rows
+        }
+
+    # 3. REVENUES SUMMARY BY PURPOSE / BAND & PAYMENT METHOD
+    if rt == "revenues_by_band":
+        wsql, params = _vouch_where()
+        res = await db.execute(text(f"""
+            SELECT
+                v.band_det_cd,
+                COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, 'Band #' || v.band_det_cd::text) AS band_name,
+                COUNT(*) AS receipts_cnt,
+                COUNT(DISTINCT v.donor_code) AS unique_donors,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.trans_pay_type = 1), 0)::float8 AS cash_bhd,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.trans_pay_type = 2), 0)::float8 AS cheque_bhd,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.trans_pay_type = 3), 0)::float8 AS visa_bhd,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.trans_pay_type = 4), 0)::float8 AS transfer_bhd,
+                COALESCE(SUM(v.trans_val), 0)::float8 AS total_bhd
+            FROM vouch_mstr v
+            LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+            LEFT JOIN lkp_band_details b ON v.band_det_cd = b.band_det_cd
+            WHERE {wsql}
+            GROUP BY v.band_det_cd, band_name
+            ORDER BY total_bhd DESC
+        """), params)
+        rows = [dict(r._mapping) for r in res]
+        grand_total = round(sum(float(x["total_bhd"]) for x in rows), 3)
+        total_rvs = sum(int(x["receipts_cnt"]) for x in rows)
+        for x in rows:
+            x["share_pct"] = round((float(x["total_bhd"]) / grand_total) * 100.0, 1) if grand_total > 0 else 0.0
+        return {
+            "title": f"Revenues Summary by Purpose / Band ({d_from} to {d_to})",
+            "subtitle": "Breakdown of collections by charity purpose and payment method",
+            "supports_followup_action": False,
+            "summary": [
+                {"label": "Active Purposes", "value": f"{len(rows):,}", "tone": "navy"},
+                {"label": "Total Receipts", "value": f"{total_rvs:,}", "tone": "amber"},
+                {"label": "Grand Total Collected", "value": f"{grand_total:,.3f} BHD", "tone": "emerald"},
+                {"label": "Top Purpose Share", "value": f"{rows[0]['share_pct']}%" if rows else "0%", "tone": "navy"},
+            ],
+            "columns": [
+                {"key": "band_name", "label": "Donation Purpose / Band", "type": "text"},
+                {"key": "receipts_cnt", "label": "Receipts", "type": "num"},
+                {"key": "unique_donors", "label": "Donors", "type": "num"},
+                {"key": "cash_bhd", "label": "Cash (BHD)", "type": "bhd"},
+                {"key": "cheque_bhd", "label": "Cheque (BHD)", "type": "bhd"},
+                {"key": "visa_bhd", "label": "Visa/Card (BHD)", "type": "bhd"},
+                {"key": "transfer_bhd", "label": "Fawri+/Bank (BHD)", "type": "bhd"},
+                {"key": "total_bhd", "label": "Total (BHD)", "type": "bhd"},
+                {"key": "share_pct", "label": "Share %", "type": "pct"},
+            ],
+            "rows": rows
+        }
+
+    # 4. DAILY / CASHIER COLLECTION SUMMARY
+    if rt == "cashier_summary":
+        wsql, params = _vouch_where()
+        res = await db.execute(text(f"""
+            SELECT
+                COALESCE(NULLIF(TRIM(v.user_name), ''), 'UNKNOWN') AS cashier,
+                COUNT(*) FILTER (WHERE v.receipt_status = 1) AS valid_rvs,
+                COUNT(*) FILTER (WHERE v.receipt_status <> 1) AS cancelled_rvs,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.receipt_status = 1 AND v.trans_pay_type = 1), 0)::float8 AS cash_bhd,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.receipt_status = 1 AND v.trans_pay_type = 2), 0)::float8 AS cheque_bhd,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.receipt_status = 1 AND v.trans_pay_type = 3), 0)::float8 AS visa_bhd,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.receipt_status = 1 AND v.trans_pay_type = 4), 0)::float8 AS transfer_bhd,
+                COALESCE(SUM(v.trans_val) FILTER (WHERE v.receipt_status = 1), 0)::float8 AS total_bhd
+            FROM vouch_mstr v
+            LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+            WHERE {wsql}
+            GROUP BY cashier
+            ORDER BY total_bhd DESC
+        """), params)
+        rows = [dict(r._mapping) for r in res]
+        grand_total = round(sum(float(x["total_bhd"]) for x in rows), 3)
+        cash_total = round(sum(float(x["cash_bhd"]) for x in rows), 3)
+        non_cash = round(grand_total - cash_total, 3)
+        return {
+            "title": f"Cashier & Drawer Settlement Summary ({d_from} to {d_to})",
+            "subtitle": "Collections grouped by cashier user, split by Cash, Cheque, Visa, and Bank Transfer",
+            "supports_followup_action": False,
+            "summary": [
+                {"label": "Active Cashiers", "value": f"{len(rows):,}", "tone": "navy"},
+                {"label": "Cash in Drawer", "value": f"{cash_total:,.3f} BHD", "tone": "amber"},
+                {"label": "Non-Cash (Cheque/Card/Bank)", "value": f"{non_cash:,.3f} BHD", "tone": "navy"},
+                {"label": "Total Settled", "value": f"{grand_total:,.3f} BHD", "tone": "emerald"},
+            ],
+            "columns": [
+                {"key": "cashier", "label": "Cashier / User", "type": "mono"},
+                {"key": "valid_rvs", "label": "Valid RVs", "type": "num"},
+                {"key": "cancelled_rvs", "label": "Cancelled", "type": "num"},
+                {"key": "cash_bhd", "label": "Cash (BHD)", "type": "bhd"},
+                {"key": "cheque_bhd", "label": "Cheque (BHD)", "type": "bhd"},
+                {"key": "visa_bhd", "label": "Visa/Card (BHD)", "type": "bhd"},
+                {"key": "transfer_bhd", "label": "Fawri+/Bank (BHD)", "type": "bhd"},
+                {"key": "total_bhd", "label": "Total (BHD)", "type": "bhd"},
+            ],
+            "rows": rows
+        }
+
+    # 5. NON-CASH PAYMENTS & BANK DEPOSIT REGISTER (Cheques, Visa, Bank Transfers)
+    if rt == "non_cash_register":
+        wsql, params = _vouch_where(extra=["v.trans_pay_type IN (2, 3, 4)"])
+        res = await db.execute(text(f"""
+            SELECT
+                v.vouch_no,
+                v.trns_year,
+                TO_CHAR(v.trans_date, 'YYYY-MM-DD') AS trans_date,
+                COALESCE(pt.type_edesc, pt.type_desc, '') AS pay_method,
+                COALESCE(v.cheq_visa_no, '') AS ref_no,
+                COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, 'Donor #' || v.donor_code::text) AS donor_name,
+                COALESCE(bk.bank_e_desc, bk.bank_desc, '-') AS donor_bank,
+                COALESCE(dbk.bank_e_desc, dbk.bank_desc, '-') AS dic_bank,
+                COALESCE(v.dic_account, '-') AS dic_account,
+                COALESCE(v.trans_val, 0)::float8 AS amount_bhd,
+                COALESCE(v.user_name, '') AS cashier
+            FROM vouch_mstr v
+            LEFT JOIN cash_donors d ON v.donor_code = d.donor_cd
+            LEFT JOIN lkp_payment_types pt ON v.trans_pay_type = pt.type_cd
+            LEFT JOIN lkp_banks bk ON v.bank_cd = bk.bank_cd
+            LEFT JOIN lkp_banks dbk ON v.dic_bank = dbk.bank_cd
+            WHERE {wsql}
+            ORDER BY v.trans_date DESC, v.vouch_no DESC
+            LIMIT 5000
+        """), params)
+        rows = [dict(r._mapping) for r in res]
+        total_bhd = round(sum(float(x["amount_bhd"]) for x in rows), 3)
+        return {
+            "title": f"Cheques, Visa & Bank Transfers Register ({d_from} to {d_to})",
+            "subtitle": "Non-cash receipts with reference numbers, donor banks, and DIC deposit accounts",
+            "supports_followup_action": False,
+            "summary": [
+                {"label": "Non-Cash Receipts", "value": f"{len(rows):,}", "tone": "navy"},
+                {"label": "Total Non-Cash Value", "value": f"{total_bhd:,.3f} BHD", "tone": "emerald"},
+            ],
+            "columns": [
+                {"key": "vouch_no", "label": "RV #", "type": "mono"},
+                {"key": "trans_date", "label": "Date", "type": "mono"},
+                {"key": "pay_method", "label": "Method", "type": "text"},
+                {"key": "ref_no", "label": "Cheque / Ref #", "type": "mono"},
+                {"key": "donor_name", "label": "Donor", "type": "text"},
+                {"key": "donor_bank", "label": "Donor Bank", "type": "text"},
+                {"key": "dic_bank", "label": "DIC Deposit Bank", "type": "text"},
+                {"key": "dic_account", "label": "DIC Account", "type": "mono"},
+                {"key": "amount_bhd", "label": "Amount (BHD)", "type": "bhd"},
+                {"key": "cashier", "label": "Cashier", "type": "mono"},
+            ],
+            "rows": rows
+        }
+
+    # 6. AUDIT, CANCELLATIONS & MODIFICATIONS LOG
+    if rt == "audit_cancellations":
+        params = {"d_from": d_from, "d_to": d_to}
+        wc = ["COALESCE(h.delete_date, h.trans_date) >= :d_from", "COALESCE(h.delete_date, h.trans_date) <= :d_to"]
+        if user_name and user_name != "ALL":
+            wc.append("UPPER(COALESCE(h.action_by, h.user_name, '')) = UPPER(:uname)")
+            params["uname"] = user_name.strip()
+        q_clean = (q or "").strip()
+        if q_clean:
+            wc.append("(CAST(h.vouch_no AS TEXT) ILIKE :q OR COALESCE(h.don_req_desc, '') ILIKE :q OR COALESCE(h.action_reason, '') ILIKE :q)")
+            params["q"] = f"%{q_clean}%"
+        res = await db.execute(text(f"""
+            SELECT
+                h.vouch_no,
+                h.trns_year,
+                COALESCE(h.action_type, 'CANCEL') AS action_type,
+                COALESCE(TO_CHAR(COALESCE(h.delete_date, h.trans_date), 'YYYY-MM-DD'), '') AS action_date,
+                COALESCE(h.action_by, h.user_name, '') AS action_by,
+                COALESCE(h.don_req_desc, 'Donor #' || COALESCE(h.donor_code, '')) AS donor_name,
+                COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name,
+                COALESCE(h.trans_val, 0)::float8 AS old_val_bhd,
+                COALESCE(h.action_reason, '') AS action_reason
+            FROM vouch_history h
+            LEFT JOIN lkp_band_details b ON h.band_det_cd = b.band_det_cd
+            WHERE {' AND '.join(wc)}
+            ORDER BY h.hist_id DESC
+            LIMIT 3000
+        """), params)
+        rows = [dict(r._mapping) for r in res]
+        canc_cnt = sum(1 for x in rows if x["action_type"] != "MODIFY")
+        mod_cnt = sum(1 for x in rows if x["action_type"] == "MODIFY")
+        tot_val = round(sum(float(x["old_val_bhd"]) for x in rows), 3)
+        return {
+            "title": f"Audit, Cancellations & Modifications Log ({d_from} to {d_to})",
+            "subtitle": "Complete governance trail from VOUCH_HISTORY for internal & external audit",
+            "supports_followup_action": False,
+            "summary": [
+                {"label": "Total Audit Events", "value": f"{len(rows):,}", "tone": "navy"},
+                {"label": "Cancellations", "value": f"{canc_cnt:,}", "tone": "rose"},
+                {"label": "Modifications", "value": f"{mod_cnt:,}", "tone": "amber"},
+                {"label": "Total Affected Value", "value": f"{tot_val:,.3f} BHD", "tone": "navy"},
+            ],
+            "columns": [
+                {"key": "vouch_no", "label": "RV #", "type": "mono"},
+                {"key": "trns_year", "label": "Year", "type": "mono"},
+                {"key": "action_type", "label": "Action", "type": "status"},
+                {"key": "action_date", "label": "Action Date", "type": "mono"},
+                {"key": "action_by", "label": "By User", "type": "mono"},
+                {"key": "donor_name", "label": "Donor", "type": "text"},
+                {"key": "band_name", "label": "Purpose / Band", "type": "text"},
+                {"key": "old_val_bhd", "label": "Previous Val (BHD)", "type": "bhd"},
+                {"key": "action_reason", "label": "Reason", "type": "text"},
+            ],
+            "rows": rows
+        }
+
+    # 7. SINGLE CASH DONOR STATEMENT
+    if rt == "donor_statement":
+        dcd = int(str(donor_cd).strip()) if donor_cd and str(donor_cd).strip().isdigit() else 0
+        if dcd <= 0:
+            return {
+                "title": "Single Cash Donor Statement",
+                "subtitle": "Enter a Cash Donor Code (#) above and click Run Report to generate a printable donor statement",
+                "supports_followup_action": False,
+                "summary": [],
+                "columns": [
+                    {"key": "vouch_no", "label": "RV #", "type": "mono"},
+                    {"key": "trans_date", "label": "Date", "type": "mono"},
+                    {"key": "band_name", "label": "Purpose / Band", "type": "text"},
+                    {"key": "pay_method", "label": "Method", "type": "text"},
+                    {"key": "amount_bhd", "label": "Amount (BHD)", "type": "bhd"},
+                    {"key": "status_label", "label": "Status", "type": "status"},
+                ],
+                "rows": []
+            }
+        d_res = await db.execute(text("""
+            SELECT donor_cd, COALESCE(NULLIF(TRIM(donor_ename), ''), donor_name, 'Donor #' || donor_cd::text) AS ename,
+                   COALESCE(donor_name, '') AS aname, COALESCE(mobile, tel_home, '') AS mobile
+            FROM cash_donors WHERE donor_cd = :dcd
+        """), {"dcd": dcd})
+        drow = d_res.first()
+        d_title = f"#{dcd} — {drow._mapping['ename']}" if drow else f"Donor #{dcd} (Not Found)"
+        res = await db.execute(text("""
+            SELECT
+                v.vouch_no,
+                v.trns_year,
+                TO_CHAR(v.trans_date, 'YYYY-MM-DD') AS trans_date,
+                COALESCE(NULLIF(TRIM(b.band_det_edesc), ''), b.band_det_desc, '') AS band_name,
+                COALESCE(pt.type_edesc, pt.type_desc, 'Cash') AS pay_method,
+                COALESCE(v.cheq_visa_no, '') AS ref_no,
+                COALESCE(v.trans_val, 0)::float8 AS amount_bhd,
+                COALESCE(v.user_name, '') AS cashier,
+                CASE WHEN v.receipt_status = 1 THEN 'Valid' ELSE 'Cancelled' END AS status_label
+            FROM vouch_mstr v
+            LEFT JOIN lkp_band_details b ON v.band_det_cd = b.band_det_cd
+            LEFT JOIN lkp_payment_types pt ON v.trans_pay_type = pt.type_cd
+            WHERE v.donor_code = :dcd AND v.donor_type = 1
+            ORDER BY v.trans_date DESC, v.vouch_no DESC
+        """), {"dcd": dcd})
+        rows = [dict(r._mapping) for r in res]
+        valid_rows = [x for x in rows if x["status_label"] == "Valid"]
+        total_bhd = round(sum(float(x["amount_bhd"]) for x in valid_rows), 3)
+        return {
+            "title": f"Cash Donor Statement — {d_title}",
+            "subtitle": f"Mobile: {drow._mapping['mobile'] if drow else '-'} • Complete historical receipt statement",
+            "supports_followup_action": False,
+            "summary": [
+                {"label": "Donor Code", "value": f"#{dcd}", "tone": "navy"},
+                {"label": "Valid Receipts", "value": f"{len(valid_rows):,}", "tone": "amber"},
+                {"label": "Lifetime Donated", "value": f"{total_bhd:,.3f} BHD", "tone": "emerald"},
+                {"label": "Latest Receipt", "value": valid_rows[0]["trans_date"] if valid_rows else "None", "tone": "navy"},
+            ],
+            "columns": [
+                {"key": "vouch_no", "label": "RV #", "type": "mono"},
+                {"key": "trns_year", "label": "Year", "type": "mono"},
+                {"key": "trans_date", "label": "Date", "type": "mono"},
+                {"key": "band_name", "label": "Purpose / Band", "type": "text"},
+                {"key": "pay_method", "label": "Method", "type": "text"},
+                {"key": "ref_no", "label": "Cheque / Ref", "type": "mono"},
+                {"key": "amount_bhd", "label": "Amount (BHD)", "type": "bhd"},
+                {"key": "cashier", "label": "Cashier", "type": "mono"},
+                {"key": "status_label", "label": "Status", "type": "status"},
+            ],
+            "rows": rows
+        }
+
+    raise HTTPException(status_code=400, detail=f"Unknown report_type: {report_type}")
+
+
+@app.get("/api/cash-reports/run")
+async def run_cash_report_api(
+    report_type: str = "high_risk_missed",
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    band_det_cd: str = "ALL",
+    pay_type: str = "ALL",
+    user_name: str = "ALL",
+    receipt_status: str = "VALID",
+    risk_tier: str = "ALL",
+    delay_filter: str = "OVER_12",
+    followup_status: str = "ALL",
+    donor_cd: Optional[str] = None,
+    q: str = "",
+    db: AsyncSession = Depends(get_db)
+):
+    return await _run_cash_report_query(
+        db=db, report_type=report_type, from_date=from_date, to_date=to_date,
+        band_det_cd=band_det_cd, pay_type=pay_type, user_name=user_name,
+        receipt_status=receipt_status, risk_tier=risk_tier, delay_filter=delay_filter,
+        followup_status=followup_status, donor_cd=donor_cd, q=q
+    )
+
+
+@app.get("/api/cash-reports/export-csv")
+async def export_cash_report_csv_api(
+    report_type: str = "high_risk_missed",
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    band_det_cd: str = "ALL",
+    pay_type: str = "ALL",
+    user_name: str = "ALL",
+    receipt_status: str = "VALID",
+    risk_tier: str = "ALL",
+    delay_filter: str = "OVER_12",
+    followup_status: str = "ALL",
+    donor_cd: Optional[str] = None,
+    q: str = "",
+    db: AsyncSession = Depends(get_db)
+):
+    import csv, io
+    from fastapi.responses import StreamingResponse
+
+    data = await _run_cash_report_query(
+        db=db, report_type=report_type, from_date=from_date, to_date=to_date,
+        band_det_cd=band_det_cd, pay_type=pay_type, user_name=user_name,
+        receipt_status=receipt_status, risk_tier=risk_tier, delay_filter=delay_filter,
+        followup_status=followup_status, donor_cd=donor_cd, q=q
+    )
+    buf = io.StringIO()
+    buf.write("\ufeff")  # UTF-8 BOM for Arabic Excel compatibility
+    writer = csv.writer(buf)
+    cols = data["columns"]
+    writer.writerow([c["label"] for c in cols])
+    for row in data["rows"]:
+        writer.writerow([row.get(c["key"], "") for c in cols])
+    buf.seek(0)
+    filename = f"cash_report_{report_type}_{date.today().isoformat()}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+# =================================================================================
+# GENERAL SYSTEM SETTINGS (/settings) — Modular ERP Configuration
+# =================================================================================
+
+class CashRiskConfigSchema(BaseModel):
+    weight_monetary: int
+    weight_frequency: int
+    weight_recency: int
+    weight_followup: int
+    tier_critical_min: int
+    tier_high_min: int
+    tier_medium_min: int
+    followup_stale_days: int
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def system_settings_page(request: Request):
+    return templates.TemplateResponse("system_settings.html", {"request": request})
+
+
+@app.get("/api/settings/risk-config")
+async def get_cash_risk_config_api(db: AsyncSession = Depends(get_db)):
+    return await _fetch_cash_risk_config(db)
+
+
+@app.post("/api/settings/risk-config")
+async def save_cash_risk_config_api(payload: CashRiskConfigSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    total_w = payload.weight_monetary + payload.weight_frequency + payload.weight_recency + payload.weight_followup
+    if total_w != 100:
+        raise HTTPException(status_code=400, detail=f"The 4 weights must sum to exactly 100 (currently {total_w}).")
+    if not (1 <= payload.tier_medium_min < payload.tier_high_min < payload.tier_critical_min <= 100):
+        raise HTTPException(status_code=400, detail="Thresholds must satisfy: 1 <= Medium < High < Critical <= 100.")
+    if not (1 <= payload.followup_stale_days <= 365):
+        raise HTTPException(status_code=400, detail="Follow-up stale days must be between 1 and 365.")
+
+    uname = (request.state.user or {}).get("username") or "ADMIN"
+    await db.execute(text("""
+        INSERT INTO cash_risk_config (
+            config_id, weight_monetary, weight_frequency, weight_recency, weight_followup,
+            tier_critical_min, tier_high_min, tier_medium_min, followup_stale_days,
+            updated_by, updated_at
+        ) VALUES (
+            1, :wm, :wf, :wr, :wfu, :tc, :th, :tm, :sd, :uby, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (config_id) DO UPDATE SET
+            weight_monetary = EXCLUDED.weight_monetary,
+            weight_frequency = EXCLUDED.weight_frequency,
+            weight_recency = EXCLUDED.weight_recency,
+            weight_followup = EXCLUDED.weight_followup,
+            tier_critical_min = EXCLUDED.tier_critical_min,
+            tier_high_min = EXCLUDED.tier_high_min,
+            tier_medium_min = EXCLUDED.tier_medium_min,
+            followup_stale_days = EXCLUDED.followup_stale_days,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = CURRENT_TIMESTAMP
+    """), {
+        "wm": payload.weight_monetary,
+        "wf": payload.weight_frequency,
+        "wr": payload.weight_recency,
+        "wfu": payload.weight_followup,
+        "tc": payload.tier_critical_min,
+        "th": payload.tier_high_min,
+        "tm": payload.tier_medium_min,
+        "sd": payload.followup_stale_days,
+        "uby": uname
+    })
+    await db.commit()
+    cfg = await _fetch_cash_risk_config(db)
+    return {"status": "success", "message": "Risk scoring rule saved! Applied immediately to Cash Reports & Follow-up.", "config": cfg}

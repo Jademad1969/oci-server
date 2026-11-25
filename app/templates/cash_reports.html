@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cash Analytical Reports - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
+        [x-cloak] { display: none !important; }
+        .print-only-header { display: none; }
+        @media print {
+            #erp-global-sidebar, .no-print { display: none !important; }
+            .erp-main-content { background: #ffffff !important; overflow: visible !important; }
+            .print-only-header { display: flex !important; }
+            .print-table-wrap { max-height: none !important; overflow: visible !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800" x-data="cashReportsApp()" x-init="init()">
+    {% include 'sidebar.html' %}
+
+    <div class="p-4 lg:p-6 max-w-[1600px] mx-auto w-full space-y-4">
+        <!-- Official Print Header (Visible only when printing) -->
+        <div class="print-only-header items-center justify-between border-b-2 border-[#003d58] pb-3 mb-4">
+            <div class="flex items-center gap-3">
+                <img src="/static/logo.webp" alt="Discover Islam Society" class="h-12 w-auto object-contain">
+                <div>
+                    <div class="text-base font-extrabold" style="color: #003d58;" x-text="reportData.title"></div>
+                    <div class="text-xs text-slate-500" x-text="reportData.subtitle"></div>
+                </div>
+            </div>
+            <div class="text-right text-[11px] font-mono text-slate-600">
+                <div>Discover Islam Society — ERP</div>
+                <div x-text="'Printed: ' + new Date().toLocaleString()"></div>
+            </div>
+        </div>
+
+        <!-- 1. Executive Header -->
+        <div class="no-print rounded-2xl p-4 lg:p-5 text-white shadow-md flex flex-wrap items-center justify-between gap-3"
+             style="background: linear-gradient(135deg, #002b3e 0%, #003d58 60%, #004f72 100%);">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#d29535]/20 text-[#f2c472] border border-[#d29535]/40">
+                        Cash Donations Module
+                    </span>
+                    <span class="text-[11px] font-mono text-slate-300">7 Analytical &amp; Audit Reports</span>
+                </div>
+                <h1 class="text-lg lg:text-xl font-extrabold tracking-tight mt-1">Cash Donations Analytical Reports Center</h1>
+                <p class="text-xs text-slate-300 mt-0.5">High-risk missed donations intelligence, receipt ledgers, cashier settlements, non-cash registers &amp; audit logs</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <a :href="exportCsvUrl()"
+                   class="h-9 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition inline-flex items-center gap-1.5">
+                    <span>⬇ Export Excel / CSV</span>
+                </a>
+                <button type="button" onclick="window.print()"
+                        class="h-9 px-3.5 rounded-xl bg-[#d29535] hover:bg-[#e1ad54] text-[#002435] text-xs font-extrabold shadow transition inline-flex items-center gap-1.5">
+                    <span>🖨️ Print Official Report</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 2. Report Selector & Dynamic Filters -->
+        <section class="no-print bg-white rounded-2xl border border-[#d7d3cb] shadow-2xs p-4 space-y-3">
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+                <div class="md:col-span-5">
+                    <label class="block text-[11px] font-bold text-[#003d58] mb-1">Report Type / نوع التقرير</label>
+                    <select x-model="filters.report_type" @change="runReport()"
+                            class="w-full h-9 px-3 bg-white border border-[#d7d3cb] rounded-lg font-bold text-[#003d58]">
+                        <option value="high_risk_missed">1. High-Risk Missed Donations (Composite Risk Score 0–100)</option>
+                        <option value="detailed_receipts">2. Detailed Cash Receipts Register</option>
+                        <option value="revenues_by_band">3. Revenues Summary by Purpose / Band &amp; Payment Method</option>
+                        <option value="cashier_summary">4. Daily / Cashier Drawer Settlement Summary</option>
+                        <option value="non_cash_register">5. Cheques, Visa &amp; Bank Transfers Register</option>
+                        <option value="audit_cancellations">6. Audit, Cancellations &amp; Modifications Log</option>
+                        <option value="donor_statement">7. Single Cash Donor Statement</option>
+                    </select>
+                </div>
+
+                <!-- Filters for High-Risk Missed Donations -->
+                <template x-if="filters.report_type === 'high_risk_missed'">
+                    <div class="md:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">Risk Tier</label>
+                            <select x-model="filters.risk_tier" @change="runReport()"
+                                    class="w-full h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg font-semibold">
+                                <option value="ALL">All Risk Tiers</option>
+                                <option value="CRITICAL">🔴 Critical (75–100)</option>
+                                <option value="HIGH">🟠 High (55–74)</option>
+                                <option value="MEDIUM">🟡 Medium (35–54)</option>
+                                <option value="LOW">🟢 Low (&lt; 35)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">Delay Window</label>
+                            <select x-model="filters.delay_filter" @change="runReport()"
+                                    class="w-full h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg font-semibold">
+                                <option value="OVER_12">Delayed &gt; 12 Months</option>
+                                <option value="13_24">13 – 24 Months (Peak Win-Back)</option>
+                                <option value="13_36">13 – 36 Months</option>
+                                <option value="OVER_24">&gt; 24 Months</option>
+                                <option value="OVER_6">Early Warning (≥ 7 Months)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">Follow-up Status</label>
+                            <select x-model="filters.followup_status" @change="runReport()"
+                                    class="w-full h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg font-semibold">
+                                <option value="ALL">All Follow-up Status</option>
+                                <option value="NEVER_FOLLOWED">Never Followed (Priority)</option>
+                                <option value="FOLLOWED">Already Followed</option>
+                                <option value="DUE_SOON">Due Within 7 Days</option>
+                            </select>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Filters for Date-Range Receipt / Audit Reports -->
+                <template x-if="filters.report_type !== 'high_risk_missed' && filters.report_type !== 'donor_statement'">
+                    <div class="md:col-span-7 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">From Date</label>
+                            <input type="date" x-model="filters.from_date" @change="runReport()"
+                                   class="w-full h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg font-mono">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">To Date</label>
+                            <input type="date" x-model="filters.to_date" @change="runReport()"
+                                   class="w-full h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg font-mono">
+                        </div>
+                        <div x-show="filters.report_type !== 'audit_cancellations'">
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">Purpose / Band</label>
+                            <select x-model="filters.band_det_cd" @change="runReport()"
+                                    class="w-full h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg">
+                                <option value="ALL">All Purposes</option>
+                                <template x-for="b in lookups.band_details" :key="b.band_det_cd">
+                                    <option :value="String(b.band_det_cd)" x-text="b.band_det_edesc || b.band_det_desc"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div x-show="filters.report_type === 'detailed_receipts' || filters.report_type === 'revenues_by_band'">
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">Payment Method</label>
+                            <select x-model="filters.pay_type" @change="runReport()"
+                                    class="w-full h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg">
+                                <option value="ALL">All Methods</option>
+                                <template x-for="pt in (lookups.payment_types || []).filter(x => x.type_cd <= 4)" :key="pt.type_cd">
+                                    <option :value="String(pt.type_cd)" x-text="pt.type_edesc"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Filter for Single Donor Statement -->
+                <template x-if="filters.report_type === 'donor_statement'">
+                    <div class="md:col-span-7 flex items-end gap-2">
+                        <div class="flex-1 max-w-xs">
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">Cash Donor Code (#)</label>
+                            <input type="number" x-model="filters.donor_cd" @keydown.enter="runReport()"
+                                   placeholder="Enter Donor Code (e.g. 607)"
+                                   class="w-full h-9 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-bold text-[#003d58]">
+                        </div>
+                        <button type="button" @click="runReport()"
+                                class="h-9 px-4 rounded-lg bg-[#003d58] hover:bg-[#d29535] hover:text-[#002435] text-white font-bold transition">
+                            Generate Statement
+                        </button>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Secondary Filter Bar (Cashier, Status, Quick Search & Run) -->
+            <div class="pt-3 border-t border-[#d7d3cb]/60 flex flex-wrap items-end justify-between gap-3 text-xs">
+                <div class="flex flex-wrap items-end gap-2.5 flex-1">
+                    <div x-show="filters.report_type !== 'high_risk_missed' && filters.report_type !== 'donor_statement'">
+                        <label class="block text-[10px] font-bold uppercase text-slate-500 mb-1">Cashier / User</label>
+                        <select x-model="filters.user_name" @change="runReport()"
+                                class="h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg min-w-[130px]">
+                            <option value="ALL">All Users</option>
+                            <template x-for="u in (lookups.users || [])" :key="u">
+                                <option :value="u" x-text="u"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div x-show="filters.report_type === 'detailed_receipts' || filters.report_type === 'non_cash_register'">
+                        <label class="block text-[10px] font-bold uppercase text-slate-500 mb-1">Receipt Status</label>
+                        <select x-model="filters.receipt_status" @change="runReport()"
+                                class="h-9 px-2.5 bg-white border border-[#d7d3cb] rounded-lg">
+                            <option value="VALID">Valid Only</option>
+                            <option value="CANCELLED">Cancelled Only</option>
+                            <option value="ALL">All Statuses</option>
+                        </select>
+                    </div>
+                    <div x-show="filters.report_type !== 'donor_statement'" class="flex-1 min-w-[200px] max-w-md">
+                        <label class="block text-[10px] font-bold uppercase text-slate-500 mb-1">Quick Search</label>
+                        <input type="text" x-model="filters.q" @keydown.enter="runReport()"
+                               placeholder="Search Donor #, Name, Mobile, RV #, Ref..."
+                               class="w-full h-9 px-3 bg-white border border-[#d7d3cb] rounded-lg">
+                    </div>
+                </div>
+                <button type="button" @click="runReport()"
+                        class="h-9 px-5 rounded-lg bg-[#003d58] hover:bg-[#004f72] text-white font-bold shadow-xs transition">
+                    <span x-text="loading ? 'Loading...' : '↻ Run Report'"></span>
+                </button>
+            </div>
+
+            <!-- Live Dynamic Composite Risk Score Formula Banner (Loaded from cash_risk_config) -->
+            <div x-show="filters.report_type === 'high_risk_missed'"
+                 class="px-3.5 py-2 rounded-xl bg-[#fffaea] border border-[#d29535]/40 text-[11px] text-[#003d58] flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <strong>Active Ranking Rule (0–100):</strong>
+                    Monetary (<strong x-text="riskConfig().weight_monetary"></strong>) +
+                    Frequency (<strong x-text="riskConfig().weight_frequency"></strong>) +
+                    Recency (<strong x-text="riskConfig().weight_recency"></strong>) +
+                    Follow-up Gap (<strong x-text="riskConfig().weight_followup"></strong>)
+                </div>
+                <div class="flex flex-wrap items-center gap-2 font-mono text-[10px] font-bold">
+                    <span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300" x-text="riskConfig().tier_critical_min + '–100 CRITICAL'"></span>
+                    <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300" x-text="riskConfig().tier_high_min + '–' + (riskConfig().tier_critical_min - 1) + ' HIGH'"></span>
+                    <span class="px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-800 border border-yellow-300" x-text="riskConfig().tier_medium_min + '–' + (riskConfig().tier_high_min - 1) + ' MEDIUM'"></span>
+                    <a href="/settings" class="px-2 py-0.5 rounded-full bg-[#003d58] text-white hover:bg-[#d29535] hover:text-[#002435] transition">⚙ Edit Rule</a>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. Summary KPI Strip -->
+        <section x-show="reportData.summary && reportData.summary.length > 0"
+                 class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <template x-for="(s, idx) in reportData.summary" :key="idx">
+                <div class="bg-white p-4 rounded-xl border border-[#d7d3cb] shadow-2xs">
+                    <div class="text-[11px] font-semibold text-[#757277]" x-text="s.label"></div>
+                    <div class="text-lg font-extrabold font-mono mt-1"
+                         :class="s.tone === 'rose' ? 'text-rose-700' : (s.tone === 'emerald' ? 'text-emerald-700' : (s.tone === 'amber' ? 'text-[#b57b1e]' : 'text-[#003d58]'))"
+                         x-text="s.value"></div>
+                </div>
+            </template>
+        </section>
+
+        <!-- 4. Report Results Table -->
+        <section class="bg-white rounded-2xl border border-[#d7d3cb] shadow-2xs overflow-hidden">
+            <div class="px-4 py-3 bg-[#faf8f2] border-b border-[#d7d3cb] flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-sm font-bold text-[#003d58]" x-text="reportData.title"></h2>
+                    <p class="text-[11px] text-[#757277]" x-text="reportData.subtitle"></p>
+                </div>
+
+                <!-- Modern Pagination Bar -->
+                <div class="no-print dis-pager text-xs">
+                    <span class="text-[11px] font-semibold text-[#757277] pl-1.5 pr-0.5">Rows</span>
+                    <select x-model.number="pageSize" @change="page = 1" class="dis-pager-select">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="250">250</option>
+                    </select>
+                    <div class="h-4 w-px bg-[#d7d3cb] mx-1"></div>
+                    <button type="button" @click="page = 1" :disabled="page <= 1" class="dis-pager-btn" title="First Page">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+                    </button>
+                    <button type="button" @click="if (page > 1) page--" :disabled="page <= 1" class="dis-pager-btn" title="Previous Page">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <span class="dis-pager-info" x-text="'Page ' + page + ' / ' + totalPages()"></span>
+                    <button type="button" @click="if (page < totalPages()) page++" :disabled="page >= totalPages()" class="dis-pager-btn" title="Next Page">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                    <button type="button" @click="page = totalPages()" :disabled="page >= totalPages()" class="dis-pager-btn" title="Last Page">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="print-table-wrap overflow-x-auto max-h-[65vh]">
+                <table class="w-full text-xs text-left border-collapse">
+                    <thead class="sticky top-0 z-10 text-white text-[11px]" style="background-color: #003d58;">
+                        <tr>
+                            <th class="px-3 py-2.5 w-10 text-center">#</th>
+                            <template x-for="col in reportData.columns" :key="col.key">
+                                <th class="px-3 py-2.5"
+                                    :class="(col.type === 'bhd' || col.type === 'num' || col.type === 'pct' || col.type === 'delay') ? 'text-right' : 'text-left'"
+                                    x-text="col.label"></th>
+                            </template>
+                            <th x-show="reportData.supports_followup_action" class="no-print px-3 py-2.5 text-center">Follow-up</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <template x-for="(row, rIdx) in pagedRows()" :key="rIdx">
+                            <tr class="hover:bg-[#fffaea]/60 transition">
+                                <td class="px-3 py-2 text-center font-mono text-slate-400" x-text="((page - 1) * pageSize) + rIdx + 1"></td>
+                                <template x-for="col in reportData.columns" :key="col.key">
+                                    <td class="px-3 py-2"
+                                        :class="(col.type === 'bhd' || col.type === 'num' || col.type === 'pct' || col.type === 'delay') ? 'text-right font-mono' : (col.type === 'mono' ? 'font-mono whitespace-nowrap' : '')">
+                                        <template x-if="col.type === 'risk'">
+                                            <span :class="riskBadgeClass(row.risk_tier)"
+                                                  :title="'Monetary: ' + row.monetary_pts + '/35 | Freq: ' + row.freq_pts + '/25 | Recency: ' + row.recency_pts + '/25 | Follow-up: ' + row.followup_pts + '/15'"
+                                                  class="px-2 py-0.5 rounded-full text-[10px] font-extrabold font-mono border"
+                                                  x-text="row.risk_score + ' ' + row.risk_tier"></span>
+                                        </template>
+                                        <template x-if="col.type === 'bhd'">
+                                            <span class="font-bold text-slate-900" x-text="fmtBhd(row[col.key])"></span>
+                                        </template>
+                                        <template x-if="col.type === 'pct'">
+                                            <span class="font-bold text-[#003d58]" x-text="Number(row[col.key] || 0).toFixed(1) + '%'"></span>
+                                        </template>
+                                        <template x-if="col.type === 'delay'">
+                                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-amber-100 text-amber-900"
+                                                  x-text="(row[col.key] ?? '-') + 'm'"></span>
+                                        </template>
+                                        <template x-if="col.type === 'status'">
+                                            <span :class="row[col.key] === 'Valid' ? 'bg-emerald-100 text-emerald-800' : (row[col.key] === 'MODIFY' ? 'bg-amber-100 text-amber-900' : 'bg-rose-100 text-rose-800')"
+                                                  class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                                  x-text="row[col.key]"></span>
+                                        </template>
+                                        <template x-if="!['risk','bhd','pct','delay','status'].includes(col.type)">
+                                            <span x-text="row[col.key] || '-'"></span>
+                                        </template>
+                                    </td>
+                                </template>
+                                <td x-show="reportData.supports_followup_action" class="no-print px-3 py-2 text-center">
+                                    <button type="button"
+                                            @click="window.openCashFollowupModal && window.openCashFollowupModal(row.donor_cd, () => runReport())"
+                                            :title="row.last_followup_date ? ('Follow-ups: ' + row.followup_count + ' | Last: ' + row.last_followup_date) : 'Log Follow-up'"
+                                            :class="row.followup_count > 0 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'"
+                                            class="px-2 py-0.5 rounded-md border text-[10px] font-bold inline-flex items-center gap-0.5">
+                                        📞<span x-show="row.followup_count > 0" class="font-mono" x-text="row.followup_count"></span>
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="!loading && (!reportData.rows || reportData.rows.length === 0)">
+                            <td :colspan="(reportData.columns ? reportData.columns.length : 1) + 2"
+                                class="p-8 text-center text-slate-400">
+                                No records found for the selected report &amp; filters.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        function cashReportsApp() {
+            const today = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const toDateStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+            const fromDateStr = `${today.getFullYear()}-01-01`;
+
+            return {
+                loading: false,
+                lookups: { band_details: [], payment_types: [], users: [] },
+                filters: {
+                    report_type: 'high_risk_missed',
+                    from_date: fromDateStr,
+                    to_date: toDateStr,
+                    band_det_cd: 'ALL',
+                    pay_type: 'ALL',
+                    user_name: 'ALL',
+                    receipt_status: 'VALID',
+                    risk_tier: 'ALL',
+                    delay_filter: 'OVER_12',
+                    followup_status: 'ALL',
+                    donor_cd: '',
+                    q: ''
+                },
+                reportData: { title: 'Loading...', subtitle: '', supports_followup_action: false, summary: [], columns: [], rows: [] },
+                page: 1,
+                pageSize: 100,
+
+                fmtBhd(v) {
+                    return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+                },
+
+                riskConfig() {
+                    return (this.reportData && this.reportData.risk_config) || {
+                        weight_monetary: 35, weight_frequency: 25, weight_recency: 25, weight_followup: 15,
+                        tier_critical_min: 75, tier_high_min: 55, tier_medium_min: 35, followup_stale_days: 60
+                    };
+                },
+
+                riskBadgeClass(tier) {
+                    if (tier === 'CRITICAL') return 'bg-rose-100 text-rose-800 border-rose-300';
+                    if (tier === 'HIGH') return 'bg-amber-100 text-amber-900 border-amber-300';
+                    if (tier === 'MEDIUM') return 'bg-yellow-50 text-yellow-800 border-yellow-300';
+                    return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+                },
+
+                totalPages() {
+                    const len = (this.reportData.rows || []).length;
+                    return Math.max(1, Math.ceil(len / (this.pageSize || 100)));
+                },
+
+                pagedRows() {
+                    const rows = this.reportData.rows || [];
+                    const start = (this.page - 1) * this.pageSize;
+                    return rows.slice(start, start + this.pageSize);
+                },
+
+                buildQueryString() {
+                    return new URLSearchParams({
+                        report_type: this.filters.report_type,
+                        from_date: this.filters.from_date || '',
+                        to_date: this.filters.to_date || '',
+                        band_det_cd: this.filters.band_det_cd || 'ALL',
+                        pay_type: this.filters.pay_type || 'ALL',
+                        user_name: this.filters.user_name || 'ALL',
+                        receipt_status: this.filters.receipt_status || 'VALID',
+                        risk_tier: this.filters.risk_tier || 'ALL',
+                        delay_filter: this.filters.delay_filter || 'OVER_12',
+                        followup_status: this.filters.followup_status || 'ALL',
+                        donor_cd: this.filters.donor_cd || '',
+                        q: this.filters.q || ''
+                    }).toString();
+                },
+
+                exportCsvUrl() {
+                    return '/api/cash-reports/export-csv?' + this.buildQueryString();
+                },
+
+                async init() {
+                    const lkpRes = await fetch('/api/cash-donations/lookups');
+                    if (lkpRes.ok) {
+                        this.lookups = await lkpRes.json();
+                    }
+                    await this.runReport();
+                },
+
+                async runReport() {
+                    this.loading = true;
+                    this.page = 1;
+                    try {
+                        const res = await fetch('/api/cash-reports/run?' + this.buildQueryString());
+                        if (res.ok) {
+                            this.reportData = await res.json();
+                        }
+                    } finally {
+                        this.loading = false;
+                    }
+                }
+            };
+        }
+    </script>
+
+    {% include '_cash_followup_modal.html' %}
+</body>
+</html>

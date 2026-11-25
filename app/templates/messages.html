@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Internal Messages &amp; Directives - Discover Islam Society</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Cairo', sans-serif; }
+        .msg-row-active { background: #fffaea !important; border-left: 3px solid #d29535 !important; }
+    </style>
+</head>
+<body class="bg-[#faf8f2] text-slate-800">
+<div class="erp-shell-wrapper">
+    {% include 'sidebar.html' %}
+
+    <div class="erp-main-content">
+        <!-- Top Header -->
+        <header class="bg-white border-b border-[#d7d3cb] px-6 py-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm"
+                     style="background: linear-gradient(135deg, #003d58, #005478);">
+                    <svg class="w-5 h-5 text-[#e8b861]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg font-extrabold tracking-tight text-[#003d58]">Internal Messages &amp; Directives</h1>
+                    <p class="text-xs text-slate-500">المراسلات والتوجيهات الداخلية — Email-style threads &amp; donor follow-up directives</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2.5">
+                <button type="button" onclick="openComposeModal('message')"
+                        class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[#003d58] text-[#003d58] hover:bg-[#003d58]/5 text-xs font-bold transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    New Message
+                </button>
+                <button type="button" onclick="openComposeModal('directive')"
+                        class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-xs font-bold shadow-sm transition"
+                        style="background: linear-gradient(135deg, #003d58, #00557a);">
+                    <svg class="w-4 h-4 text-[#f0c271]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    New Action Directive (توجيه)
+                </button>
+            </div>
+        </header>
+
+        <!-- Folder Tabs + Search Filters -->
+        <div class="px-6 pt-4 pb-2 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-1.5 bg-white p-1.5 rounded-xl border border-[#d7d3cb] shadow-xs">
+                <button type="button" data-folder="inbox" onclick="switchFolder('inbox')"
+                        class="folder-tab px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    📥 Inbox
+                    <span id="cnt-inbox" class="hidden px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500 text-white">0</span>
+                </button>
+                <button type="button" data-folder="tasks" onclick="switchFolder('tasks')"
+                        class="folder-tab px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    🎯 My Directives
+                    <span id="cnt-tasks" class="hidden px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500 text-white">0</span>
+                </button>
+                <button type="button" data-folder="assigned" onclick="switchFolder('assigned')"
+                        class="folder-tab px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    📤 Assigned by Me
+                    <span id="cnt-assigned" class="hidden px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-[#003d58] text-white">0</span>
+                </button>
+                <button type="button" data-folder="sent" onclick="switchFolder('sent')"
+                        class="folder-tab px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                    📨 Sent
+                    <span id="cnt-sent" class="hidden px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white">0</span>
+                </button>
+                <button type="button" data-folder="all" onclick="switchFolder('all')"
+                        class="folder-tab px-3 py-1.5 rounded-lg text-xs font-bold transition">
+                    📂 All
+                </button>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+                <input id="filter-q" type="text" placeholder="Search subject, donor, user..."
+                       onkeydown="if(event.key==='Enter') loadMessages(1)"
+                       class="w-56 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs">
+                <select id="filter-status" onchange="loadMessages(1)"
+                        class="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium">
+                    <option value="">All Statuses</option>
+                    <option value="new">New</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="done">Done ✅</option>
+                    <option value="cancelled">Cancelled</option>
+                </select>
+                <label class="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 bg-white px-2.5 py-1.5 rounded-lg border border-slate-300 cursor-pointer">
+                    <input id="filter-unread" type="checkbox" onchange="loadMessages(1)" class="rounded text-[#003d58]">
+                    Unread Only
+                </label>
+                <button type="button" onclick="loadMessages(1)"
+                        class="px-3 py-1.5 rounded-lg bg-[#003d58] hover:bg-[#004f72] text-white text-xs font-bold transition">
+                    Search
+                </button>
+            </div>
+        </div>
+
+        <!-- 2-Pane Mail Workspace -->
+        <main class="px-6 py-3 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
+            <!-- Left Pane: Thread List -->
+            <section class="lg:col-span-5 bg-white rounded-2xl border border-[#d7d3cb] shadow-xs flex flex-col overflow-hidden" style="min-height: 70vh; max-height: calc(100vh - 185px);">
+                <div class="px-4 py-2.5 border-b border-slate-100 bg-[#faf8f2]/70 flex items-center justify-between text-xs">
+                    <span id="list-summary" class="font-bold text-[#003d58]">Loading...</span>
+                    <button type="button" onclick="loadMessages(currentPage)" class="text-slate-500 hover:text-[#003d58] font-semibold">↻ Refresh</button>
+                </div>
+                <div id="thread-list" class="flex-1 overflow-y-auto divide-y divide-slate-100"></div>
+                <div id="list-pager" class="px-4 py-2 border-t border-slate-100 bg-[#faf8f2]/60 flex items-center justify-between text-xs">
+                    <button id="btn-prev" type="button" onclick="loadMessages(currentPage - 1)" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold disabled:opacity-40">← Prev</button>
+                    <span id="pager-info" class="font-mono text-[11px] font-bold text-slate-600">Page 1 / 1</span>
+                    <button id="btn-next" type="button" onclick="loadMessages(currentPage + 1)" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold disabled:opacity-40">Next →</button>
+                </div>
+            </section>
+
+            <!-- Right Pane: Thread Detail Reader -->
+            <section class="lg:col-span-7 bg-white rounded-2xl border border-[#d7d3cb] shadow-xs flex flex-col overflow-hidden" style="min-height: 70vh; max-height: calc(100vh - 185px);">
+                <div id="detail-empty" class="flex-1 flex flex-col items-center justify-center p-10 text-center text-slate-400">
+                    <div class="w-16 h-16 rounded-2xl bg-[#faf8f2] border border-[#d7d3cb] flex items-center justify-center mb-3 text-2xl">✉️</div>
+                    <div class="text-sm font-bold text-slate-600">Select a message or directive to read</div>
+                    <p class="text-xs mt-1 max-w-sm">View case snapshots, update directive progress, or reply directly in the thread.</p>
+                </div>
+
+                <div id="detail-view" class="hidden flex-1 flex flex-col min-h-0">
+                    <!-- Thread Header -->
+                    <div id="detail-header" class="px-5 py-4 border-b border-slate-100 bg-[#faf8f2]/60 shrink-0"></div>
+
+                    <!-- Scrollable Thread Content -->
+                    <div id="detail-scroll" class="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                        <div id="detail-directive-bar" class="hidden"></div>
+                        <div id="detail-snapshot-card" class="hidden"></div>
+                        <div id="detail-body-card" class="p-4 rounded-xl bg-slate-50 border border-slate-200/80 text-sm text-slate-800 whitespace-pre-wrap leading-relaxed"></div>
+                        <div id="detail-replies" class="space-y-3"></div>
+                    </div>
+
+                    <!-- Reply Composer -->
+                    <div class="px-5 py-3 border-t border-slate-200 bg-[#faf8f2]/70 shrink-0">
+                        <div class="flex items-end gap-2.5">
+                            <textarea id="reply-input" rows="2" placeholder="Write a reply... (Ctrl+Enter to send)"
+                                      onkeydown="if((event.ctrlKey||event.metaKey) && event.key==='Enter'){ sendReply(); }"
+                                      class="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs resize-none"></textarea>
+                            <button type="button" id="btn-send-reply" onclick="sendReply()"
+                                    class="px-4 py-2.5 rounded-xl bg-[#003d58] hover:bg-[#005275] text-white text-xs font-bold shadow-xs transition shrink-0">
+                                Send Reply
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+</div>
+
+<!-- COMPOSE MESSAGE / DIRECTIVE MODAL -->
+<div id="compose-modal" class="fixed inset-0 z-50 hidden bg-slate-900/55 backdrop-blur-[1px] flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-[#d7d3cb] overflow-hidden max-h-[92vh] flex flex-col">
+        <div class="px-5 py-3.5 text-white flex items-center justify-between" style="background: linear-gradient(135deg, #00354d, #004e70);">
+            <div class="flex items-center gap-2.5">
+                <span id="compose-icon" class="text-lg">🎯</span>
+                <div>
+                    <h2 id="compose-title" class="text-sm font-extrabold">New Action Directive</h2>
+                    <p class="text-[11px] text-amber-200/90">Send an internal message or donor follow-up directive</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeComposeModal()" class="p-1 rounded-lg hover:bg-white/15 text-slate-200">✕</button>
+        </div>
+
+        <div class="p-5 overflow-y-auto space-y-4 text-xs">
+            <!-- Type Switch -->
+            <div class="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+                <button type="button" id="type-btn-message" onclick="setComposeType('message')"
+                        class="py-2 rounded-lg font-bold transition">✉️ Internal Message (مراسلة)</button>
+                <button type="button" id="type-btn-directive" onclick="setComposeType('directive')"
+                        class="py-2 rounded-lg font-bold transition">🎯 Action Directive (توجيه / مهمة)</button>
+            </div>
+
+            <!-- Recipients -->
+            <div>
+                <div class="flex items-center justify-between mb-1.5">
+                    <label class="font-bold text-slate-700">To (Recipients) <span class="text-rose-500">*</span>
+                        <span id="recipients-filter-hint" class="hidden ml-1.5 text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200"></span>
+                    </label>
+                    <button type="button" id="btn-toggle-all-users" onclick="toggleShowAllRecipients()"
+                            class="hidden text-[11px] font-bold text-[#003d58] hover:underline">
+                        + Show all users
+                    </button>
+                </div>
+                <div id="compose-recipients-list" class="flex flex-wrap gap-1.5 p-2.5 rounded-xl border border-slate-200 bg-[#faf8f2]/70 max-h-32 overflow-y-auto"></div>
+            </div>
+
+            <!-- Category / Priority / Due Date -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label class="block font-bold text-slate-700 mb-1">Category (الغرض)</label>
+                    <select id="compose-category" onchange="onComposeCategoryChange()" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white">
+                        <option value="general">📌 General (عام)</option>
+                        <option value="delay_followup">🔴 Delay Follow-up (متابعة تأخير)</option>
+                        <option value="thank_you">💛 Thank You / Appreciation (رسالة شكر)</option>
+                        <option value="check_in">📞 Donor Check-in (اطمئنان وتواصل)</option>
+                        <option value="data_update">📝 Data Update (تحديث بيانات)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-bold text-slate-700 mb-1">Priority (الأولوية)</label>
+                    <select id="compose-priority" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white">
+                        <option value="normal">Normal (عادي)</option>
+                        <option value="high">High (مهم)</option>
+                        <option value="urgent">Urgent (عاجل)</option>
+                    </select>
+                </div>
+                <div id="compose-due-wrap">
+                    <label class="block font-bold text-slate-700 mb-1">Due Date (تاريخ الاستحقاق)</label>
+                    <input id="compose-due-date" type="date" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white">
+                </div>
+            </div>
+
+            <!-- Optional Donor Link + Live Snapshot Preview -->
+            <div class="p-3.5 rounded-xl border border-[#d7d3cb] bg-[#fffaea]/60 space-y-2.5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <span id="entity-section-label" class="font-bold text-[#003d58]">📎 Link Donor / Standing Order Case (Optional — Auto-captures Snapshot)</span>
+                    <div id="entity-type-buttons" class="flex items-center gap-1.5">
+                        <button type="button" onclick="setEntityType('')" id="ent-btn-none" class="ent-btn px-2.5 py-1 rounded-lg font-bold border text-[11px]">None</button>
+                        <button type="button" onclick="setEntityType('so')" id="ent-btn-so" class="ent-btn px-2.5 py-1 rounded-lg font-bold border text-[11px]">Standing Order (مستقطع)</button>
+                        <button type="button" onclick="setEntityType('cash')" id="ent-btn-cash" class="ent-btn px-2.5 py-1 rounded-lg font-bold border text-[11px]">Cash Donor (متبرع نقدي)</button>
+                    </div>
+                    <button type="button" id="ent-btn-unlock" onclick="unlockComposeEntity()" class="hidden px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 font-bold text-[11px]">
+                        ✎ Change Linked Case
+                    </button>
+                </div>
+
+                <div id="entity-search-box" class="hidden relative">
+                    <input id="entity-search-input" type="text" placeholder="Type donor number, name, or mobile..."
+                           oninput="debouncedDonorLookup()"
+                           class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs">
+                    <div id="entity-search-results" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 max-h-48 overflow-y-auto divide-y divide-slate-100"></div>
+                </div>
+
+                <div id="entity-snapshot-preview" class="hidden"></div>
+            </div>
+
+            <!-- Subject & Body -->
+            <div>
+                <label class="block font-bold text-slate-700 mb-1">Subject (الموضوع) <span class="text-rose-500">*</span></label>
+                <input id="compose-subject" type="text" maxlength="200" oninput="userEditedSubject = true"
+                       placeholder="e.g. Follow up with delayed Standing Order donor #1045"
+                       class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white">
+            </div>
+            <div>
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+                    <label class="font-bold text-slate-700">Message / Instructions (التفاصيل) <span class="text-rose-500">*</span></label>
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-[10px] text-slate-400 font-semibold">✨ Template:</span>
+                        <div class="inline-flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                            <button type="button" id="tpl-lang-ar" onclick="setTemplateLang('ar', true)"
+                                    class="px-2 py-0.5 rounded-md text-[10px] font-bold transition">عربي</button>
+                            <button type="button" id="tpl-lang-en" onclick="setTemplateLang('en', true)"
+                                    class="px-2 py-0.5 rounded-md text-[10px] font-bold transition">EN</button>
+                        </div>
+                        <button type="button" id="btn-apply-tpl" onclick="applyCategoryTemplate(true)"
+                                class="hidden px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 text-[10px] font-bold transition"
+                                title="Replace text with suggested template for selected category">
+                            ↻ Insert
+                        </button>
+                    </div>
+                </div>
+                <textarea id="compose-body" rows="4" oninput="userEditedBody = true; document.getElementById('btn-apply-tpl').classList.remove('hidden');"
+                          placeholder="Write clear instructions or message details..."
+                          class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white"></textarea>
+            </div>
+
+            <div id="compose-error" class="hidden p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 font-semibold"></div>
+        </div>
+
+        <div class="px-5 py-3 border-t border-slate-200 bg-[#faf8f2] flex items-center justify-end gap-2">
+            <button type="button" onclick="closeComposeModal()" class="px-4 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-700">Cancel</button>
+            <button type="button" id="btn-submit-compose" onclick="submitCompose()"
+                    class="px-5 py-2 rounded-xl bg-[#003d58] hover:bg-[#005175] text-white text-xs font-bold shadow-sm transition">
+                Send Now
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentFolder = 'inbox';
+    let currentPage = 1;
+    let activeMessageId = null;
+    let allUsers = [];
+    let selectedRecipientIds = new Set();
+    let composeType = 'directive';
+    let composeEntityType = '';
+    let composeEntityId = null;
+    let composeSnapshot = null;
+    let composeEntityLocked = false;
+    let composeReturnTo = '';
+    let showAllRecipients = false;
+    let templateLang = 'ar';
+    let userEditedSubject = false;
+    let userEditedBody = false;
+    let savedEntityByType = { so: null, cash: null };
+
+    const CATEGORY_TEMPLATES = {
+        delay_followup: {
+            ar: {
+                subject: (lbl) => lbl ? `متابعة تأخير سداد — ${lbl}` : 'متابعة تأخير سداد',
+                body: 'الرجاء التواصل مع المتبرع/المستقطع المذكور للاستفسار عن سبب التأخير في السداد، والاطمئنان على استمرارية التبرع، مع تسجيل نتيجة المكالمة في سجل المتابعة وإفادتنا بالتحديث.'
+            },
+            en: {
+                subject: (lbl) => lbl ? `Delay Follow-up — ${lbl}` : 'Payment Delay Follow-up',
+                body: 'Please contact the donor/subscriber referenced above to inquire about the payment delay, confirm continuation of their contribution, log the call outcome in the follow-up screen, and update this directive.'
+            }
+        },
+        thank_you: {
+            ar: {
+                subject: (lbl) => lbl ? `توجيه رسالة شكر وتقدير — ${lbl}` : 'توجيه رسالة شكر وتقدير',
+                body: 'الرجاء التواصل مع المتبرع المذكور لتقديم الشكر والتقدير باسم جمعية اكتشف الإسلام على دعمه وعطائه المستمر، وإرسال رسالة شكر مناسبة وإفادتنا بعد التنفيذ.'
+            },
+            en: {
+                subject: (lbl) => lbl ? `Thank You & Appreciation — ${lbl}` : 'Donor Thank You & Appreciation',
+                body: 'Please reach out to the donor referenced above to express sincere gratitude on behalf of Discover Islam Society for their generous and continued support, and confirm once completed.'
+            }
+        },
+        check_in: {
+            ar: {
+                subject: (lbl) => lbl ? `تواصل واطمئنان — ${lbl}` : 'تواصل واطمئنان على المتبرع',
+                body: 'الرجاء إجراء تواصل ودي للاطمئنان على المتبرع المذكور والاستماع لأي ملاحظات أو مقترحات لديه، وتوثيق المكالمة في سجل المتابعة.'
+            },
+            en: {
+                subject: (lbl) => lbl ? `Donor Check-in — ${lbl}` : 'Courtesy Donor Check-in',
+                body: 'Please make a courtesy call to check in with the donor referenced above, listen to any feedback or inquiries they may have, and record the interaction in the system.'
+            }
+        },
+        data_update: {
+            ar: {
+                subject: (lbl) => lbl ? `تحديث بيانات — ${lbl}` : 'تحديث بيانات المتبرع',
+                body: 'الرجاء التواصل مع المتبرع المذكور لمراجعة وتحديث بيانات التواصل أو الحساب البنكي في النظام، ثم تأكيد الإنجاز وإغلاق التوجيه.'
+            },
+            en: {
+                subject: (lbl) => lbl ? `Data Update Request — ${lbl}` : 'Donor Data Update Request',
+                body: 'Please contact the donor referenced above to verify and update their contact details or bank account information in the ERP system, then mark this directive as done.'
+            }
+        },
+        general: {
+            ar: { subject: (lbl) => lbl ? `ملاحظة بخصوص ${lbl}` : '', body: '' },
+            en: { subject: (lbl) => lbl ? `Regarding ${lbl}` : '', body: '' }
+        }
+    };
+
+    function getCurrentEntityLabel() {
+        if (!composeSnapshot) return '';
+        const prefix = composeSnapshot.entity_type === 'so' ? 'SO' : 'Cash';
+        const nm = templateLang === 'ar'
+            ? (composeSnapshot.donor_name || composeSnapshot.display_name || '')
+            : (composeSnapshot.display_name || composeSnapshot.donor_name || '');
+        return `${prefix} #${composeSnapshot.entity_id}${nm ? ' — ' + nm : ''}`;
+    }
+
+    function updateTemplateLangButtons() {
+        const arBtn = document.getElementById('tpl-lang-ar');
+        const enBtn = document.getElementById('tpl-lang-en');
+        if (arBtn) arBtn.className = 'px-2 py-0.5 rounded-md text-[10px] font-bold transition ' + (templateLang === 'ar' ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:bg-white');
+        if (enBtn) enBtn.className = 'px-2 py-0.5 rounded-md text-[10px] font-bold transition ' + (templateLang === 'en' ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:bg-white');
+        const subj = document.getElementById('compose-subject');
+        const body = document.getElementById('compose-body');
+        if (subj) subj.dir = templateLang === 'ar' ? 'rtl' : 'ltr';
+        if (body) body.dir = templateLang === 'ar' ? 'rtl' : 'ltr';
+    }
+
+    function setTemplateLang(lang, forceApply = false) {
+        templateLang = (lang === 'en') ? 'en' : 'ar';
+        updateTemplateLangButtons();
+        applyCategoryTemplate(forceApply);
+    }
+
+    function onComposeCategoryChange() {
+        applyCategoryTemplate(false);
+    }
+
+    function applyCategoryTemplate(force = false) {
+        const cat = document.getElementById('compose-category').value || 'general';
+        const tpl = (CATEGORY_TEMPLATES[cat] || CATEGORY_TEMPLATES.general)[templateLang];
+        if (!tpl) return;
+        const lbl = getCurrentEntityLabel();
+        const subjEl = document.getElementById('compose-subject');
+        const bodyEl = document.getElementById('compose-body');
+        if (force || !userEditedSubject) {
+            subjEl.value = tpl.subject(lbl);
+            userEditedSubject = false;
+        }
+        if (force || !userEditedBody) {
+            bodyEl.value = tpl.body;
+            userEditedBody = false;
+            document.getElementById('btn-apply-tpl').classList.add('hidden');
+        }
+    }
+    let lookupTimer = null;
+    let showingLiveSnapshot = false;
+    let currentThreadSnapshot = null;
+
+    const CAT_META = {
+        delay_followup: { label: 'Delay Follow-up', ar: 'متابعة تأخير', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+        thank_you:      { label: 'Thank You',       ar: 'رسالة شكر',    cls: 'bg-amber-50 text-amber-800 border-amber-200' },
+        check_in:       { label: 'Donor Check-in',  ar: 'تواصل واطمئنان', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
+        data_update:    { label: 'Data Update',     ar: 'تحديث بيانات', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+        general:        { label: 'General',         ar: 'عام',          cls: 'bg-slate-100 text-slate-700 border-slate-200' },
+    };
+
+    const STATUS_META = {
+        new:         { label: 'New',         cls: 'bg-blue-100 text-blue-800' },
+        in_progress: { label: 'In Progress', cls: 'bg-amber-100 text-amber-800' },
+        done:        { label: 'Done ✅',     cls: 'bg-emerald-100 text-emerald-800' },
+        cancelled:   { label: 'Cancelled',   cls: 'bg-slate-200 text-slate-600' },
+        open:        { label: 'Thread',      cls: 'bg-slate-100 text-slate-600' },
+    };
+
+    const PRIO_META = {
+        urgent: { label: 'URGENT', cls: 'bg-rose-600 text-white' },
+        high:   { label: 'HIGH',   cls: 'bg-amber-500 text-white' },
+        normal: { label: 'Normal', cls: 'bg-slate-100 text-slate-600' },
+    };
+
+    function esc(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function fmtDt(iso) {
+        if (!iso) return '—';
+        try {
+            const d = new Date(iso);
+            return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+        } catch { return iso; }
+    }
+
+    function isOverdue(dueDate, status) {
+        if (!dueDate || status === 'done' || status === 'cancelled') return false;
+        const today = new Date().toISOString().slice(0, 10);
+        return dueDate < today;
+    }
+
+    function switchFolder(f) {
+        currentFolder = f;
+        document.querySelectorAll('.folder-tab').forEach(btn => {
+            const active = btn.dataset.folder === f;
+            btn.className = 'folder-tab px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ' +
+                (active ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100');
+        });
+        loadMessages(1);
+    }
+
+    async function loadUsers() {
+        const res = await fetch('/api/messages/users');
+        if (!res.ok) return;
+        const data = await res.json();
+        allUsers = data.users || [];
+        renderRecipientChips();
+    }
+
+    function toggleShowAllRecipients() {
+        showAllRecipients = !showAllRecipients;
+        renderRecipientChips();
+    }
+
+    function renderRecipientChips() {
+        const box = document.getElementById('compose-recipients-list');
+        const hint = document.getElementById('recipients-filter-hint');
+        const toggleBtn = document.getElementById('btn-toggle-all-users');
+
+        // Always exclude current user from recipients list
+        let eligible = allUsers.filter(u => !u.is_self);
+
+        const isModuleFiltered = (composeEntityType === 'so' || composeEntityType === 'cash');
+        if (isModuleFiltered && !showAllRecipients) {
+            eligible = eligible.filter(u => composeEntityType === 'so' ? u.has_so_access : u.has_cash_access);
+            if (hint) {
+                hint.textContent = composeEntityType === 'so' ? 'Standing Orders & Management' : 'Cash Donations & Management';
+                hint.classList.remove('hidden');
+            }
+            if (toggleBtn) {
+                toggleBtn.textContent = '+ Show all users';
+                toggleBtn.classList.remove('hidden');
+            }
+        } else {
+            if (hint) hint.classList.add('hidden');
+            if (toggleBtn) {
+                if (isModuleFiltered) {
+                    toggleBtn.textContent = 'Filter by module';
+                    toggleBtn.classList.remove('hidden');
+                } else {
+                    toggleBtn.classList.add('hidden');
+                }
+            }
+        }
+
+        if (!eligible.length) {
+            box.innerHTML = `<span class="text-slate-400 text-[11px] italic">No eligible recipients found.</span>`;
+            return;
+        }
+        box.innerHTML = eligible.map(u => {
+            const sel = selectedRecipientIds.has(u.user_id);
+            return `<button type="button" onclick="toggleRecipient(${u.user_id})"
+                class="px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition flex items-center gap-1.5 ${sel ? 'bg-[#003d58] text-white border-[#003d58] shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:border-[#d29535]'}">
+                <span>${esc(u.username)}</span>
+                <span class="text-[9px] px-1.5 py-0.2 rounded ${sel ? 'bg-white/20 text-amber-200' : 'bg-slate-100 text-slate-500'}">${esc(u.role_code || '')}</span>
+            </button>`;
+        }).join('');
+    }
+
+    function toggleRecipient(uid) {
+        if (selectedRecipientIds.has(uid)) selectedRecipientIds.delete(uid);
+        else selectedRecipientIds.add(uid);
+        renderRecipientChips();
+    }
+
+    async function loadMessages(page = 1) {
+        currentPage = Math.max(1, page);
+        const q = document.getElementById('filter-q').value.trim();
+        const st = document.getElementById('filter-status').value;
+        const unread = document.getElementById('filter-unread').checked ? 1 : 0;
+        const params = new URLSearchParams({ folder: currentFolder, page: currentPage, page_size: 25, unread_only: unread });
+        if (q) params.set('q', q);
+        if (st) params.set('status', st);
+
+        const res = await fetch('/api/messages/list?' + params.toString());
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Update folder counters
+        const c = data.counts || {};
+        setBadge('cnt-inbox', c.inbox_unread);
+        setBadge('cnt-tasks', c.open_tasks);
+        setBadge('cnt-assigned', c.assigned_open);
+        setBadge('cnt-sent', c.sent_unread);
+
+        document.getElementById('list-summary').textContent = `${data.total} thread${data.total === 1 ? '' : 's'}`;
+        document.getElementById('pager-info').textContent = `Page ${data.page} / ${data.total_pages}`;
+        document.getElementById('btn-prev').disabled = data.page <= 1;
+        document.getElementById('btn-next').disabled = data.page >= data.total_pages;
+
+        const list = document.getElementById('thread-list');
+        if (!data.items.length) {
+            list.innerHTML = `<div class="p-10 text-center text-xs text-slate-400">No messages in this folder yet.</div>`;
+            return;
+        }
+
+        list.innerHTML = data.items.map(m => {
+            const cat = CAT_META[m.category] || CAT_META.general;
+            const stMeta = STATUS_META[m.status] || STATUS_META.open;
+            const prMeta = PRIO_META[m.priority] || PRIO_META.normal;
+            const overdue = isOverdue(m.due_date, m.status);
+            const activeCls = m.message_id === activeMessageId ? 'msg-row-active' : '';
+            const unreadCls = m.is_unread ? 'bg-blue-50/45' : 'bg-white';
+
+            return `<div onclick="openThread(${m.message_id})"
+                class="px-4 py-3 cursor-pointer hover:bg-[#fffaea]/70 transition border-l-3 border-transparent ${unreadCls} ${activeCls}">
+                <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        ${m.is_unread ? '<span class="w-2 h-2 rounded-full bg-[#d29535] shrink-0"></span>' : ''}
+                        <span class="text-xs ${m.is_unread ? 'font-extrabold text-[#003d58]' : 'font-semibold text-slate-800'} truncate">${esc(m.subject)}</span>
+                    </div>
+                    <span class="text-[10px] text-slate-400 font-mono shrink-0">${fmtDt(m.updated_at)}</span>
+                </div>
+                <div class="mt-1 text-[11px] text-slate-500 flex items-center justify-between gap-2">
+                    <span class="truncate"><strong>${esc(m.sender_username)}</strong> → ${esc(m.recipients_summary || '')}</span>
+                    ${m.reply_count > 0 ? `<span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-bold shrink-0">💬 ${m.reply_count}</span>` : ''}
+                </div>
+                <div class="mt-1.5 flex flex-wrap items-center gap-1">
+                    ${m.msg_type === 'directive'
+                        ? `<span class="text-[9px] px-1.5 py-0.5 rounded font-bold ${stMeta.cls}">🎯 ${stMeta.label}</span>`
+                        : `<span class="text-[9px] px-1.5 py-0.5 rounded font-bold bg-slate-100 text-slate-600">✉️ Message</span>`}
+                    <span class="text-[9px] px-1.5 py-0.5 rounded border font-semibold ${cat.cls}">${cat.label}</span>
+                    ${m.priority !== 'normal' ? `<span class="text-[9px] px-1.5 py-0.5 rounded font-extrabold ${prMeta.cls}">${prMeta.label}</span>` : ''}
+                    ${m.entity_label ? `<span class="text-[9px] px-1.5 py-0.5 rounded bg-[#003d58]/10 text-[#003d58] font-bold">📎 ${esc(m.entity_label)}</span>` : ''}
+                    ${m.due_date ? `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${overdue ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}">⏰ ${m.due_date}${overdue ? ' OVERDUE' : ''}</span>` : ''}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function setBadge(id, val) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const n = Number(val || 0);
+        el.textContent = n;
+        el.classList.toggle('hidden', n <= 0);
+    }
+
+    function renderSnapshotCardHtml(snap, isLive = false, isPreview = false) {
+        if (!snap) return '';
+        const isSO = snap.entity_type === 'so';
+        const headerBadge = isLive
+            ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800">🟢 LIVE STATUS NOW</span>`
+            : `<span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900">📸 SNAPSHOT AT SEND (${esc(snap.captured_at || '')})</span>`;
+
+        const metricsHtml = isSO ? `
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                <div class="bg-white rounded-lg p-2 border border-slate-200/80"><div class="text-[10px] text-slate-400">Bank</div><div class="font-bold text-slate-800 truncate">${esc(snap.bank_name)}</div></div>
+                <div class="bg-white rounded-lg p-2 border border-slate-200/80"><div class="text-[10px] text-slate-400">Active SO / Monthly</div><div class="font-bold font-mono text-[#003d58]">${snap.active_so_count} · ${Number(snap.monthly_total||0).toFixed(3)} BD</div></div>
+                <div class="bg-white rounded-lg p-2 border border-slate-200/80"><div class="text-[10px] text-slate-400">Last Paid / Delay</div><div class="font-bold font-mono ${snap.delay_months >= 2 ? 'text-rose-600' : 'text-emerald-700'}">${esc(snap.last_paid_month || 'Never')} ${snap.delay_months != null ? `(${snap.delay_months}m)` : ''}</div></div>
+                <div class="bg-white rounded-lg p-2 border border-slate-200/80"><div class="text-[10px] text-slate-400">Mobile</div><div class="font-bold font-mono text-slate-800">${esc(snap.mobile || '—')}</div></div>
+            </div>
+        ` : `
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                <div class="bg-white rounded-lg p-2 border border-slate-200/80"><div class="text-[10px] text-slate-400">Total Donated</div><div class="font-bold font-mono text-[#003d58]">${Number(snap.total_donated||0).toFixed(3)} BD</div></div>
+                <div class="bg-white rounded-lg p-2 border border-slate-200/80"><div class="text-[10px] text-slate-400">Receipts / Avg</div><div class="font-bold font-mono text-slate-800">${snap.receipt_count} · ${Number(snap.avg_receipt||0).toFixed(3)} BD</div></div>
+                <div class="bg-white rounded-lg p-2 border border-slate-200/80"><div class="text-[10px] text-slate-400">Last Receipt</div><div class="font-bold font-mono ${(snap.days_since_last||0) > 180 ? 'text-rose-600' : 'text-emerald-700'}">${esc(snap.last_receipt_date || 'Never')} ${snap.days_since_last != null ? `(${snap.days_since_last}d)` : ''}</div></div>
+                <div class="bg-white rounded-lg p-2 border border-slate-200/80"><div class="text-[10px] text-slate-400">Mobile / Tier</div><div class="font-bold font-mono text-slate-800">${esc(snap.mobile || '—')} · ${esc(snap.importance_label || '')}</div></div>
+            </div>
+        `;
+
+        const lastFuHtml = snap.last_followup_date
+            ? `<div class="mt-2 px-2.5 py-1.5 rounded-lg bg-white/80 border border-slate-200/70 text-[11px] text-slate-600">
+                   <strong>Last Follow-up:</strong> ${esc(snap.last_followup_date)} by <strong>${esc(snap.last_followup_by)}</strong> — ${esc(snap.last_followup_result || '')} ${snap.last_followup_notes ? `· "${esc(snap.last_followup_notes)}"` : ''}
+               </div>`
+            : `<div class="mt-2 text-[11px] text-slate-500 italic">No follow-up calls recorded yet at this time.</div>`;
+
+        return `<div class="p-3.5 rounded-xl border ${isLive ? 'border-emerald-300 bg-emerald-50/40' : 'border-[#d29535]/45 bg-[#fffaea]/80'} space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded-md text-[10px] font-extrabold text-white bg-[#003d58]">${isSO ? 'STANDING ORDER' : 'CASH DONOR'} #${snap.entity_id}</span>
+                    <span class="text-xs font-extrabold text-[#003d58]">${esc(snap.display_name)}</span>
+                    ${snap.donor_name && snap.donor_name !== snap.display_name ? `<span class="text-xs text-slate-500">(${esc(snap.donor_name)})</span>` : ''}
+                </div>
+                ${headerBadge}
+            </div>
+            ${metricsHtml}
+            ${lastFuHtml}
+            ${isPreview ? '' : `<div class="pt-1 flex flex-wrap items-center gap-2">
+                <button type="button" onclick="toggleLiveSnapshot()" class="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:border-[#003d58] text-[11px] font-bold text-[#003d58] transition">
+                    ${isLive ? '📸 Show Original Snapshot' : '🔄 Compare with Live Status'}
+                </button>
+                <a href="${esc(snap.open_url)}" class="px-2.5 py-1 rounded-lg bg-[#003d58] hover:bg-[#005275] text-white text-[11px] font-bold transition">↗ Open Donor Profile</a>
+                <a href="${esc(snap.followup_url)}" class="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold transition">📞 Open Follow-up Screen</a>
+            </div>`}
+        </div>`;
+    }
+
+    async function openThread(mid) {
+        activeMessageId = mid;
+        showingLiveSnapshot = false;
+        const res = await fetch(`/api/messages/${mid}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const m = data.message;
+        currentThreadSnapshot = m.entity_snapshot || null;
+
+        document.getElementById('detail-empty').classList.add('hidden');
+        document.getElementById('detail-view').classList.remove('hidden');
+
+        const cat = CAT_META[m.category] || CAT_META.general;
+        const stMeta = STATUS_META[m.status] || STATUS_META.open;
+        const prMeta = PRIO_META[m.priority] || PRIO_META.normal;
+        const overdue = isOverdue(m.due_date, m.status);
+
+        const recHtml = (data.recipients || []).map(r =>
+            `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${r.is_read ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600'}">
+                ${esc(r.recipient_username)} ${r.is_read ? '✓' : ''}
+            </span>`
+        ).join(' ');
+
+        document.getElementById('detail-header').innerHTML = `
+            <div class="flex flex-wrap items-start justify-between gap-2">
+                <h2 class="text-base font-extrabold text-[#003d58] leading-snug">${esc(m.subject)}</h2>
+                <div class="flex flex-wrap items-center gap-1.5">
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold ${stMeta.cls}">${m.msg_type === 'directive' ? '🎯 ' : ''}${stMeta.label}</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full border font-bold ${cat.cls}">${cat.label} (${cat.ar})</span>
+                    ${m.priority !== 'normal' ? `<span class="text-[10px] px-2 py-0.5 rounded-full font-extrabold ${prMeta.cls}">${prMeta.label}</span>` : ''}
+                </div>
+            </div>
+            <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                <div class="flex flex-wrap items-center gap-1.5">
+                    <span>From: <strong class="text-[#003d58]">${esc(m.sender_username)}</strong> (${esc(m.sender_name_en)})</span>
+                    <span class="text-slate-300">|</span>
+                    <span>To: ${recHtml}</span>
+                </div>
+                <div class="text-[11px] font-mono text-slate-500">
+                    ${fmtDt(m.created_at)}
+                    ${m.due_date ? ` · <span class="${overdue ? 'text-rose-600 font-bold' : ''}">Due: ${m.due_date}</span>` : ''}
+                </div>
+            </div>
+        `;
+
+        // Directive Action Bar
+        const dirBar = document.getElementById('detail-directive-bar');
+        if (m.msg_type === 'directive') {
+            dirBar.classList.remove('hidden');
+            dirBar.innerHTML = `
+                <div class="p-3 rounded-xl bg-[#003d58]/5 border border-[#003d58]/15 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div class="font-bold text-[#003d58]">
+                        🎯 Action Directive Controls
+                        ${m.completed_by ? `<span class="ml-2 text-[11px] font-normal text-emerald-700">Completed by <strong>${esc(m.completed_by)}</strong> (${fmtDt(m.completed_at)})</span>` : ''}
+                    </div>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        ${m.status !== 'in_progress' && m.status !== 'done' ? `<button type="button" onclick="updateDirectiveStatus('in_progress')" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold transition">▶ In Progress</button>` : ''}
+                        ${m.status !== 'done' ? `<button type="button" onclick="promptMarkDone()" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition">✅ Mark Done</button>` : ''}
+                        ${m.status === 'done' || m.status === 'cancelled' ? `<button type="button" onclick="updateDirectiveStatus('new')" class="px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-700 text-white font-bold transition">↺ Reopen</button>` : ''}
+                    </div>
+                </div>`;
+        } else {
+            dirBar.classList.add('hidden');
+        }
+
+        // Snapshot Card
+        const snapBox = document.getElementById('detail-snapshot-card');
+        if (currentThreadSnapshot) {
+            snapBox.classList.remove('hidden');
+            snapBox.innerHTML = renderSnapshotCardHtml(currentThreadSnapshot, false);
+        } else {
+            snapBox.classList.add('hidden');
+        }
+
+        document.getElementById('detail-body-card').textContent = m.body;
+
+        // Replies
+        const repBox = document.getElementById('detail-replies');
+        repBox.innerHTML = (data.replies || []).map(r => {
+            if (r.is_system_event) {
+                return `<div class="flex items-center gap-2 text-[11px] text-slate-500 py-1">
+                    <div class="flex-1 h-px bg-slate-200"></div>
+                    <span class="px-2.5 py-0.5 rounded-full bg-slate-100 border border-slate-200 font-semibold">${esc(r.sender_username)}: ${esc(r.body)} · ${fmtDt(r.created_at)}</span>
+                    <div class="flex-1 h-px bg-slate-200"></div>
+                </div>`;
+            }
+            const mine = r.sender_user_id === data.current_user_id;
+            return `<div class="p-3.5 rounded-xl border ${mine ? 'bg-[#003d58]/5 border-[#003d58]/20 ml-6' : 'bg-white border-slate-200 mr-6'}">
+                <div class="flex items-center justify-between text-[11px] mb-1">
+                    <span class="font-bold text-[#003d58]">${esc(r.sender_username)} <span class="font-normal text-slate-500">(${esc(r.sender_name_en)})</span></span>
+                    <span class="font-mono text-slate-400">${fmtDt(r.created_at)}</span>
+                </div>
+                <div class="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">${esc(r.body)}</div>
+            </div>`;
+        }).join('');
+
+        loadMessages(currentPage);
+        if (window.refreshErpNotifications) window.refreshErpNotifications();
+    }
+
+    async function toggleLiveSnapshot() {
+        if (!currentThreadSnapshot) return;
+        const snapBox = document.getElementById('detail-snapshot-card');
+        if (showingLiveSnapshot) {
+            showingLiveSnapshot = false;
+            snapBox.innerHTML = renderSnapshotCardHtml(currentThreadSnapshot, false);
+            return;
+        }
+        const res = await fetch(`/api/messages/donor-snapshot?entity_type=${encodeURIComponent(currentThreadSnapshot.entity_type)}&entity_id=${currentThreadSnapshot.entity_id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        showingLiveSnapshot = true;
+        snapBox.innerHTML = renderSnapshotCardHtml(data.snapshot, true);
+    }
+
+    async function sendReply() {
+        if (!activeMessageId) return;
+        const inp = document.getElementById('reply-input');
+        const body = inp.value.trim();
+        if (!body) return;
+        const btn = document.getElementById('btn-send-reply');
+        btn.disabled = true;
+        try {
+            const res = await fetch(`/api/messages/${activeMessageId}/reply`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ body })
+            });
+            if (res.ok) {
+                inp.value = '';
+                await openThread(activeMessageId);
+            }
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function promptMarkDone() {
+        const note = prompt('Optional completion summary / result note (ملخص نتيجة التنفيذ):', '');
+        if (note === null) return;
+        updateDirectiveStatus('done', note);
+    }
+
+    async function updateDirectiveStatus(status, note = '') {
+        if (!activeMessageId) return;
+        const res = await fetch(`/api/messages/${activeMessageId}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status, note })
+        });
+        if (res.ok) {
+            await openThread(activeMessageId);
+        }
+    }
+
+    // === COMPOSE MODAL ===
+    function openComposeModal(type = 'directive', prefill = null) {
+        selectedRecipientIds.clear();
+        composeEntityType = '';
+        composeEntityId = null;
+        composeSnapshot = null;
+        showAllRecipients = false;
+        userEditedSubject = Boolean(prefill?.subject);
+        userEditedBody = Boolean(prefill?.body);
+        savedEntityByType = { so: null, cash: null };
+        const hasPrefillEntity = Boolean(prefill?.entityType && prefill?.entityId);
+        composeEntityLocked = hasPrefillEntity;
+
+        document.getElementById('compose-subject').value = prefill?.subject || '';
+        document.getElementById('compose-body').value = prefill?.body || '';
+        document.getElementById('compose-category').value = prefill?.category || (type === 'directive' ? 'delay_followup' : 'general');
+        document.getElementById('compose-priority').value = prefill?.priority || 'normal';
+        document.getElementById('compose-due-date').value = '';
+        document.getElementById('compose-error').classList.add('hidden');
+        document.getElementById('btn-apply-tpl').classList.add('hidden');
+        document.getElementById('entity-search-input').value = '';
+        document.getElementById('entity-search-results').classList.add('hidden');
+        document.getElementById('entity-snapshot-preview').classList.add('hidden');
+
+        // When launched from a specific Donor / SO row, lock the linked case cleanly (hide None / Cash Donor buttons)
+        document.getElementById('entity-type-buttons').classList.toggle('hidden', hasPrefillEntity);
+        document.getElementById('ent-btn-unlock').classList.toggle('hidden', !hasPrefillEntity);
+        document.getElementById('entity-section-label').textContent = hasPrefillEntity
+            ? (prefill.entityType === 'so' ? '📎 Linked Standing Order Case (Auto-captured Snapshot)' : '📎 Linked Cash Donor Case (Auto-captured Snapshot)')
+            : '📎 Link Donor / Standing Order Case (Optional — Auto-captures Snapshot)';
+
+        setComposeType(type);
+        setEntityType(prefill?.entityType || '');
+        if (hasPrefillEntity) {
+            document.getElementById('entity-search-box').classList.add('hidden');
+        }
+        updateTemplateLangButtons();
+        applyCategoryTemplate(false);
+        renderRecipientChips();
+        document.getElementById('compose-modal').classList.remove('hidden');
+
+        if (hasPrefillEntity) {
+            selectDonorForCompose(prefill.entityType, prefill.entityId);
+        }
+    }
+
+    function unlockComposeEntity() {
+        composeEntityLocked = false;
+        document.getElementById('entity-type-buttons').classList.remove('hidden');
+        document.getElementById('ent-btn-unlock').classList.add('hidden');
+        document.getElementById('entity-section-label').textContent = '📎 Link Donor / Standing Order Case (Optional — Auto-captures Snapshot)';
+        document.getElementById('entity-search-box').classList.toggle('hidden', !composeEntityType);
+    }
+
+    function closeComposeModal() {
+        document.getElementById('compose-modal').classList.add('hidden');
+        if (composeReturnTo) {
+            const dest = composeReturnTo;
+            composeReturnTo = '';
+            window.location.href = dest;
+        }
+    }
+
+    function setComposeType(t) {
+        composeType = t;
+        const isDir = t === 'directive';
+        document.getElementById('compose-icon').textContent = isDir ? '🎯' : '✉️';
+        document.getElementById('compose-title').textContent = isDir ? 'New Action Directive (توجيه لموظف)' : 'New Internal Message (مراسلة داخلية)';
+        document.getElementById('type-btn-message').className = 'py-2 rounded-lg font-bold transition ' + (!isDir ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:bg-white');
+        document.getElementById('type-btn-directive').className = 'py-2 rounded-lg font-bold transition ' + (isDir ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:bg-white');
+        document.getElementById('compose-due-wrap').classList.toggle('opacity-50', !isDir);
+    }
+
+    function setEntityType(et) {
+        composeEntityType = et;
+        document.getElementById('entity-search-results').classList.add('hidden');
+        document.getElementById('entity-search-box').classList.toggle('hidden', !et || composeEntityLocked);
+        ['', 'so', 'cash'].forEach(k => {
+            const btn = document.getElementById('ent-btn-' + (k || 'none'));
+            const active = k === et;
+            btn.className = 'ent-btn px-2.5 py-1 rounded-lg font-bold border text-[11px] transition ' +
+                (active ? 'bg-[#003d58] text-white border-[#003d58]' : 'bg-white text-slate-600 border-slate-300 hover:border-[#d29535]');
+        });
+
+        // Restore previously selected donor & snapshot for this type if any (so switching tabs never loses it)
+        const prev = document.getElementById('entity-snapshot-preview');
+        const saved = (et && savedEntityByType[et]) ? savedEntityByType[et] : null;
+        if (saved) {
+            composeEntityId = saved.id;
+            composeSnapshot = saved.snapshot;
+            document.getElementById('entity-search-input').value = saved.label || '';
+            prev.classList.remove('hidden');
+            prev.innerHTML = renderSnapshotCardHtml(composeSnapshot, false, true);
+        } else {
+            composeEntityId = null;
+            composeSnapshot = null;
+            document.getElementById('entity-search-input').value = '';
+            prev.classList.add('hidden');
+        }
+        renderRecipientChips();
+    }
+
+    function debouncedDonorLookup() {
+        clearTimeout(lookupTimer);
+        lookupTimer = setTimeout(runDonorLookup, 220);
+    }
+
+    async function runDonorLookup() {
+        const q = document.getElementById('entity-search-input').value.trim();
+        const box = document.getElementById('entity-search-results');
+        if (!q || !composeEntityType) { box.classList.add('hidden'); return; }
+        const res = await fetch(`/api/messages/donor-lookup?entity_type=${composeEntityType}&q=${encodeURIComponent(q)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.items.length) {
+            box.innerHTML = `<div class="p-3 text-center text-slate-400">No matching donors found.</div>`;
+        } else {
+            box.innerHTML = data.items.map(it => `
+                <button type="button" onclick="selectDonorForCompose('${composeEntityType}', ${it.id})"
+                    class="w-full text-left px-3 py-2 hover:bg-[#fffaea] flex items-center justify-between gap-2">
+                    <span class="font-bold text-[#003d58]">#${it.id} — ${esc(it.name_en)} ${it.name_ar && it.name_ar !== it.name_en ? `<span class="font-normal text-slate-500">(${esc(it.name_ar)})</span>` : ''}</span>
+                    <span class="font-mono text-[10px] text-slate-500">${esc(it.mobile || '')}</span>
+                </button>
+            `).join('');
+        }
+        box.classList.remove('hidden');
+    }
+
+    async function selectDonorForCompose(et, id) {
+        composeEntityType = et;
+        composeEntityId = id;
+        document.getElementById('entity-search-results').classList.add('hidden');
+        const res = await fetch(`/api/messages/donor-snapshot?entity_type=${et}&entity_id=${id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        composeSnapshot = data.snapshot;
+        savedEntityByType[et] = { id, label: data.entity_label, snapshot: data.snapshot };
+        document.getElementById('entity-search-input').value = data.entity_label;
+        const prev = document.getElementById('entity-snapshot-preview');
+        prev.classList.remove('hidden');
+        prev.innerHTML = renderSnapshotCardHtml(composeSnapshot, false, true);
+        applyCategoryTemplate(false);
+    }
+
+    async function submitCompose() {
+        const errBox = document.getElementById('compose-error');
+        errBox.classList.add('hidden');
+        const subject = document.getElementById('compose-subject').value.trim();
+        const body = document.getElementById('compose-body').value.trim();
+        const recipients = Array.from(selectedRecipientIds);
+        if (!recipients.length) { errBox.textContent = 'Please select at least one recipient.'; errBox.classList.remove('hidden'); return; }
+        if (!subject) { errBox.textContent = 'Subject is required.'; errBox.classList.remove('hidden'); return; }
+        if (!body) { errBox.textContent = 'Message body is required.'; errBox.classList.remove('hidden'); return; }
+
+        const btn = document.getElementById('btn-submit-compose');
+        btn.disabled = true;
+        try {
+            const res = await fetch('/api/messages/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    msg_type: composeType,
+                    category: document.getElementById('compose-category').value,
+                    priority: document.getElementById('compose-priority').value,
+                    due_date: document.getElementById('compose-due-date').value || null,
+                    subject,
+                    body,
+                    recipient_user_ids: recipients,
+                    entity_type: composeEntityId ? composeEntityType : null,
+                    entity_id: composeEntityId || null,
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                errBox.textContent = data.detail || 'Failed to send message.';
+                errBox.classList.remove('hidden');
+                return;
+            }
+            if (composeReturnTo) {
+                const dest = composeReturnTo;
+                composeReturnTo = '';
+                const sep = dest.includes('?') ? '&' : '?';
+                window.location.href = dest + sep + 'directive_sent=1';
+                return;
+            }
+            closeComposeModal();
+            switchFolder(composeType === 'directive' ? 'assigned' : 'sent');
+            await openThread(data.message_id);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // Init
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadUsers();
+        const qs = new URLSearchParams(window.location.search);
+        const startFolder = qs.get('folder') || 'inbox';
+        switchFolder(startFolder);
+        if (qs.get('id')) {
+            await openThread(Number(qs.get('id')));
+        }
+        if (qs.get('compose') === '1') {
+            const rt = (qs.get('return_to') || '').trim();
+            composeReturnTo = (rt.startsWith('/') && !rt.startsWith('//')) ? rt : '';
+            openComposeModal(qs.get('type') || 'directive', {
+                entityType: qs.get('entity_type') || '',
+                entityId: qs.get('entity_id') ? Number(qs.get('entity_id')) : null,
+                category: qs.get('category') || 'delay_followup',
+            });
+        }
+    });
+</script>
+</body>
+</html>

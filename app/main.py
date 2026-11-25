@@ -81,7 +81,7 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
-DEFAULT_PAGE_KEYS = ("about", "donors", "audit", "reconcile", "followup", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "cash_followup", "cash_reports", "users", "system_settings")
+DEFAULT_PAGE_KEYS = ("about", "messages", "donors", "audit", "reconcile", "followup", "so_delayed", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "cash_followup", "cash_reports", "users", "system_settings")
 
 def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_keys: tuple = DEFAULT_PAGE_KEYS) -> dict:
     if isinstance(raw_perms, str):
@@ -119,6 +119,10 @@ def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_k
     }
 
 def resolve_page_key(path: str) -> str:
+    if path.startswith("/messages") or path.startswith("/api/messages"):
+        return "messages"
+    if path.startswith("/api/notifications"):
+        return "about"
     if path.startswith("/settings") or path.startswith("/api/settings"):
         return "system_settings"
     if path.startswith("/users") or path.startswith("/api/users"):
@@ -149,6 +153,8 @@ def resolve_page_key(path: str) -> str:
         return "audit"
     if path.startswith("/bank-reconcile") or path.startswith("/api/bank-reconcile"):
         return "reconcile"
+    if path.startswith("/so-delayed") or path.startswith("/api/so-delayed"):
+        return "so_delayed"
     if path.startswith("/followup") or path.startswith("/api/followup"):
         return "followup"
     if path in ("/", "/api/init-data") or path.startswith("/api/donors") or path.startswith("/api/standing-orders"):
@@ -228,6 +234,7 @@ async def auth_and_rbac_middleware(request: Request, call_next):
 
 class DonorSaveSchema(BaseModel):
     donor_no: Optional[int] = None
+    isNew: Optional[bool] = False
     name_prefix: Optional[int] = 1
     f_nm: Optional[str] = ""
     s_nm: Optional[str] = ""
@@ -272,8 +279,8 @@ class StandingOrderCreateSchema(BaseModel):
     donation_start_date: date
     bank2_cd: int = 1
     donor_acc_no: Optional[str] = ""
-    sort_field: str
-    alt_so_code: Optional[str] = "0"
+    sort_field: Optional[str] = ""
+    alt_so_code: Optional[str] = ""
     through_form: int = 1
     userid: str = "TAREK"
 
@@ -539,13 +546,19 @@ async def get_initial_screen_data(
     }
 
 @app.post("/api/donors/save")
-async def save_donor(payload: DonorSaveSchema, db: AsyncSession = Depends(get_db)):
-    if not payload.donor_name or payload.donor_name.strip() in ("", "جاري التحميل..."):
-        raise HTTPException(status_code=400, detail="لا يمكن حفظ المتبرع بدون اسم صحيح.")
-    existing = await db.execute(text("SELECT status_no FROM donor_master WHERE donor_no = :dno"), {"dno": payload.donor_no})
-    row = existing.first()
+async def save_donor(payload: DonorSaveSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    if not (payload.f_nm or "").strip() or not (payload.s_nm or "").strip() or not (payload.l_nm or "").strip():
+        raise HTTPException(status_code=400, detail="First, Second, and Family/Last Name (AR) are required. / الاسم الأول والثاني والرابع (العائلة) بالعربي إلزامية.")
+    if not payload.donor_name or payload.donor_name.strip() in ("", "جاري التحميل...", "Loading..."):
+        raise HTTPException(status_code=400, detail="Full Donor Name (Arabic) is required. / الاسم الكامل بالعربي إلزامي.")
+    if not payload.donor_ename or not payload.donor_ename.strip():
+        raise HTTPException(status_code=400, detail="Full Donor Name (English) is required. / الاسم الكامل بالإنجليزي إلزامي.")
 
     data = payload.model_dump()
+    is_new_flag = bool(data.pop("isNew", False))
+    sess_user = (request.state.user or {}).get("username")
+    if sess_user:
+        data["user_id"] = sess_user
     data["name_prefix"] = int(data["name_prefix"] or 1)
     data["gen_cd"] = int(data["gen_cd"] or 1)
     data["lang_cd"] = int(data["lang_cd"] or 1)
@@ -555,10 +568,15 @@ async def save_donor(payload: DonorSaveSchema, db: AsyncSession = Depends(get_db
     data["acc_type_no"] = int(data["acc_type_no"] or 1)
     data["status_no"] = int(data["status_no"] or 1)
 
+    row = None
+    if not is_new_flag and data.get("donor_no"):
+        existing = await db.execute(text("SELECT status_no FROM donor_master WHERE donor_no = :dno"), {"dno": data["donor_no"]})
+        row = existing.first()
+
     if row is None:
-        if not data["donor_no"]:
-            max_res = await db.execute(text("SELECT COALESCE(MAX(donor_no), 0) + 1 FROM donor_master"))
-            data["donor_no"] = max_res.scalar()
+        # Always auto-generate donor_no on server for new records to prevent collisions
+        max_res = await db.execute(text("SELECT COALESCE(MAX(donor_no), 0) + 1 FROM donor_master"))
+        data["donor_no"] = int(max_res.scalar() or 1)
 
         insert_sql = text("""
             INSERT INTO donor_master (
@@ -603,19 +621,72 @@ async def save_donor(payload: DonorSaveSchema, db: AsyncSession = Depends(get_db
     return {"status": "success", "donor_no": data["donor_no"]}
 
 @app.post("/api/standing-orders/add")
-async def add_standing_order(payload: StandingOrderCreateSchema, db: AsyncSession = Depends(get_db)):
+async def add_standing_order(payload: StandingOrderCreateSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    if not payload.monthly_pay or float(payload.monthly_pay) <= 0:
+        raise HTTPException(status_code=400, detail="Monthly Amount (BHD) must be greater than 0. / قيمة الاستقطاع الشهري يجب أن تكون أكبر من صفر.")
+    if not payload.bank2_cd:
+        raise HTTPException(status_code=400, detail="Bank is required. / البنك إلزامي.")
+
+    sf_clean = (payload.sort_field or "").strip()
+    alt_clean = (payload.alt_so_code or "").strip()
+    sf_valid = sf_clean if sf_clean and sf_clean != "0" else ""
+    alt_valid = alt_clean if alt_clean and alt_clean != "0" else ""
+
+    if not sf_valid and not alt_valid:
+        raise HTTPException(
+            status_code=400,
+            detail="Either Bank SO Code or Alt. SO Code is required (both cannot be empty or 0). / يجب إدخال كود الاستقطاع أو الكود البديل على الأقل."
+        )
+
+    # Application-level duplicate check within the same bank (NO DB constraint added so legacy data stays intact)
+    codes_to_check = list({c.upper() for c in (sf_valid, alt_valid) if c})
+    dup_res = await db.execute(text("""
+        SELECT i.so_id, i.donor_no,
+               COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, '') AS donor_name,
+               COALESCE(i.sort_field, '') AS sort_field,
+               COALESCE(i.alt_so_code, '') AS alt_so_code
+        FROM donor_item i
+        LEFT JOIN donor_master d ON d.donor_no = i.donor_no
+        WHERE i.bank2_cd = :bcd
+          AND (
+              (NULLIF(TRIM(i.sort_field), '') IS NOT NULL AND TRIM(i.sort_field) <> '0' AND UPPER(TRIM(i.sort_field)) = ANY(:codes))
+              OR
+              (NULLIF(TRIM(i.alt_so_code), '') IS NOT NULL AND TRIM(i.alt_so_code) <> '0' AND UPPER(TRIM(i.alt_so_code)) = ANY(:codes))
+          )
+        LIMIT 1
+    """), {"bcd": int(payload.bank2_cd), "codes": codes_to_check})
+    dup = dup_res.first()
+    if dup:
+        dm = dup._mapping
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Duplicate SO code in this bank! Code [{', '.join(codes_to_check)}] is already used by "
+                f"SO #{dm['so_id']} (Donor #{dm['donor_no']} — {dm['donor_name']}). "
+                f"/ كود مكرر في نفس البنك! مستخدم بالفعل في الاستقطاع #{dm['so_id']} للمتبرع #{dm['donor_no']}."
+            )
+        )
+
+    sess_user = (request.state.user or {}).get("username") or payload.userid or "TAREK"
+    so_data = payload.model_dump()
+    so_data["item_no"] = str(payload.item_no or "1").strip()
+    so_data["item_no2"] = int(so_data["item_no"]) if so_data["item_no"].isdigit() else 1
+    so_data["sort_field"] = sf_valid or "0"
+    so_data["alt_so_code"] = alt_valid or "0"
+    so_data["userid"] = sess_user
+
     insert_so = text("""
         INSERT INTO donor_item (
             donor_no, item_no, item_no2, donation_start_date, monthly_pay,
             bank2_cd, donor_acc_no, sort_field, alt_so_code, through_form,
             status_no, userid, append_date
         ) VALUES (
-            :donor_no, :item_no, CAST(:item_no AS SMALLINT), :donation_start_date, :monthly_pay,
+            :donor_no, :item_no, :item_no2, :donation_start_date, :monthly_pay,
             :bank2_cd, :donor_acc_no, :sort_field, :alt_so_code, :through_form,
             1, :userid, CURRENT_DATE
         ) RETURNING so_id
     """)
-    res = await db.execute(insert_so, payload.model_dump())
+    res = await db.execute(insert_so, so_data)
     new_so_id = res.scalar()
 
     retro_sql = text("""
@@ -642,8 +713,8 @@ async def add_standing_order(payload: StandingOrderCreateSchema, db: AsyncSessio
         "start_date": payload.donation_start_date,
         "monthly_pay": payload.monthly_pay,
         "bank2_cd": payload.bank2_cd,
-        "sort_field": payload.sort_field,
-        "alt_so_code": payload.alt_so_code or "0"
+        "sort_field": so_data["sort_field"],
+        "alt_so_code": so_data["alt_so_code"]
     })
 
     await db.commit()
@@ -1309,8 +1380,8 @@ async def _fetch_single_followup_donor(db: AsyncSession, donor_no: Optional[int]
                COALESCE(TO_CHAR(f.append_date, 'YYYY-MM-DD'), '') AS append_date,
                COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_nm,
                COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS result_enm,
-               COALESCE(NULLIF(TRIM(dr.reason_enm), ''), dr.reason_nm, 'Unspecified') AS reason_nm,
-               COALESCE(NULLIF(TRIM(dr.reason_enm), ''), dr.reason_nm, 'Unspecified') AS reason_enm,
+               COALESCE(NULLIF(TRIM(dr.reason_enm), ''), dr.reason_nm, '-') AS reason_nm,
+               COALESCE(NULLIF(TRIM(dr.reason_enm), ''), dr.reason_nm, '-') AS reason_enm,
                CASE f.contact_method
                    WHEN 1 THEN 'Phone Call'
                    WHEN 2 THEN 'SMS / WhatsApp'
@@ -1355,7 +1426,181 @@ async def _fetch_single_followup_donor(db: AsyncSession, donor_no: Optional[int]
     d["followups"] = followups
     d["old_item_followups"] = item_followups
     d["max_delay"] = max((i["delay_months"] for i in items), default=0)
+
+    # Compute Per-SO Composite Risk Score (0-100) using dynamic so_risk_config & sort SOs internally
+    so_cfg = await _fetch_so_risk_config(db)
+    paid_map_res = await db.execute(text("""
+        SELECT di.so_id, COALESCE(lp.paid_count, 0) AS paid_count
+        FROM donor_item di
+        LEFT JOIN so_payment_summary lp ON lp.so_id = di.so_id
+        WHERE di.donor_no = :dno
+    """), {"dno": int(donor_no)})
+    paid_map = {int(r.so_id): int(r.paid_count or 0) for r in paid_map_res.fetchall()}
+
+    donor_fu_dates = [f["call_date"] for f in followups if f.get("call_date")]
+    so_fu_map: dict[int, str] = {}
+    for f in item_followups:
+        sid = f.get("so_id")
+        cd = f.get("call_date")
+        if sid and cd and (sid not in so_fu_map or cd > so_fu_map[sid]):
+            so_fu_map[sid] = cd
+    latest_donor_fu = max(donor_fu_dates) if donor_fu_dates else None
+
+    for it in items:
+        sid = int(it["so_id"])
+        p_cnt = paid_map.get(sid, 0)
+        so_last_fu = so_fu_map.get(sid) or latest_donor_fu
+        if so_fu_map.get(sid) and latest_donor_fu:
+            so_last_fu = max(so_fu_map[sid], latest_donor_fu)
+        r_info = _compute_so_risk_score(
+            float(it.get("monthly_pay") or 0),
+            int(it.get("delay_months") or 0),
+            p_cnt,
+            so_last_fu,
+            so_cfg,
+        )
+        it["paid_count"] = p_cnt
+        it["risk_score"] = r_info["score"]
+        it["risk_tier"] = r_info["tier"]
+        it["last_followup_date"] = so_last_fu
+
+    # Sort donor's Standing Orders internally by Risk Score DESC, Delay DESC, Monthly Pay DESC
+    items.sort(key=lambda x: (-int(x.get("risk_score") or 0), -int(x.get("delay_months") or 0), -float(x.get("monthly_pay") or 0)))
+
+    active_delayed = [x for x in items if int(x.get("status_no") or 1) == 1 and int(x.get("delay_months") or 0) > 2]
+    all_delayed = [x for x in items if int(x.get("delay_months") or 0) > 2]
+    d["total_delayed_risk_points_active"] = sum(int(x["risk_score"]) for x in active_delayed)
+    d["total_delayed_risk_points_all"] = sum(int(x["risk_score"]) for x in all_delayed)
+    d["delayed_so_count_active"] = len(active_delayed)
+    d["delayed_so_count_all"] = len(all_delayed)
+    d["total_delayed_risk_points"] = d["total_delayed_risk_points_active"] if active_delayed else d["total_delayed_risk_points_all"]
+    top_pool = active_delayed or all_delayed or items
+    top_score = max((int(x["risk_score"]) for x in top_pool), default=0)
+    if top_score >= int(so_cfg.get("tier_critical_min", 75)):
+        top_tier = "Critical"
+    elif top_score >= int(so_cfg.get("tier_high_min", 55)):
+        top_tier = "High"
+    elif top_score >= int(so_cfg.get("tier_medium_min", 35)):
+        top_tier = "Medium"
+    else:
+        top_tier = "Low"
+    d["risk_score"] = top_score
+    d["risk_tier"] = top_tier
+    d["active_monthly_total"] = round(sum(float(i.get("monthly_pay") or 0) for i in items if int(i.get("status_no") or 1) == 1), 3)
+    d["paid_months_total"] = sum(paid_map.values())
+    all_fu_dates = donor_fu_dates + list(so_fu_map.values())
+    d["last_followup_date"] = max(all_fu_dates) if all_fu_dates else None
     return d
+
+
+async def _fetch_so_risk_config(db: AsyncSession) -> dict:
+    defaults = {
+        "weight_monthly": 35,
+        "weight_delay": 30,
+        "weight_loyalty": 20,
+        "weight_followup": 15,
+        "tier_critical_min": 75,
+        "tier_high_min": 55,
+        "tier_medium_min": 35,
+        "followup_stale_days": 60,
+        "updated_by": "SYSTEM",
+        "updated_at": "",
+    }
+    try:
+        res = await db.execute(text("""
+            SELECT weight_monthly, weight_delay, weight_loyalty, weight_followup,
+                   tier_critical_min, tier_high_min, tier_medium_min, followup_stale_days,
+                   COALESCE(updated_by, 'SYSTEM') AS updated_by,
+                   COALESCE(TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI'), '') AS updated_at
+            FROM so_risk_config
+            WHERE config_id = 1
+        """))
+        row = res.first()
+        if row:
+            return dict(row._mapping)
+    except Exception:
+        pass
+    return defaults
+
+
+def _compute_so_risk_score(monthly_val: float, delay_months: int, paid_months: int, last_fu_iso: Optional[str], cfg: dict) -> dict:
+    # 1. Monthly Amount sub-score (0-100)
+    if monthly_val >= 100:
+        s_monthly = 100
+    elif monthly_val >= 50:
+        s_monthly = 85
+    elif monthly_val >= 25:
+        s_monthly = 70
+    elif monthly_val >= 10:
+        s_monthly = 50
+    elif monthly_val >= 5:
+        s_monthly = 35
+    elif monthly_val > 0:
+        s_monthly = 20
+    else:
+        s_monthly = 0
+
+    # 2. Delay Months sub-score (0-100, peak win-back urgency 3-6m)
+    if 3 <= delay_months <= 6:
+        s_delay = 100
+    elif 7 <= delay_months <= 12:
+        s_delay = 85
+    elif 13 <= delay_months <= 24:
+        s_delay = 65
+    elif 1 <= delay_months <= 2:
+        s_delay = 45
+    elif delay_months > 24:
+        s_delay = 35
+    else:
+        s_delay = 0
+
+    # 3. Loyalty / Paid History sub-score (0-100)
+    if paid_months >= 36:
+        s_loyalty = 100
+    elif paid_months >= 18:
+        s_loyalty = 80
+    elif paid_months >= 6:
+        s_loyalty = 60
+    elif paid_months >= 1:
+        s_loyalty = 35
+    else:
+        s_loyalty = 15
+
+    # 4. Follow-up Gap sub-score (0-100)
+    stale_days = max(1, int(cfg.get("followup_stale_days", 60)))
+    if not last_fu_iso:
+        s_followup = 100
+    else:
+        try:
+            d_last = date.fromisoformat(last_fu_iso[:10])
+            days_gap = (date.today() - d_last).days
+        except Exception:
+            days_gap = stale_days
+        if days_gap >= stale_days:
+            s_followup = 85
+        elif days_gap >= stale_days // 2:
+            s_followup = 45
+        else:
+            s_followup = 10
+
+    score = int(round((
+        int(cfg.get("weight_monthly", 35)) * s_monthly +
+        int(cfg.get("weight_delay", 30)) * s_delay +
+        int(cfg.get("weight_loyalty", 20)) * s_loyalty +
+        int(cfg.get("weight_followup", 15)) * s_followup
+    ) / 100.0))
+    score = max(0, min(100, score))
+
+    if score >= int(cfg.get("tier_critical_min", 75)):
+        tier = "Critical"
+    elif score >= int(cfg.get("tier_high_min", 55)):
+        tier = "High"
+    elif score >= int(cfg.get("tier_medium_min", 35)):
+        tier = "Medium"
+    else:
+        tier = "Low"
+
+    return {"score": score, "tier": tier}
 
 @app.get("/api/followup/record")
 async def get_single_followup_record_api(donor_no: int, db: AsyncSession = Depends(get_db)):
@@ -1372,9 +1617,13 @@ async def get_followup_screen_data(
     filter_mode: str = "ALL",
     search_q: str = "",
     donor_no: Optional[int] = None,
+    sort_by: str = "risk",
+    so_scope: str = "active",
+    risk_tier: str = "",
     include_lookups: bool = True,
     db: AsyncSession = Depends(get_db)
 ):
+    so_cfg = await _fetch_so_risk_config(db)
     follow_results = []
     delay_reasons = []
     towns_map = {}
@@ -1404,10 +1653,29 @@ async def get_followup_screen_data(
         """))
         towns_map = {str(r.block_cd): r.town_enm for r in towns_res}
 
-    delay_cte = """
-        WITH donor_delays AS (
-            SELECT i.donor_no,
-                   MAX(GREATEST(0, (
+    scope = (so_scope or "active").strip().lower()
+    if scope not in ("active", "all"):
+        scope = "active"
+    scope_cond = "i.status_no = 1" if scope == "active" else "TRUE"
+
+    so_score_cte = f"""
+        WITH donor_fu AS (
+            SELECT donor_no, MAX(call_date) AS d_last_call
+            FROM donor_followup
+            GROUP BY donor_no
+        ),
+        so_fu AS (
+            SELECT so_id, MAX(call_date) AS so_last_call
+            FROM donor_item_followup
+            GROUP BY so_id
+        ),
+        so_base AS (
+            SELECT i.so_id,
+                   i.donor_no,
+                   i.status_no,
+                   COALESCE(i.monthly_pay, 0) AS monthly_pay,
+                   COALESCE(lp.paid_count, 0) AS paid_count,
+                   GREATEST(0, (
                        EXTRACT(YEAR FROM AGE(
                            DATE_TRUNC('month', CASE WHEN i.status_no = 2 AND i.deactive_date IS NOT NULL THEN i.deactive_date ELSE CURRENT_DATE END),
                            DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))
@@ -1416,22 +1684,76 @@ async def get_followup_screen_data(
                            DATE_TRUNC('month', CASE WHEN i.status_no = 2 AND i.deactive_date IS NOT NULL THEN i.deactive_date ELSE CURRENT_DATE END),
                            DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))
                        ))
-                   )::int)) AS max_delay
+                   )::int) AS delay_months,
+                   GREATEST(sf.so_last_call, df.d_last_call) AS last_call_date,
+                   ({scope_cond}) AS in_scope
             FROM donor_item i
             LEFT JOIN so_payment_summary lp ON i.so_id = lp.so_id
-            GROUP BY i.donor_no
+            LEFT JOIN so_fu sf ON sf.so_id = i.so_id
+            LEFT JOIN donor_fu df ON df.donor_no = i.donor_no
+        ),
+        so_scored AS (
+            SELECT sb.*,
+                   ROUND((
+                       :wm * (CASE
+                           WHEN sb.monthly_pay >= 100 THEN 100
+                           WHEN sb.monthly_pay >= 50  THEN 85
+                           WHEN sb.monthly_pay >= 25  THEN 70
+                           WHEN sb.monthly_pay >= 10  THEN 50
+                           WHEN sb.monthly_pay >= 5   THEN 35
+                           WHEN sb.monthly_pay > 0    THEN 20
+                           ELSE 0 END)
+                       + :wd * (CASE
+                           WHEN sb.delay_months BETWEEN 3 AND 6   THEN 100
+                           WHEN sb.delay_months BETWEEN 7 AND 12  THEN 85
+                           WHEN sb.delay_months BETWEEN 13 AND 24 THEN 65
+                           WHEN sb.delay_months BETWEEN 1 AND 2   THEN 45
+                           WHEN sb.delay_months > 24              THEN 35
+                           ELSE 0 END)
+                       + :wl * (CASE
+                           WHEN sb.paid_count >= 36 THEN 100
+                           WHEN sb.paid_count >= 18 THEN 80
+                           WHEN sb.paid_count >= 6  THEN 60
+                           WHEN sb.paid_count >= 1  THEN 35
+                           ELSE 15 END)
+                       + :wf * (CASE
+                           WHEN sb.last_call_date IS NULL THEN 100
+                           WHEN (CURRENT_DATE - sb.last_call_date) >= :stale THEN 85
+                           WHEN (CURRENT_DATE - sb.last_call_date) >= :half_stale THEN 45
+                           ELSE 10 END)
+                   ) / 100.0)::int AS so_risk
+            FROM so_base sb
+        ),
+        donor_delays AS (
+            SELECT donor_no,
+                   COALESCE(MAX(delay_months) FILTER (WHERE in_scope), 0) AS max_delay,
+                   COUNT(*) FILTER (WHERE in_scope AND delay_months > 2) AS delayed_so_cnt,
+                   COALESCE(SUM(so_risk) FILTER (WHERE in_scope AND delay_months > 2), 0) AS total_delayed_risk_pts,
+                   COALESCE(MAX(so_risk) FILTER (WHERE in_scope AND delay_months > 2), MAX(so_risk), 0) AS top_so_risk,
+                   COALESCE(SUM(monthly_pay) FILTER (WHERE in_scope AND delay_months > 2), 0) AS delayed_monthly_val
+            FROM so_scored
+            GROUP BY donor_no
         )
     """
 
+    base_params: dict[str, Any] = {
+        "wm": int(so_cfg["weight_monthly"]),
+        "wd": int(so_cfg["weight_delay"]),
+        "wl": int(so_cfg["weight_loyalty"]),
+        "wf": int(so_cfg["weight_followup"]),
+        "stale": int(so_cfg["followup_stale_days"]),
+        "half_stale": max(1, int(so_cfg["followup_stale_days"]) // 2),
+    }
+
     counts_res = await db.execute(text(f"""
-        {delay_cte}
+        {so_score_cte}
         SELECT
             COUNT(*) AS total_all,
-            COUNT(*) FILTER (WHERE COALESCE(dd.max_delay, 0) > 2) AS total_delayed,
+            COUNT(*) FILTER (WHERE COALESCE(dd.delayed_so_cnt, 0) > 0) AS total_delayed,
             COUNT(*) FILTER (WHERE COALESCE(d.status_no, 1) = 2) AS total_inactive
         FROM donor_master d
         LEFT JOIN donor_delays dd ON d.donor_no = dd.donor_no
-    """))
+    """), base_params)
     c_row = counts_res.first()
     counts = {
         "ALL": int(c_row.total_all or 0) if c_row else 0,
@@ -1440,12 +1762,25 @@ async def get_followup_screen_data(
     }
 
     where_clauses = ["1=1"]
-    params: dict[str, Any] = {}
+    params = dict(base_params)
     fm = (filter_mode or "ALL").upper()
     if fm == "DELAYED":
-        where_clauses.append("COALESCE(dd.max_delay, 0) > 2")
+        where_clauses.append("COALESCE(dd.delayed_so_cnt, 0) > 0")
     elif fm == "INACTIVE":
         where_clauses.append("COALESCE(d.status_no, 1) = 2")
+
+    rt = (risk_tier or "").strip().lower()
+    t_crit = int(so_cfg["tier_critical_min"])
+    t_high = int(so_cfg["tier_high_min"])
+    t_med = int(so_cfg["tier_medium_min"])
+    if rt == "critical":
+        where_clauses.append(f"COALESCE(dd.top_so_risk, 0) >= {t_crit}")
+    elif rt == "high":
+        where_clauses.append(f"COALESCE(dd.top_so_risk, 0) >= {t_high} AND COALESCE(dd.top_so_risk, 0) < {t_crit}")
+    elif rt == "medium":
+        where_clauses.append(f"COALESCE(dd.top_so_risk, 0) >= {t_med} AND COALESCE(dd.top_so_risk, 0) < {t_high}")
+    elif rt == "low":
+        where_clauses.append(f"COALESCE(dd.top_so_risk, 0) < {t_med}")
 
     q_clean = (search_q or "").strip()
     if q_clean:
@@ -1460,13 +1795,19 @@ async def get_followup_screen_data(
              OR COALESCE(d.donor_mobile, '') ILIKE :q)
         """)
 
+    sb = (sort_by or "risk").strip().lower()
+    if sb == "donor_no":
+        order_sql = "ORDER BY d.donor_no ASC"
+    else:
+        order_sql = "ORDER BY COALESCE(dd.total_delayed_risk_pts, 0) DESC, COALESCE(dd.top_so_risk, 0) DESC, COALESCE(dd.delayed_monthly_val, 0) DESC, d.donor_no ASC"
+
     ids_res = await db.execute(text(f"""
-        {delay_cte}
+        {so_score_cte}
         SELECT d.donor_no
         FROM donor_master d
         LEFT JOIN donor_delays dd ON d.donor_no = dd.donor_no
         WHERE {' AND '.join(where_clauses)}
-        ORDER BY d.donor_no ASC
+        {order_sql}
     """), params)
     donor_nos = [int(r[0]) for r in ids_res.fetchall()]
 
@@ -1481,6 +1822,12 @@ async def get_followup_screen_data(
             current_index = 0
 
     current_donor = await _fetch_single_followup_donor(db, target_dno)
+    if current_donor:
+        current_donor["total_delayed_risk_points"] = (
+            current_donor.get("total_delayed_risk_points_active", 0)
+            if scope == "active"
+            else current_donor.get("total_delayed_risk_points_all", 0)
+        )
 
     return {
         "donors": [current_donor] if current_donor else [],
@@ -1491,7 +1838,11 @@ async def get_followup_screen_data(
         "all_item_followups": current_donor.get("old_item_followups", []) if current_donor else [],
         "follow_results": follow_results,
         "delay_reasons": delay_reasons,
-        "towns_map": towns_map
+        "towns_map": towns_map,
+        "risk_config": so_cfg,
+        "sort_by": sb,
+        "so_scope": scope,
+        "risk_tier": rt,
     }
 
 @app.post("/api/followup/add")
@@ -5860,3 +6211,1332 @@ async def save_cash_risk_config_api(payload: CashRiskConfigSchema, request: Requ
     await db.commit()
     cfg = await _fetch_cash_risk_config(db)
     return {"status": "success", "message": "Risk scoring rule saved! Applied immediately to Cash Reports & Follow-up.", "config": cfg}
+
+
+class SoRiskConfigSchema(BaseModel):
+    weight_monthly: int
+    weight_delay: int
+    weight_loyalty: int
+    weight_followup: int
+    tier_critical_min: int
+    tier_high_min: int
+    tier_medium_min: int
+    followup_stale_days: int
+
+
+@app.get("/api/settings/so-risk-config")
+async def get_so_risk_config_api(db: AsyncSession = Depends(get_db)):
+    return await _fetch_so_risk_config(db)
+
+
+@app.post("/api/settings/so-risk-config")
+async def save_so_risk_config_api(payload: SoRiskConfigSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    total_w = payload.weight_monthly + payload.weight_delay + payload.weight_loyalty + payload.weight_followup
+    if total_w != 100:
+        raise HTTPException(status_code=400, detail=f"The 4 weights must sum to exactly 100 (currently {total_w}).")
+    if not (1 <= payload.tier_medium_min < payload.tier_high_min < payload.tier_critical_min <= 100):
+        raise HTTPException(status_code=400, detail="Thresholds must satisfy: 1 <= Medium < High < Critical <= 100.")
+    if not (1 <= payload.followup_stale_days <= 365):
+        raise HTTPException(status_code=400, detail="Follow-up stale days must be between 1 and 365.")
+
+    uname = (request.state.user or {}).get("username") or "ADMIN"
+    await db.execute(text("""
+        INSERT INTO so_risk_config (
+            config_id, weight_monthly, weight_delay, weight_loyalty, weight_followup,
+            tier_critical_min, tier_high_min, tier_medium_min, followup_stale_days,
+            updated_by, updated_at
+        ) VALUES (
+            1, :wm, :wd, :wl, :wf, :tc, :th, :tm, :sd, :uby, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (config_id) DO UPDATE SET
+            weight_monthly = EXCLUDED.weight_monthly,
+            weight_delay = EXCLUDED.weight_delay,
+            weight_loyalty = EXCLUDED.weight_loyalty,
+            weight_followup = EXCLUDED.weight_followup,
+            tier_critical_min = EXCLUDED.tier_critical_min,
+            tier_high_min = EXCLUDED.tier_high_min,
+            tier_medium_min = EXCLUDED.tier_medium_min,
+            followup_stale_days = EXCLUDED.followup_stale_days,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = CURRENT_TIMESTAMP
+    """), {
+        "wm": payload.weight_monthly,
+        "wd": payload.weight_delay,
+        "wl": payload.weight_loyalty,
+        "wf": payload.weight_followup,
+        "tc": payload.tier_critical_min,
+        "th": payload.tier_high_min,
+        "tm": payload.tier_medium_min,
+        "sd": payload.followup_stale_days,
+        "uby": uname
+    })
+    await db.commit()
+    cfg = await _fetch_so_risk_config(db)
+    return {"status": "success", "message": "Standing Orders Risk Rule saved! Applied immediately to SO Follow-up ranking.", "config": cfg}
+
+
+# =================================================================================
+# INTERNAL MESSAGING, ACTION DIRECTIVES & SMART NOTIFICATIONS (/messages)
+# =================================================================================
+
+class MessageSendSchema(BaseModel):
+    msg_type: str = "message"              # 'message' | 'directive'
+    category: str = "general"              # 'delay_followup' | 'thank_you' | 'check_in' | 'data_update' | 'general'
+    priority: str = "normal"               # 'normal' | 'high' | 'urgent'
+    subject: str
+    body: str
+    recipient_user_ids: list[int]
+    entity_type: Optional[str] = None      # 'so' | 'cash' | None
+    entity_id: Optional[int] = None
+    due_date: Optional[date] = None
+
+    @field_validator("due_date", mode="before")
+    @classmethod
+    def clean_due_date(cls, v: Any):
+        if v == "" or v is None:
+            return None
+        return v
+
+    @field_validator("entity_type", mode="before")
+    @classmethod
+    def clean_entity_type(cls, v: Any):
+        if v == "" or v is None:
+            return None
+        return str(v).strip().lower()
+
+    @field_validator("entity_id", mode="before")
+    @classmethod
+    def clean_entity_id(cls, v: Any):
+        if v == "" or v is None:
+            return None
+        return int(v)
+
+
+class MessageReplySchema(BaseModel):
+    body: str
+
+
+class DirectiveStatusSchema(BaseModel):
+    status: str                            # 'new' | 'in_progress' | 'done' | 'cancelled'
+    note: Optional[str] = ""
+
+
+async def _get_current_db_user(request: Request, db: AsyncSession) -> dict:
+    sess = request.state.user or {}
+    uid = sess.get("user_id")
+    uname = (sess.get("username") or "").strip()
+    if uid:
+        res = await db.execute(text(
+            "SELECT user_id, username, full_name_en, full_name_ar FROM sys_users WHERE user_id = :uid"
+        ), {"uid": int(uid)})
+        row = res.first()
+        if row:
+            return dict(row._mapping)
+    if uname:
+        res = await db.execute(text(
+            "SELECT user_id, username, full_name_en, full_name_ar FROM sys_users WHERE UPPER(username) = UPPER(:u) LIMIT 1"
+        ), {"u": uname})
+        row = res.first()
+        if row:
+            return dict(row._mapping)
+    raise HTTPException(status_code=401, detail="Authenticated user not found.")
+
+
+async def _build_entity_snapshot(db: AsyncSession, entity_type: Optional[str], entity_id: Optional[int]) -> tuple[Optional[str], Optional[dict]]:
+    if not entity_type or not entity_id:
+        return None, None
+    et = entity_type.strip().lower()
+    eid = int(entity_id)
+
+    if et == "so":
+        res = await db.execute(text("""
+            WITH so_agg AS (
+                SELECT donor_no,
+                       COUNT(*) FILTER (WHERE status_no = 1) AS active_so_count,
+                       COUNT(*) AS total_so_count,
+                       COALESCE(SUM(monthly_pay) FILTER (WHERE status_no = 1), 0) AS active_monthly_total,
+                       STRING_AGG(DISTINCT COALESCE(NULLIF(TRIM(b.bank_e_desc), ''), b.bank_desc, ''), ', ')
+                           FILTER (WHERE di.status_no = 1) AS active_banks
+                FROM donor_item di
+                LEFT JOIN lkp_banks b ON b.bank_cd = di.bank2_cd
+                WHERE di.donor_no = :eid
+                GROUP BY donor_no
+            ),
+            tx_agg AS (
+                SELECT donor_no,
+                       MAX(month_year) FILTER (WHERE status_no = 1) AS last_paid_month,
+                       COUNT(*) FILTER (WHERE status_no = 1) AS paid_count,
+                       COALESCE(SUM(paid_sum) FILTER (WHERE status_no = 1), 0) AS total_paid
+                FROM money_trans
+                WHERE donor_no = :eid
+                GROUP BY donor_no
+            ),
+            fu_last AS (
+                SELECT f.donor_no, f.call_date, f.call_by, f.call_result_notes, f.next_followup_date,
+                       COALESCE(r.result_enm, r.result_nm, '') AS result_label,
+                       COALESCE(dr.reason_enm, dr.reason_nm, '') AS reason_label
+                FROM donor_followup f
+                LEFT JOIN lkp_follow_results r ON r.result_cd = f.call_result_cd
+                LEFT JOIN lkp_delay_reasons dr ON dr.reason_cd = f.delay_reason_cd
+                WHERE f.donor_no = :eid
+                ORDER BY f.call_date DESC, f.trans_id DESC
+                LIMIT 1
+            )
+            SELECT d.donor_no,
+                   COALESCE(d.donor_name, '') AS donor_name,
+                   COALESCE(d.donor_ename, '') AS donor_ename,
+                   COALESCE(NULLIF(TRIM(d.donor_mobile), ''), NULLIF(TRIM(d.donor_tel1), ''), '') AS mobile,
+                   d.status_no,
+                   COALESCE(s.active_so_count, 0) AS active_so_count,
+                   COALESCE(s.total_so_count, 0) AS total_so_count,
+                   COALESCE(s.active_monthly_total, 0) AS active_monthly_total,
+                   COALESCE(s.active_banks, COALESCE(NULLIF(TRIM(mb.bank_e_desc), ''), mb.bank_desc, '')) AS bank_name,
+                   t.last_paid_month,
+                   COALESCE(t.paid_count, 0) AS paid_count,
+                   COALESCE(t.total_paid, 0) AS total_paid,
+                   fl.call_date AS last_fu_date,
+                   fl.call_by AS last_fu_by,
+                   fl.result_label AS last_fu_result,
+                   fl.reason_label AS last_fu_reason,
+                   fl.call_result_notes AS last_fu_notes,
+                   fl.next_followup_date AS next_fu_date
+            FROM donor_master d
+            LEFT JOIN lkp_banks mb ON mb.bank_cd = d.bank2_cd
+            LEFT JOIN so_agg s ON s.donor_no = d.donor_no
+            LEFT JOIN tx_agg t ON t.donor_no = d.donor_no
+            LEFT JOIN fu_last fl ON fl.donor_no = d.donor_no
+            WHERE d.donor_no = :eid
+        """), {"eid": eid})
+        row = res.first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Standing Order Donor #{eid} not found.")
+        m = row._mapping
+        today = date.today()
+        last_paid = m["last_paid_month"]
+        delay_months = None
+        if last_paid:
+            delay_months = max(0, (today.year - last_paid.year) * 12 + (today.month - last_paid.month))
+        display_name = (m["donor_ename"] or m["donor_name"] or f"Donor #{eid}").strip()
+        label = f"SO #{eid} — {display_name}"
+        snap = {
+            "entity_type": "so",
+            "entity_id": eid,
+            "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "donor_name": m["donor_name"],
+            "donor_ename": m["donor_ename"],
+            "display_name": display_name,
+            "mobile": m["mobile"],
+            "status_label": "Active" if m["status_no"] == 1 else "Inactive",
+            "bank_name": m["bank_name"] or "—",
+            "active_so_count": int(m["active_so_count"] or 0),
+            "monthly_total": round(float(m["active_monthly_total"] or 0), 3),
+            "last_paid_month": last_paid.strftime("%Y-%m") if last_paid else None,
+            "delay_months": delay_months,
+            "paid_count": int(m["paid_count"] or 0),
+            "total_paid": round(float(m["total_paid"] or 0), 3),
+            "last_followup_date": m["last_fu_date"].isoformat() if m["last_fu_date"] else None,
+            "last_followup_by": m["last_fu_by"] or None,
+            "last_followup_result": m["last_fu_result"] or None,
+            "last_followup_reason": m["last_fu_reason"] or None,
+            "last_followup_notes": m["last_fu_notes"] or None,
+            "next_followup_date": m["next_fu_date"].isoformat() if m["next_fu_date"] else None,
+            "open_url": f"/?donor_no={eid}",
+            "followup_url": "/followup",
+        }
+        return label, snap
+
+    if et == "cash":
+        res = await db.execute(text("""
+            WITH v_agg AS (
+                SELECT donor_code,
+                       COUNT(*) AS receipt_count,
+                       COALESCE(SUM(trans_val), 0) AS total_donated,
+                       MAX(trans_date) AS last_receipt_date
+                FROM vouch_mstr
+                WHERE donor_code = :eid AND receipt_status = 1
+                GROUP BY donor_code
+            ),
+            fu_last AS (
+                SELECT f.donor_cd, f.call_date, f.call_by, f.call_result_notes, f.next_followup_date,
+                       COALESCE(r.result_enm, r.result_nm, '') AS result_label,
+                       COALESCE(dr.reason_enm, dr.reason_nm, '') AS reason_label
+                FROM cash_donor_followup f
+                LEFT JOIN lkp_follow_results r ON r.result_cd = f.call_result_cd
+                LEFT JOIN lkp_delay_reasons dr ON dr.reason_cd = f.delay_reason_cd
+                WHERE f.donor_cd = :eid
+                ORDER BY f.call_date DESC, f.call_time DESC, f.followup_id DESC
+                LIMIT 1
+            )
+            SELECT cd.donor_cd,
+                   COALESCE(cd.donor_name, '') AS donor_name,
+                   COALESCE(cd.donor_ename, '') AS donor_ename,
+                   COALESCE(NULLIF(TRIM(cd.mobile), ''), NULLIF(TRIM(cd.tel_home), ''), NULLIF(TRIM(cd.tel_office), ''), '') AS mobile,
+                   cd.donor_status,
+                   cd.donor_importancy_lvl,
+                   COALESCE(v.receipt_count, 0) AS receipt_count,
+                   COALESCE(v.total_donated, 0) AS total_donated,
+                   v.last_receipt_date,
+                   fl.call_date AS last_fu_date,
+                   fl.call_by AS last_fu_by,
+                   fl.result_label AS last_fu_result,
+                   fl.reason_label AS last_fu_reason,
+                   fl.call_result_notes AS last_fu_notes,
+                   fl.next_followup_date AS next_fu_date
+            FROM cash_donors cd
+            LEFT JOIN v_agg v ON v.donor_code = cd.donor_cd
+            LEFT JOIN fu_last fl ON fl.donor_cd = cd.donor_cd
+            WHERE cd.donor_cd = :eid
+        """), {"eid": eid})
+        row = res.first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Cash Donor #{eid} not found.")
+        m = row._mapping
+        today = date.today()
+        last_dt = m["last_receipt_date"]
+        days_since = (today - last_dt).days if last_dt else None
+        rc = int(m["receipt_count"] or 0)
+        tot = float(m["total_donated"] or 0)
+        imp_map = {1: "Normal", 2: "Important", 3: "VIP"}
+        display_name = (m["donor_ename"] or m["donor_name"] or f"Cash Donor #{eid}").strip()
+        label = f"Cash #{eid} — {display_name}"
+        snap = {
+            "entity_type": "cash",
+            "entity_id": eid,
+            "captured_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "donor_name": m["donor_name"],
+            "donor_ename": m["donor_ename"],
+            "display_name": display_name,
+            "mobile": m["mobile"],
+            "status_label": "Active" if m["donor_status"] == 1 else "Inactive",
+            "importance_label": imp_map.get(int(m["donor_importancy_lvl"] or 1), "Normal"),
+            "receipt_count": rc,
+            "total_donated": round(tot, 3),
+            "avg_receipt": round(tot / rc, 3) if rc > 0 else 0.0,
+            "last_receipt_date": last_dt.isoformat() if last_dt else None,
+            "days_since_last": days_since,
+            "last_followup_date": m["last_fu_date"].isoformat() if m["last_fu_date"] else None,
+            "last_followup_by": m["last_fu_by"] or None,
+            "last_followup_result": m["last_fu_result"] or None,
+            "last_followup_reason": m["last_fu_reason"] or None,
+            "last_followup_notes": m["last_fu_notes"] or None,
+            "next_followup_date": m["next_fu_date"].isoformat() if m["next_fu_date"] else None,
+            "open_url": f"/cash-donors?donor_cd={eid}",
+            "followup_url": "/cash-followup",
+        }
+        return label, snap
+
+    raise HTTPException(status_code=400, detail="Invalid entity_type. Use 'so' or 'cash'.")
+
+
+@app.get("/messages", response_class=HTMLResponse)
+async def internal_messages_page(request: Request):
+    return templates.TemplateResponse("messages.html", {"request": request})
+
+
+@app.get("/api/messages/users")
+async def messages_users_list(request: Request, db: AsyncSession = Depends(get_db)):
+    cur_user = await _get_current_db_user(request, db)
+    res = await db.execute(text("""
+        SELECT u.user_id, u.username,
+               COALESCE(u.full_name_en, u.username) AS full_name_en,
+               COALESCE(u.full_name_ar, u.username) AS full_name_ar,
+               COALESCE(r.role_code, '') AS role_code,
+               COALESCE(r.role_name_en, '') AS role_name_en,
+               EXISTS (
+                   SELECT 1 FROM sys_user_permissions p
+                   WHERE p.user_id = u.user_id
+                     AND p.page_key IN ('donors', 'followup', 'so_delayed', 'so_dashboard', 'reports')
+                     AND p.access_level <> 'none'
+               ) AS has_so_access,
+               EXISTS (
+                   SELECT 1 FROM sys_user_permissions p
+                   WHERE p.user_id = u.user_id
+                     AND p.page_key IN ('cash_donors', 'cash_followup', 'cash_reports', 'cash_dashboard', 'voucher_receipt')
+                     AND p.access_level <> 'none'
+               ) AS has_cash_access
+        FROM sys_users u
+        LEFT JOIN sys_roles r ON r.role_id = u.role_id
+        WHERE u.is_active = TRUE
+        ORDER BY CASE WHEN UPPER(u.username) = 'DIRECTOR' THEN 0
+                      WHEN UPPER(u.username) = 'ADMIN' THEN 1
+                      ELSE 2 END, u.username
+    """))
+    users = []
+    for r in res.fetchall():
+        d = dict(r._mapping)
+        d["is_self"] = (d["user_id"] == cur_user["user_id"])
+        users.append(d)
+    return {"current_user": cur_user, "users": users}
+
+
+@app.get("/api/messages/donor-lookup")
+async def messages_donor_lookup(entity_type: str = "so", q: str = "", db: AsyncSession = Depends(get_db)):
+    et = (entity_type or "so").strip().lower()
+    term = (q or "").strip()
+    if len(term) < 1:
+        return {"items": []}
+    like = f"%{term}%"
+    is_num = term.isdigit()
+    num_val = int(term) if is_num else -1
+
+    if et == "so":
+        res = await db.execute(text("""
+            SELECT d.donor_no AS id,
+                   COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, '') AS name_en,
+                   COALESCE(d.donor_name, '') AS name_ar,
+                   COALESCE(NULLIF(TRIM(d.donor_mobile), ''), d.donor_tel1, '') AS mobile,
+                   d.status_no
+            FROM donor_master d
+            WHERE (:is_num AND d.donor_no = :num_val)
+               OR d.donor_ename ILIKE :like
+               OR d.donor_name ILIKE :like
+               OR d.donor_mobile ILIKE :like
+            ORDER BY CASE WHEN (:is_num AND d.donor_no = :num_val) THEN 0 ELSE 1 END, d.donor_no DESC
+            LIMIT 15
+        """), {"is_num": is_num, "num_val": num_val, "like": like})
+    else:
+        res = await db.execute(text("""
+            SELECT c.donor_cd AS id,
+                   COALESCE(NULLIF(TRIM(c.donor_ename), ''), c.donor_name, '') AS name_en,
+                   COALESCE(c.donor_name, '') AS name_ar,
+                   COALESCE(NULLIF(TRIM(c.mobile), ''), c.tel_home, '') AS mobile,
+                   c.donor_status AS status_no
+            FROM cash_donors c
+            WHERE (:is_num AND c.donor_cd = :num_val)
+               OR c.donor_ename ILIKE :like
+               OR c.donor_name ILIKE :like
+               OR c.mobile ILIKE :like
+            ORDER BY CASE WHEN (:is_num AND c.donor_cd = :num_val) THEN 0 ELSE 1 END, c.donor_cd DESC
+            LIMIT 15
+        """), {"is_num": is_num, "num_val": num_val, "like": like})
+
+    items = [dict(r._mapping) for r in res.fetchall()]
+    return {"items": items}
+
+
+@app.get("/api/messages/donor-snapshot")
+async def messages_donor_snapshot(entity_type: str, entity_id: int, db: AsyncSession = Depends(get_db)):
+    label, snap = await _build_entity_snapshot(db, entity_type, entity_id)
+    return {"entity_label": label, "snapshot": snap}
+
+
+@app.get("/api/messages/list")
+async def messages_list_api(
+    request: Request,
+    folder: str = "inbox",
+    status: str = "",
+    unread_only: int = 0,
+    q: str = "",
+    page: int = 1,
+    page_size: int = 25,
+    db: AsyncSession = Depends(get_db),
+):
+    cur = await _get_current_db_user(request, db)
+    uid = cur["user_id"]
+    page = max(1, page)
+    page_size = min(max(1, page_size), 100)
+    offset = (page - 1) * page_size
+    folder = (folder or "inbox").strip().lower()
+
+    where_clauses = []
+    params: dict[str, Any] = {"uid": uid, "lim": page_size, "off": offset}
+
+    if folder == "inbox":
+        where_clauses.append("EXISTS (SELECT 1 FROM sys_message_recipients r WHERE r.message_id = m.message_id AND r.recipient_user_id = :uid AND r.is_archived = FALSE)")
+    elif folder == "tasks":
+        where_clauses.append("m.msg_type = 'directive' AND EXISTS (SELECT 1 FROM sys_message_recipients r WHERE r.message_id = m.message_id AND r.recipient_user_id = :uid)")
+    elif folder == "assigned":
+        where_clauses.append("m.msg_type = 'directive' AND m.sender_user_id = :uid")
+    elif folder == "sent":
+        where_clauses.append("m.sender_user_id = :uid")
+    else:  # 'all'
+        where_clauses.append("(m.sender_user_id = :uid OR EXISTS (SELECT 1 FROM sys_message_recipients r WHERE r.message_id = m.message_id AND r.recipient_user_id = :uid))")
+
+    if status and status.strip().lower() in ("open", "new", "in_progress", "done", "cancelled"):
+        where_clauses.append("m.status = :st")
+        params["st"] = status.strip().lower()
+
+    if unread_only:
+        where_clauses.append("""(
+            EXISTS (SELECT 1 FROM sys_message_recipients r WHERE r.message_id = m.message_id AND r.recipient_user_id = :uid AND r.is_read = FALSE)
+            OR (m.sender_user_id = :uid AND m.sender_unread = TRUE)
+        )""")
+
+    if q and q.strip():
+        where_clauses.append("(m.subject ILIKE :q OR m.body ILIKE :q OR COALESCE(m.entity_label, '') ILIKE :q OR m.sender_username ILIKE :q)")
+        params["q"] = f"%{q.strip()}%"
+
+    where_sql = " AND ".join(where_clauses)
+
+    cnt_res = await db.execute(text(f"SELECT COUNT(*) FROM sys_messages m WHERE {where_sql}"), params)
+    total = int(cnt_res.scalar() or 0)
+
+    rows_res = await db.execute(text(f"""
+        SELECT m.message_id, m.msg_type, m.category, m.priority, m.subject,
+               LEFT(m.body, 160) AS snippet,
+               m.sender_user_id, m.sender_username,
+               COALESCE(su.full_name_en, m.sender_username) AS sender_name_en,
+               m.entity_type, m.entity_id, m.entity_label,
+               m.status, m.due_date, m.completed_by, m.completed_at,
+               m.created_at, m.updated_at,
+               COALESCE(
+                   (SELECT NOT r.is_read FROM sys_message_recipients r WHERE r.message_id = m.message_id AND r.recipient_user_id = :uid),
+                   FALSE
+               ) OR (m.sender_user_id = :uid AND m.sender_unread = TRUE) AS is_unread,
+               (SELECT COUNT(*) FROM sys_message_replies rp WHERE rp.message_id = m.message_id AND rp.is_system_event = FALSE) AS reply_count,
+               (SELECT STRING_AGG(r.recipient_username, ', ' ORDER BY r.recipient_username) FROM sys_message_recipients r WHERE r.message_id = m.message_id) AS recipients_summary
+        FROM sys_messages m
+        LEFT JOIN sys_users su ON su.user_id = m.sender_user_id
+        WHERE {where_sql}
+        ORDER BY m.updated_at DESC, m.message_id DESC
+        LIMIT :lim OFFSET :off
+    """), params)
+
+    items = []
+    for r in rows_res.fetchall():
+        d = dict(r._mapping)
+        d["due_date"] = d["due_date"].isoformat() if d["due_date"] else None
+        d["completed_at"] = d["completed_at"].isoformat() if d["completed_at"] else None
+        d["created_at"] = d["created_at"].isoformat() if d["created_at"] else None
+        d["updated_at"] = d["updated_at"].isoformat() if d["updated_at"] else None
+        items.append(d)
+
+    # Folder badge counts for current user
+    counts_res = await db.execute(text("""
+        SELECT
+            (SELECT COUNT(*) FROM sys_message_recipients r WHERE r.recipient_user_id = :uid AND r.is_read = FALSE AND r.is_archived = FALSE) AS inbox_unread,
+            (SELECT COUNT(*) FROM sys_messages m JOIN sys_message_recipients r ON r.message_id = m.message_id
+             WHERE r.recipient_user_id = :uid AND m.msg_type = 'directive' AND m.status IN ('new', 'in_progress')) AS open_tasks,
+            (SELECT COUNT(*) FROM sys_messages m
+             WHERE m.sender_user_id = :uid AND m.msg_type = 'directive' AND m.status IN ('new', 'in_progress')) AS assigned_open,
+            (SELECT COUNT(*) FROM sys_messages m WHERE m.sender_user_id = :uid AND m.sender_unread = TRUE) AS sent_unread
+    """), {"uid": uid})
+    counts = dict(counts_res.first()._mapping)
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+        "counts": counts,
+    }
+
+
+@app.get("/api/messages/{message_id}")
+async def messages_detail_api(message_id: int, request: Request, db: AsyncSession = Depends(get_db)):
+    cur = await _get_current_db_user(request, db)
+    uid = cur["user_id"]
+
+    msg_res = await db.execute(text("""
+        SELECT m.*,
+               COALESCE(su.full_name_en, m.sender_username) AS sender_name_en,
+               COALESCE(su.full_name_ar, m.sender_username) AS sender_name_ar
+        FROM sys_messages m
+        LEFT JOIN sys_users su ON su.user_id = m.sender_user_id
+        WHERE m.message_id = :mid
+    """), {"mid": message_id})
+    msg_row = msg_res.first()
+    if not msg_row:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    msg = dict(msg_row._mapping)
+
+    rec_res = await db.execute(text("""
+        SELECT r.recipient_user_id, r.recipient_username, r.is_read, r.read_at,
+               COALESCE(u.full_name_en, r.recipient_username) AS full_name_en,
+               COALESCE(u.full_name_ar, r.recipient_username) AS full_name_ar
+        FROM sys_message_recipients r
+        LEFT JOIN sys_users u ON u.user_id = r.recipient_user_id
+        WHERE r.message_id = :mid
+        ORDER BY r.recipient_username
+    """), {"mid": message_id})
+    recipients = [dict(r._mapping) for r in rec_res.fetchall()]
+
+    is_participant = (msg["sender_user_id"] == uid) or any(r["recipient_user_id"] == uid for r in recipients)
+    if not is_participant:
+        raise HTTPException(status_code=403, detail="You are not a participant in this message thread.")
+
+    # Auto-mark as read for current user
+    changed = False
+    if any(r["recipient_user_id"] == uid and not r["is_read"] for r in recipients):
+        await db.execute(text("""
+            UPDATE sys_message_recipients
+            SET is_read = TRUE, read_at = CURRENT_TIMESTAMP
+            WHERE message_id = :mid AND recipient_user_id = :uid
+        """), {"mid": message_id, "uid": uid})
+        changed = True
+    if msg["sender_user_id"] == uid and msg.get("sender_unread"):
+        await db.execute(text("""
+            UPDATE sys_messages SET sender_unread = FALSE WHERE message_id = :mid
+        """), {"mid": message_id})
+        changed = True
+    if changed:
+        await db.commit()
+
+    rep_res = await db.execute(text("""
+        SELECT rp.reply_id, rp.sender_user_id, rp.sender_username, rp.body, rp.is_system_event, rp.created_at,
+               COALESCE(u.full_name_en, rp.sender_username) AS sender_name_en
+        FROM sys_message_replies rp
+        LEFT JOIN sys_users u ON u.user_id = rp.sender_user_id
+        WHERE rp.message_id = :mid
+        ORDER BY rp.created_at ASC, rp.reply_id ASC
+    """), {"mid": message_id})
+    replies = []
+    for r in rep_res.fetchall():
+        rd = dict(r._mapping)
+        rd["created_at"] = rd["created_at"].isoformat() if rd["created_at"] else None
+        replies.append(rd)
+
+    for r in recipients:
+        r["read_at"] = r["read_at"].isoformat() if r["read_at"] else None
+
+    msg["due_date"] = msg["due_date"].isoformat() if msg["due_date"] else None
+    msg["completed_at"] = msg["completed_at"].isoformat() if msg["completed_at"] else None
+    msg["created_at"] = msg["created_at"].isoformat() if msg["created_at"] else None
+    msg["updated_at"] = msg["updated_at"].isoformat() if msg["updated_at"] else None
+
+    return {
+        "message": msg,
+        "recipients": recipients,
+        "replies": replies,
+        "current_user_id": uid,
+        "is_sender": msg["sender_user_id"] == uid,
+        "is_recipient": any(r["recipient_user_id"] == uid for r in recipients),
+    }
+
+
+@app.post("/api/messages/send")
+async def messages_send_api(payload: MessageSendSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    cur = await _get_current_db_user(request, db)
+    subj = (payload.subject or "").strip()
+    body = (payload.body or "").strip()
+    if not subj:
+        raise HTTPException(status_code=400, detail="Subject is required.")
+    if not body:
+        raise HTTPException(status_code=400, detail="Message body is required.")
+    rec_ids = list(dict.fromkeys([int(x) for x in (payload.recipient_user_ids or []) if x]))
+    if not rec_ids:
+        raise HTTPException(status_code=400, detail="Please select at least one recipient.")
+
+    msg_type = payload.msg_type.strip().lower()
+    if msg_type not in ("message", "directive"):
+        msg_type = "message"
+    priority = payload.priority.strip().lower()
+    if priority not in ("normal", "high", "urgent"):
+        priority = "normal"
+    category = (payload.category or "general").strip().lower()
+    init_status = "new" if msg_type == "directive" else "open"
+
+    # Fetch valid recipients
+    u_res = await db.execute(text(
+        "SELECT user_id, username FROM sys_users WHERE user_id = ANY(:ids) AND is_active = TRUE"
+    ), {"ids": rec_ids})
+    valid_recs = [dict(r._mapping) for r in u_res.fetchall()]
+    if not valid_recs:
+        raise HTTPException(status_code=400, detail="No active recipients found.")
+
+    entity_label, snapshot = await _build_entity_snapshot(db, payload.entity_type, payload.entity_id)
+
+    ins = await db.execute(text("""
+        INSERT INTO sys_messages (
+            msg_type, category, priority, subject, body,
+            sender_user_id, sender_username, sender_unread,
+            entity_type, entity_id, entity_label, entity_snapshot,
+            status, due_date
+        ) VALUES (
+            :mtype, :cat, :prio, :subj, :body,
+            :suid, :suname, FALSE,
+            :etype, :eid, :elabel, CAST(:esnap AS jsonb),
+            :status, :ddate
+        )
+        RETURNING message_id
+    """), {
+        "mtype": msg_type,
+        "cat": category,
+        "prio": priority,
+        "subj": subj[:200],
+        "body": body,
+        "suid": cur["user_id"],
+        "suname": cur["username"],
+        "etype": payload.entity_type if snapshot else None,
+        "eid": payload.entity_id if snapshot else None,
+        "elabel": entity_label,
+        "esnap": json.dumps(snapshot) if snapshot else None,
+        "status": init_status,
+        "ddate": payload.due_date,
+    })
+    message_id = int(ins.scalar())
+
+    for rec in valid_recs:
+        await db.execute(text("""
+            INSERT INTO sys_message_recipients (message_id, recipient_user_id, recipient_username, is_read)
+            VALUES (:mid, :ruid, :runame, :is_read)
+            ON CONFLICT (message_id, recipient_user_id) DO NOTHING
+        """), {
+            "mid": message_id,
+            "ruid": rec["user_id"],
+            "runame": rec["username"],
+            "is_read": (rec["user_id"] == cur["user_id"]),
+        })
+
+    await db.commit()
+    return {"status": "success", "message_id": message_id, "entity_label": entity_label}
+
+
+@app.post("/api/messages/{message_id}/reply")
+async def messages_reply_api(message_id: int, payload: MessageReplySchema, request: Request, db: AsyncSession = Depends(get_db)):
+    cur = await _get_current_db_user(request, db)
+    uid = cur["user_id"]
+    body = (payload.body or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Reply text cannot be empty.")
+
+    m_res = await db.execute(text("SELECT sender_user_id FROM sys_messages WHERE message_id = :mid"), {"mid": message_id})
+    m_row = m_res.first()
+    if not m_row:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    sender_uid = m_row._mapping["sender_user_id"]
+
+    r_check = await db.execute(text(
+        "SELECT 1 FROM sys_message_recipients WHERE message_id = :mid AND recipient_user_id = :uid"
+    ), {"mid": message_id, "uid": uid})
+    if sender_uid != uid and not r_check.first():
+        raise HTTPException(status_code=403, detail="You are not a participant in this thread.")
+
+    await db.execute(text("""
+        INSERT INTO sys_message_replies (message_id, sender_user_id, sender_username, body, is_system_event)
+        VALUES (:mid, :uid, :uname, :body, FALSE)
+    """), {"mid": message_id, "uid": uid, "uname": cur["username"], "body": body})
+
+    # Notify all other participants
+    await db.execute(text("""
+        UPDATE sys_message_recipients
+        SET is_read = FALSE
+        WHERE message_id = :mid AND recipient_user_id <> :uid
+    """), {"mid": message_id, "uid": uid})
+
+    await db.execute(text("""
+        UPDATE sys_messages
+        SET updated_at = CURRENT_TIMESTAMP,
+            sender_unread = CASE WHEN sender_user_id <> :uid THEN TRUE ELSE FALSE END
+        WHERE message_id = :mid
+    """), {"mid": message_id, "uid": uid})
+
+    await db.commit()
+    return {"status": "success"}
+
+
+@app.post("/api/messages/{message_id}/status")
+async def messages_update_status_api(message_id: int, payload: DirectiveStatusSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    cur = await _get_current_db_user(request, db)
+    uid = cur["user_id"]
+    new_st = (payload.status or "").strip().lower()
+    if new_st not in ("new", "in_progress", "done", "cancelled"):
+        raise HTTPException(status_code=400, detail="Invalid directive status.")
+
+    m_res = await db.execute(text("SELECT sender_user_id, msg_type FROM sys_messages WHERE message_id = :mid"), {"mid": message_id})
+    m_row = m_res.first()
+    if not m_row:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    sender_uid = m_row._mapping["sender_user_id"]
+
+    r_check = await db.execute(text(
+        "SELECT 1 FROM sys_message_recipients WHERE message_id = :mid AND recipient_user_id = :uid"
+    ), {"mid": message_id, "uid": uid})
+    if sender_uid != uid and not r_check.first():
+        raise HTTPException(status_code=403, detail="Not authorized to update this directive.")
+
+    note = (payload.note or "").strip()[:500]
+    status_labels = {"new": "New / Reopened", "in_progress": "In Progress", "done": "Completed ✅", "cancelled": "Cancelled"}
+    ev_text = f"Status changed to [{status_labels.get(new_st, new_st)}]" + (f" — {note}" if note else "")
+
+    await db.execute(text("""
+        UPDATE sys_messages
+        SET status = :st,
+            completed_by = CASE WHEN :is_done THEN :uname ELSE completed_by END,
+            completed_at = CASE WHEN :is_done THEN CURRENT_TIMESTAMP ELSE completed_at END,
+            completion_note = CASE WHEN :has_note THEN :note ELSE completion_note END,
+            updated_at = CURRENT_TIMESTAMP,
+            sender_unread = CASE WHEN sender_user_id <> :uid THEN TRUE ELSE sender_unread END
+        WHERE message_id = :mid
+    """), {"st": new_st, "is_done": (new_st == "done"), "uname": cur["username"], "has_note": bool(note), "note": note, "uid": uid, "mid": message_id})
+
+    await db.execute(text("""
+        UPDATE sys_message_recipients
+        SET is_read = FALSE
+        WHERE message_id = :mid AND recipient_user_id <> :uid
+    """), {"mid": message_id, "uid": uid})
+
+    await db.execute(text("""
+        INSERT INTO sys_message_replies (message_id, sender_user_id, sender_username, body, is_system_event)
+        VALUES (:mid, :uid, :uname, :body, TRUE)
+    """), {"mid": message_id, "uid": uid, "uname": cur["username"], "body": ev_text})
+
+    await db.commit()
+    return {"status": "success", "new_status": new_st}
+
+
+@app.get("/api/notifications/summary")
+async def notifications_summary_api(request: Request, db: AsyncSession = Depends(get_db)):
+    cur = await _get_current_db_user(request, db)
+    uid = cur["user_id"]
+    uname = cur["username"]
+    perms = (request.state.user or {}).get("page_permissions") or {}
+
+    # 1. Unread messages / directives / replies for this user
+    unread_res = await db.execute(text("""
+        SELECT m.message_id, m.msg_type, m.category, m.priority, m.subject,
+               m.sender_username, m.entity_label, m.status, m.due_date, m.updated_at,
+               CASE WHEN m.sender_user_id = :uid THEN 'reply' ELSE 'incoming' END AS alert_kind
+        FROM sys_messages m
+        WHERE EXISTS (
+                SELECT 1 FROM sys_message_recipients r
+                WHERE r.message_id = m.message_id AND r.recipient_user_id = :uid AND r.is_read = FALSE AND r.is_archived = FALSE
+              )
+           OR (m.sender_user_id = :uid AND m.sender_unread = TRUE)
+        ORDER BY m.updated_at DESC
+        LIMIT 8
+    """), {"uid": uid})
+    unread_items = []
+    for r in unread_res.fetchall():
+        d = dict(r._mapping)
+        d["due_date"] = d["due_date"].isoformat() if d["due_date"] else None
+        d["updated_at"] = d["updated_at"].isoformat() if d["updated_at"] else None
+        unread_items.append(d)
+
+    unread_cnt_res = await db.execute(text("""
+        SELECT COUNT(*) FROM sys_messages m
+        WHERE EXISTS (
+                SELECT 1 FROM sys_message_recipients r
+                WHERE r.message_id = m.message_id AND r.recipient_user_id = :uid AND r.is_read = FALSE AND r.is_archived = FALSE
+              )
+           OR (m.sender_user_id = :uid AND m.sender_unread = TRUE)
+    """), {"uid": uid})
+    unread_count = int(unread_cnt_res.scalar() or 0)
+
+    # 2. Due / Overdue Directives assigned to this user
+    due_tasks_res = await db.execute(text("""
+        SELECT m.message_id, m.subject, m.priority, m.category, m.entity_label, m.due_date, m.status, m.sender_username
+        FROM sys_messages m
+        JOIN sys_message_recipients r ON r.message_id = m.message_id
+        WHERE r.recipient_user_id = :uid
+          AND m.msg_type = 'directive'
+          AND m.status IN ('new', 'in_progress')
+        ORDER BY CASE WHEN m.due_date IS NOT NULL AND m.due_date <= CURRENT_DATE THEN 0 ELSE 1 END,
+                 CASE m.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,
+                 m.due_date ASC NULLS LAST, m.updated_at DESC
+        LIMIT 6
+    """), {"uid": uid})
+    open_tasks = []
+    for r in due_tasks_res.fetchall():
+        d = dict(r._mapping)
+        d["is_overdue"] = bool(d["due_date"] and d["due_date"] < date.today())
+        d["is_due_today"] = bool(d["due_date"] and d["due_date"] == date.today())
+        d["due_date"] = d["due_date"].isoformat() if d["due_date"] else None
+        open_tasks.append(d)
+
+    open_tasks_cnt_res = await db.execute(text("""
+        SELECT COUNT(*) FROM sys_messages m
+        JOIN sys_message_recipients r ON r.message_id = m.message_id
+        WHERE r.recipient_user_id = :uid
+          AND m.msg_type = 'directive'
+          AND m.status IN ('new', 'in_progress')
+    """), {"uid": uid})
+    open_tasks_count = int(open_tasks_cnt_res.scalar() or 0)
+
+    # 3. Personal Follow-up Reminders (next_followup_date <= TODAY) for records logged by THIS user
+    due_followups = []
+    cash_fu_due_count = 0
+    if perms.get("cash_followup", "none") != "none":
+        cfu_res = await db.execute(text("""
+            WITH latest_cfu AS (
+                SELECT DISTINCT ON (f.donor_cd)
+                       f.followup_id, f.donor_cd, f.next_followup_date, f.call_date, f.call_by,
+                       COALESCE(NULLIF(TRIM(cd.donor_ename), ''), cd.donor_name, '') AS donor_name,
+                       COALESCE(r.result_enm, r.result_nm, '') AS last_result
+                FROM cash_donor_followup f
+                JOIN cash_donors cd ON cd.donor_cd = f.donor_cd
+                LEFT JOIN lkp_follow_results r ON r.result_cd = f.call_result_cd
+                ORDER BY f.donor_cd, f.call_date DESC, f.call_time DESC, f.followup_id DESC
+            )
+            SELECT * FROM latest_cfu
+            WHERE next_followup_date IS NOT NULL
+              AND next_followup_date <= CURRENT_DATE
+              AND UPPER(call_by) = UPPER(:uname)
+            ORDER BY next_followup_date ASC
+            LIMIT 6
+        """), {"uname": uname})
+        for r in cfu_res.fetchall():
+            m = r._mapping
+            due_followups.append({
+                "module": "cash",
+                "entity_id": m["donor_cd"],
+                "title": f"Cash #{m['donor_cd']} — {m['donor_name']}",
+                "due_date": m["next_followup_date"].isoformat(),
+                "is_overdue": m["next_followup_date"] < date.today(),
+                "subtitle": f"Last: {m['last_result'] or 'Follow-up'} ({m['call_date'].isoformat()})",
+                "url": "/cash-followup",
+            })
+        cfu_cnt = await db.execute(text("""
+            WITH latest_cfu AS (
+                SELECT DISTINCT ON (donor_cd) donor_cd, next_followup_date, call_by
+                FROM cash_donor_followup
+                ORDER BY donor_cd, call_date DESC, call_time DESC, followup_id DESC
+            )
+            SELECT COUNT(*) FROM latest_cfu
+            WHERE next_followup_date IS NOT NULL
+              AND next_followup_date <= CURRENT_DATE
+              AND UPPER(call_by) = UPPER(:uname)
+        """), {"uname": uname})
+        cash_fu_due_count = int(cfu_cnt.scalar() or 0)
+
+    so_fu_due_count = 0
+    if perms.get("followup", "none") != "none":
+        sfu_res = await db.execute(text("""
+            WITH latest_sfu AS (
+                SELECT DISTINCT ON (f.donor_no)
+                       f.trans_id, f.donor_no, f.next_followup_date, f.call_date, f.call_by,
+                       COALESCE(NULLIF(TRIM(dm.donor_ename), ''), dm.donor_name, '') AS donor_name,
+                       COALESCE(r.result_enm, r.result_nm, '') AS last_result
+                FROM donor_followup f
+                JOIN donor_master dm ON dm.donor_no = f.donor_no
+                LEFT JOIN lkp_follow_results r ON r.result_cd = f.call_result_cd
+                ORDER BY f.donor_no, f.call_date DESC, f.trans_id DESC
+            )
+            SELECT * FROM latest_sfu
+            WHERE next_followup_date IS NOT NULL
+              AND next_followup_date <= CURRENT_DATE
+              AND UPPER(call_by) = UPPER(:uname)
+            ORDER BY next_followup_date ASC
+            LIMIT 6
+        """), {"uname": uname})
+        for r in sfu_res.fetchall():
+            m = r._mapping
+            due_followups.append({
+                "module": "so",
+                "entity_id": m["donor_no"],
+                "title": f"SO #{m['donor_no']} — {m['donor_name']}",
+                "due_date": m["next_followup_date"].isoformat(),
+                "is_overdue": m["next_followup_date"] < date.today(),
+                "subtitle": f"Last: {m['last_result'] or 'Follow-up'} ({m['call_date'].isoformat()})",
+                "url": "/followup",
+            })
+        sfu_cnt = await db.execute(text("""
+            WITH latest_sfu AS (
+                SELECT DISTINCT ON (donor_no) donor_no, next_followup_date, call_by
+                FROM donor_followup
+                ORDER BY donor_no, call_date DESC, trans_id DESC
+            )
+            SELECT COUNT(*) FROM latest_sfu
+            WHERE next_followup_date IS NOT NULL
+              AND next_followup_date <= CURRENT_DATE
+              AND UPPER(call_by) = UPPER(:uname)
+        """), {"uname": uname})
+        so_fu_due_count = int(sfu_cnt.scalar() or 0)
+
+    # 4. Smart Radar Summary Cards (RBAC-filtered, fast queries, zero spam)
+    radar_cards = []
+    if perms.get("followup", "none") != "none" or perms.get("so_dashboard", "none") != "none":
+        so_del_res = await db.execute(text("""
+            SELECT COUNT(DISTINCT di.donor_no)
+            FROM donor_item di
+            WHERE di.status_no = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM money_trans mt
+                  WHERE mt.so_id = di.so_id
+                    AND mt.status_no = 1
+                    AND mt.month_year >= date_trunc('month', CURRENT_DATE) - INTERVAL '2 months'
+              )
+        """))
+        so_delayed_cnt = int(so_del_res.scalar() or 0)
+        if so_delayed_cnt > 0:
+            radar_cards.append({
+                "key": "so_delayed",
+                "title": f"{so_delayed_cnt:,} Standing Order donors with 2+ months delay",
+                "subtitle": "Active Standing Orders with no recent paid transaction",
+                "url": "/followup" if perms.get("followup", "none") != "none" else "/reports-dashboard",
+                "tone": "amber",
+            })
+
+    if perms.get("cash_followup", "none") != "none" or perms.get("cash_reports", "none") != "none":
+        radar_cards.append({
+            "key": "cash_risk_radar",
+            "title": "Cash High-Risk & Missed Donors Queue",
+            "subtitle": "Review donors ranked by dynamic Risk Score (0–100)",
+            "url": "/cash-followup" if perms.get("cash_followup", "none") != "none" else "/cash-reports",
+            "tone": "blue",
+        })
+
+    total_personal_due = cash_fu_due_count + so_fu_due_count
+    total_badge = unread_count + total_personal_due
+
+    return {
+        "total_badge": total_badge,
+        "unread_count": unread_count,
+        "open_tasks_count": open_tasks_count,
+        "personal_due_count": total_personal_due,
+        "unread_items": unread_items,
+        "open_tasks": open_tasks,
+        "due_followups": due_followups,
+        "radar_cards": radar_cards,
+    }
+
+
+# =================================================================================
+# DELAYED STANDING ORDERS QUEUE (/so-delayed) — Per-SO Composite Risk Ranking
+# =================================================================================
+
+class SoDelayedFollowupSchema(BaseModel):
+    so_id: int
+    donor_no: int
+    item_no: Optional[str] = "1"
+    donation_start_date: Optional[str] = ""
+    last_paid_month: Optional[str] = ""
+    delayed_months: Optional[int] = 0
+    call_date: date
+    call_time: Optional[str] = ""
+    call_result_cd: int
+    delay_reason_cd: int
+    call_result_notes: Optional[str] = ""
+    next_followup_date: Optional[date] = None
+
+    @field_validator("next_followup_date", mode="before")
+    @classmethod
+    def clean_next_fu(cls, v: Any):
+        if v == "" or v is None:
+            return None
+        return v
+
+
+@app.get("/so-delayed", response_class=HTMLResponse)
+async def so_delayed_queue_page(request: Request):
+    return templates.TemplateResponse("so_delayed.html", {"request": request})
+
+
+async def _query_so_delayed_rows(
+    db: AsyncSession,
+    so_scope: str = "active",
+    bank_cd: Optional[int] = None,
+    risk_tier: str = "",
+    sort_by: str = "so_risk",
+    q: str = "",
+    page: int = 1,
+    page_size: int = 25,
+    export_all: bool = False,
+):
+    so_cfg = await _fetch_so_risk_config(db)
+    scope = (so_scope or "active").strip().lower()
+    if scope not in ("active", "all"):
+        scope = "active"
+    scope_cond = "i.status_no = 1" if scope == "active" else "TRUE"
+
+    t_crit = int(so_cfg["tier_critical_min"])
+    t_high = int(so_cfg["tier_high_min"])
+    t_med = int(so_cfg["tier_medium_min"])
+
+    cte_sql = f"""
+        WITH donor_fu AS (
+            SELECT donor_no, MAX(call_date) AS d_last_call
+            FROM donor_followup
+            GROUP BY donor_no
+        ),
+        so_fu_latest AS (
+            SELECT DISTINCT ON (f.so_id)
+                   f.so_id, f.call_date AS so_last_call, f.call_by AS so_last_by,
+                   COALESCE(NULLIF(TRIM(r.result_enm), ''), r.result_nm, '') AS so_last_result,
+                   f.next_followup_date AS so_next_fu
+            FROM donor_item_followup f
+            LEFT JOIN lkp_follow_results r ON r.result_cd = f.call_result_cd
+            ORDER BY f.so_id, f.call_date DESC, f.trans_id DESC
+        ),
+        so_base AS (
+            SELECT i.so_id,
+                   i.donor_no,
+                   i.item_no,
+                   i.status_no,
+                   i.bank2_cd,
+                   COALESCE(NULLIF(TRIM(b.bank_e_desc), ''), b.bank_desc, '') AS bank_name,
+                   COALESCE(i.sort_field, '') AS sort_field,
+                   COALESCE(i.monthly_pay, 0) AS monthly_pay,
+                   i.donation_start_date,
+                   lp.last_paid_month,
+                   COALESCE(lp.paid_count, 0) AS paid_count,
+                   GREATEST(0, (
+                       EXTRACT(YEAR FROM AGE(
+                           DATE_TRUNC('month', CASE WHEN i.status_no = 2 AND i.deactive_date IS NOT NULL THEN i.deactive_date ELSE CURRENT_DATE END),
+                           DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))
+                       )) * 12 +
+                       EXTRACT(MONTH FROM AGE(
+                           DATE_TRUNC('month', CASE WHEN i.status_no = 2 AND i.deactive_date IS NOT NULL THEN i.deactive_date ELSE CURRENT_DATE END),
+                           DATE_TRUNC('month', COALESCE(lp.last_paid_month, i.donation_start_date))
+                       ))
+                   )::int) AS delay_months,
+                   GREATEST(sf.so_last_call, df.d_last_call) AS last_call_date,
+                   sf.so_last_by AS last_call_by,
+                   sf.so_last_result AS last_call_result,
+                   sf.so_next_fu AS next_followup_date,
+                   COALESCE(NULLIF(TRIM(d.donor_ename), ''), d.donor_name, '') AS donor_ename,
+                   COALESCE(d.donor_name, '') AS donor_name,
+                   COALESCE(NULLIF(TRIM(d.donor_tel2), ''), NULLIF(TRIM(d.donor_mobile), ''), NULLIF(TRIM(d.donor_tel1), ''), '') AS mobile
+            FROM donor_item i
+            JOIN donor_master d ON d.donor_no = i.donor_no
+            LEFT JOIN lkp_banks b ON b.bank_cd = i.bank2_cd
+            LEFT JOIN so_payment_summary lp ON lp.so_id = i.so_id
+            LEFT JOIN so_fu_latest sf ON sf.so_id = i.so_id
+            LEFT JOIN donor_fu df ON df.donor_no = i.donor_no
+            WHERE {scope_cond}
+        ),
+        so_delayed_scored AS (
+            SELECT sb.*,
+                   ROUND((
+                       :wm * (CASE
+                           WHEN sb.monthly_pay >= 100 THEN 100
+                           WHEN sb.monthly_pay >= 50  THEN 85
+                           WHEN sb.monthly_pay >= 25  THEN 70
+                           WHEN sb.monthly_pay >= 10  THEN 50
+                           WHEN sb.monthly_pay >= 5   THEN 35
+                           WHEN sb.monthly_pay > 0    THEN 20
+                           ELSE 0 END)
+                       + :wd * (CASE
+                           WHEN sb.delay_months BETWEEN 3 AND 6   THEN 100
+                           WHEN sb.delay_months BETWEEN 7 AND 12  THEN 85
+                           WHEN sb.delay_months BETWEEN 13 AND 24 THEN 65
+                           WHEN sb.delay_months BETWEEN 1 AND 2   THEN 45
+                           WHEN sb.delay_months > 24              THEN 35
+                           ELSE 0 END)
+                       + :wl * (CASE
+                           WHEN sb.paid_count >= 36 THEN 100
+                           WHEN sb.paid_count >= 18 THEN 80
+                           WHEN sb.paid_count >= 6  THEN 60
+                           WHEN sb.paid_count >= 1  THEN 35
+                           ELSE 15 END)
+                       + :wf * (CASE
+                           WHEN sb.last_call_date IS NULL THEN 100
+                           WHEN (CURRENT_DATE - sb.last_call_date) >= :stale THEN 85
+                           WHEN (CURRENT_DATE - sb.last_call_date) >= :half_stale THEN 45
+                           ELSE 10 END)
+                   ) / 100.0)::int AS so_risk_score
+            FROM so_base sb
+            WHERE sb.delay_months > 2
+        ),
+        donor_totals AS (
+            SELECT donor_no,
+                   COUNT(*) AS donor_delayed_so_count,
+                   COALESCE(SUM(so_risk_score), 0) AS donor_total_risk_pts
+            FROM so_delayed_scored
+            GROUP BY donor_no
+        ),
+        final_rows AS (
+            SELECT s.*,
+                   dt.donor_delayed_so_count,
+                   dt.donor_total_risk_pts,
+                   CASE
+                       WHEN s.so_risk_score >= {t_crit} THEN 'Critical'
+                       WHEN s.so_risk_score >= {t_high} THEN 'High'
+                       WHEN s.so_risk_score >= {t_med}  THEN 'Medium'
+                       ELSE 'Low'
+                   END AS so_risk_tier
+            FROM so_delayed_scored s
+            JOIN donor_totals dt ON dt.donor_no = s.donor_no
+        )
+    """
+
+    where_clauses = ["1=1"]
+    params: dict[str, Any] = {
+        "wm": int(so_cfg["weight_monthly"]),
+        "wd": int(so_cfg["weight_delay"]),
+        "wl": int(so_cfg["weight_loyalty"]),
+        "wf": int(so_cfg["weight_followup"]),
+        "stale": int(so_cfg["followup_stale_days"]),
+        "half_stale": max(1, int(so_cfg["followup_stale_days"]) // 2),
+    }
+
+    if bank_cd:
+        where_clauses.append("bank2_cd = :bcd")
+        params["bcd"] = int(bank_cd)
+
+    rt = (risk_tier or "").strip().lower()
+    if rt in ("critical", "high", "medium", "low"):
+        where_clauses.append("LOWER(so_risk_tier) = :rt")
+        params["rt"] = rt
+
+    q_clean = (q or "").strip()
+    if q_clean:
+        params["q"] = f"%{q_clean}%"
+        where_clauses.append("""
+            (CAST(donor_no AS TEXT) ILIKE :q
+             OR CAST(so_id AS TEXT) ILIKE :q
+             OR donor_ename ILIKE :q
+             OR donor_name ILIKE :q
+             OR mobile ILIKE :q
+             OR sort_field ILIKE :q)
+        """)
+
+    where_sql = " AND ".join(where_clauses)
+    sb = (sort_by or "so_risk").strip().lower()
+    if sb == "donor_total":
+        order_sql = "ORDER BY donor_total_risk_pts DESC, donor_no ASC, so_risk_score DESC, delay_months DESC"
+    elif sb == "monthly":
+        order_sql = "ORDER BY monthly_pay DESC, so_risk_score DESC, delay_months DESC"
+    elif sb == "delay":
+        order_sql = "ORDER BY delay_months DESC, so_risk_score DESC, monthly_pay DESC"
+    else:
+        order_sql = "ORDER BY so_risk_score DESC, donor_total_risk_pts DESC, monthly_pay DESC, delay_months DESC"
+
+    kpi_res = await db.execute(text(f"""
+        {cte_sql}
+        SELECT COUNT(*) AS total_sos,
+               COUNT(DISTINCT donor_no) AS total_donors,
+               COALESCE(SUM(monthly_pay), 0) AS total_monthly_at_risk,
+               COUNT(*) FILTER (WHERE so_risk_tier = 'Critical') AS critical_count,
+               COUNT(*) FILTER (WHERE so_risk_tier = 'High') AS high_count
+        FROM final_rows
+        WHERE {where_sql}
+    """), params)
+    kpi = dict(kpi_res.first()._mapping)
+    kpi["total_monthly_at_risk"] = round(float(kpi["total_monthly_at_risk"] or 0), 3)
+
+    limit_sql = ""
+    if not export_all:
+        page = max(1, page)
+        page_size = min(max(1, page_size), 100)
+        params["lim"] = page_size
+        params["off"] = (page - 1) * page_size
+        limit_sql = "LIMIT :lim OFFSET :off"
+
+    rows_res = await db.execute(text(f"""
+        {cte_sql}
+        SELECT * FROM final_rows
+        WHERE {where_sql}
+        {order_sql}
+        {limit_sql}
+    """), params)
+
+    rows = []
+    for r in rows_res.fetchall():
+        d = dict(r._mapping)
+        d["monthly_pay"] = round(float(d["monthly_pay"] or 0), 3)
+        d["donation_start_date"] = d["donation_start_date"].isoformat() if d["donation_start_date"] else ""
+        d["last_paid_month"] = d["last_paid_month"].strftime("%Y-%m-%d") if d["last_paid_month"] else ""
+        d["last_call_date"] = d["last_call_date"].isoformat() if d["last_call_date"] else ""
+        d["next_followup_date"] = d["next_followup_date"].isoformat() if d["next_followup_date"] else ""
+        rows.append(d)
+
+    return rows, kpi, so_cfg
+
+
+@app.get("/api/so-delayed/queue")
+async def so_delayed_queue_api(
+    so_scope: str = "active",
+    bank_cd: Optional[int] = None,
+    risk_tier: str = "",
+    sort_by: str = "so_risk",
+    q: str = "",
+    page: int = 1,
+    page_size: int = 25,
+    include_lookups: bool = True,
+    for_print: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    rows, kpi, so_cfg = await _query_so_delayed_rows(
+        db, so_scope=so_scope, bank_cd=bank_cd, risk_tier=risk_tier,
+        sort_by=sort_by, q=q, page=page, page_size=page_size, export_all=for_print
+    )
+    total = int(kpi["total_sos"] or 0)
+    resp: dict[str, Any] = {
+        "rows": rows,
+        "kpi": kpi,
+        "risk_config": so_cfg,
+        "page": max(1, page),
+        "page_size": page_size,
+        "total": total,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+    }
+    if include_lookups:
+        b_res = await db.execute(text(ACTIVE_SO_BANKS_SQL))
+        resp["banks"] = [{"bank_cd": r.bank_cd, "bank_name": r.bank_e_desc} for r in b_res.fetchall()]
+        fr_res = await db.execute(text("""
+            SELECT result_cd, COALESCE(NULLIF(TRIM(result_enm), ''), result_nm) AS result_enm
+            FROM lkp_follow_results ORDER BY result_cd
+        """))
+        resp["follow_results"] = [dict(r._mapping) for r in fr_res.fetchall()]
+        dr_res = await db.execute(text("""
+            SELECT reason_cd, COALESCE(NULLIF(TRIM(reason_enm), ''), reason_nm) AS reason_enm
+            FROM lkp_delay_reasons ORDER BY reason_cd
+        """))
+        resp["delay_reasons"] = [dict(r._mapping) for r in dr_res.fetchall()]
+    return resp
+
+
+@app.post("/api/so-delayed/log-followup")
+async def so_delayed_log_followup_api(payload: SoDelayedFollowupSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    uname = (request.state.user or {}).get("username") or "HASAN"
+    start_dt = datetime.strptime(payload.donation_start_date[:10], "%Y-%m-%d").date() if payload.donation_start_date else payload.call_date
+    last_paid_dt = datetime.strptime(payload.last_paid_month[:10], "%Y-%m-%d").date() if payload.last_paid_month else start_dt
+    await db.execute(text("""
+        INSERT INTO donor_item_followup (
+            so_id, donor_no, item_no, donation_start_date, call_date, call_time,
+            call_by, call_result_cd, delay_reason_cd, call_result_notes,
+            delayed_months, last_paid_month, next_followup_date
+        ) VALUES (
+            :so_id, :donor_no, :item_no, :start_dt, :call_date, :call_time,
+            :call_by, :call_result_cd, :delay_reason_cd, :call_result_notes,
+            :delayed_months, :last_paid_dt, :next_fu
+        )
+    """), {
+        "so_id": payload.so_id,
+        "donor_no": payload.donor_no,
+        "item_no": str(payload.item_no or "1"),
+        "start_dt": start_dt,
+        "call_date": payload.call_date,
+        "call_time": (payload.call_time or "")[:10],
+        "call_by": uname,
+        "call_result_cd": payload.call_result_cd,
+        "delay_reason_cd": payload.delay_reason_cd,
+        "call_result_notes": (payload.call_result_notes or "")[:250],
+        "delayed_months": int(payload.delayed_months or 0),
+        "last_paid_dt": last_paid_dt,
+        "next_fu": payload.next_followup_date,
+    })
+    await db.execute(text("UPDATE donor_master SET call_date = :cdate WHERE donor_no = :dno"), {"cdate": payload.call_date, "dno": payload.donor_no})
+    await db.commit()
+    return {"status": "success", "message": f"Follow-up logged for SO #{payload.so_id}!"}
+
+
+@app.get("/api/so-delayed/export-csv")
+async def so_delayed_export_csv_api(
+    so_scope: str = "active",
+    bank_cd: Optional[int] = None,
+    risk_tier: str = "",
+    sort_by: str = "so_risk",
+    q: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    rows, _, _ = await _query_so_delayed_rows(
+        db, so_scope=so_scope, bank_cd=bank_cd, risk_tier=risk_tier,
+        sort_by=sort_by, q=q, export_all=True
+    )
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    writer.writerow([
+        "SO Risk Score", "Risk Tier", "Donor Total Risk Pts", "Donor Delayed SOs",
+        "Donor No", "Donor Name", "Mobile", "SO ID", "Bank", "Status",
+        "Monthly (BHD)", "Delay Months", "Last Paid", "Paid Months",
+        "Last Follow-up", "Last Result", "Next Follow-up"
+    ])
+    for r in rows:
+        writer.writerow([
+            r["so_risk_score"], r["so_risk_tier"], r["donor_total_risk_pts"], r["donor_delayed_so_count"],
+            r["donor_no"], r["donor_ename"], r["mobile"], r["so_id"], r["bank_name"],
+            "Active" if r["status_no"] == 1 else "Inactive",
+            f"{r['monthly_pay']:.3f}", r["delay_months"], r["last_paid_month"][:7] if r["last_paid_month"] else "",
+            r["paid_count"], r["last_call_date"], r["last_call_result"] or "", r["next_followup_date"]
+        ])
+    buf.seek(0)
+    filename = f"delayed_standing_orders_{so_scope}_{date.today().isoformat()}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )

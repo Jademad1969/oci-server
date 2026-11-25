@@ -326,20 +326,30 @@
                     </div>
                 </div>
             </div>
-            <a href="/logout" title="Sign Out"
-               class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/8 hover:bg-rose-500/90 text-slate-200 hover:text-white text-[11px] font-semibold transition shrink-0 ring-1 ring-white/10 hover:ring-rose-400">
-                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-                </svg>
-                <span class="sidebar-text whitespace-nowrap">Exit</span>
-            </a>
+            <div class="flex items-center gap-1.5 shrink-0">
+                <button type="button" onclick="toggleErpNotifDrawer()" title="Notifications &amp; Follow-up Alerts"
+                        class="relative inline-flex items-center justify-center w-8 h-8 rounded-lg bg-white/8 hover:bg-[#d29535] text-slate-200 hover:text-[#002333] transition ring-1 ring-white/10">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                    </svg>
+                    <span id="erp-notif-badge" class="hidden absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center shadow ring-2 ring-[#002d42]">0</span>
+                </button>
+                <a href="/logout" title="Sign Out"
+                   class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/8 hover:bg-rose-500/90 text-slate-200 hover:text-white text-[11px] font-semibold transition shrink-0 ring-1 ring-white/10 hover:ring-rose-400">
+                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                    </svg>
+                    <span class="sidebar-text whitespace-nowrap">Exit</span>
+                </a>
+            </div>
         </div>
     </div>
 
     <!-- INDEPENDENTLY SCROLLABLE MODERN NAVIGATION -->
     <nav class="erp-sidebar-nav px-3 py-3 space-y-4 text-[12.5px]">
-        {% if perms.get('about', 'view') != 'none' %}
+        {% if perms.get('about', 'view') != 'none' or perms.get('messages', 'edit') != 'none' %}
         <div class="space-y-0.5">
+            {% if perms.get('about', 'view') != 'none' %}
             <a href="/about" data-nav-path="/about" data-page-key="about" title="About System"
                class="erp-nav-link flex items-center justify-between px-3 py-2 font-medium">
                 <span class="flex items-center gap-2.5 min-w-0">
@@ -349,11 +359,24 @@
                     <span class="sidebar-text whitespace-nowrap truncate">About System</span>
                 </span>
             </a>
+            {% endif %}
+            {% if perms.get('messages', 'edit') != 'none' %}
+            <a href="/messages" data-nav-path="/messages" data-page-key="messages" title="Internal Messages &amp; Directives"
+               class="erp-nav-link flex items-center justify-between gap-2 px-3 py-2 font-medium">
+                <span class="flex items-center gap-2.5 min-w-0">
+                    <svg class="w-[17px] h-[17px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                    <span class="sidebar-text whitespace-nowrap truncate">Messages &amp; Directives</span>
+                </span>
+                <span id="erp-msg-unread-pill" class="hidden sidebar-badge px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-extrabold">0</span>
+            </a>
+            {% endif %}
         </div>
         {% endif %}
 
         {% set has_reports_any = (perms.get('so_dashboard', perms.get('reports', 'none')) != 'none') or (perms.get('reports', 'none') != 'none') or (perms.get('reports_matrix', perms.get('reports', 'none')) != 'none') or (perms.get('data_views_export', perms.get('reports', 'none')) != 'none') %}
-        {% set has_so_any = (perms.get('donors', 'none') != 'none') or (perms.get('audit', 'none') != 'none') or (perms.get('reconcile', 'none') != 'none') or (perms.get('followup', 'none') != 'none') or has_reports_any %}
+        {% set has_so_any = (perms.get('donors', 'none') != 'none') or (perms.get('audit', 'none') != 'none') or (perms.get('reconcile', 'none') != 'none') or (perms.get('followup', 'none') != 'none') or (perms.get('so_delayed', 'none') != 'none') or has_reports_any %}
         {% if has_so_any %}
         <div class="space-y-1">
             <button type="button" onclick="toggleErpSubmenu('so-submenu', 'so-chevron')" title="Bank Standing Orders"
@@ -414,6 +437,19 @@
                         <span class="sidebar-text whitespace-nowrap truncate">Donor Follow-up</span>
                     </span>
                     {% if perms.get('followup') == 'view' %}<span class="sidebar-badge text-[9px] px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-200 font-bold">VIEW</span>{% endif %}
+                </a>
+                {% endif %}
+
+                {% if perms.get('so_delayed', 'none') != 'none' %}
+                <a href="/so-delayed" data-nav-path="/so-delayed" data-page-key="so_delayed" title="Delayed SOs Queue"
+                   class="erp-nav-link flex items-center justify-between gap-2 px-3 py-2 font-medium">
+                    <span class="flex items-center gap-2.5 min-w-0">
+                        <svg class="w-[17px] h-[17px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <span class="sidebar-text whitespace-nowrap truncate">Delayed SOs Queue</span>
+                    </span>
+                    {% if perms.get('so_delayed') == 'view' %}<span class="sidebar-badge text-[9px] px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-200 font-bold">VIEW</span>{% endif %}
                 </a>
                 {% endif %}
             </div>
@@ -710,8 +746,15 @@
 
         const currentPath = window.location.pathname;
         document.querySelectorAll(".erp-nav-link").forEach(link => {
-            if (link.getAttribute("data-nav-path") === currentPath) {
+            const navPath = link.getAttribute("data-nav-path");
+            if (navPath === currentPath) {
                 link.classList.add("erp-nav-active");
+                link.addEventListener("click", (e) => {
+                    if (window.location.pathname === navPath && !window.location.search) {
+                        e.preventDefault();
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                    }
+                });
             }
         });
 
@@ -955,5 +998,338 @@
             });
             smartObserver.observe(document.body, { childList: true, subtree: true });
         })();
+
+        // === Global Smart Notification Center (Messages, Directives & Due Follow-ups) ===
+        (function initErpNotifications() {
+            const escHtml = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+            window.toggleErpNotifDrawer = function() {
+                const drawer = document.getElementById('erp-notif-drawer');
+                if (!drawer) return;
+                const willOpen = drawer.classList.contains('hidden');
+                drawer.classList.toggle('hidden', !willOpen);
+                if (willOpen) window.refreshErpNotifications();
+            };
+
+            window.refreshErpNotifications = async function() {
+                try {
+                    const res = await fetch('/api/notifications/summary');
+                    if (!res.ok) return;
+                    const data = await res.json();
+
+                    const badge = document.getElementById('erp-notif-badge');
+                    if (badge) {
+                        const n = Number(data.total_badge || 0);
+                        badge.textContent = n > 99 ? '99+' : String(n);
+                        badge.classList.toggle('hidden', n <= 0);
+                    }
+                    const msgPill = document.getElementById('erp-msg-unread-pill');
+                    if (msgPill) {
+                        const u = Number(data.unread_count || 0);
+                        msgPill.textContent = u > 99 ? '99+' : String(u);
+                        msgPill.classList.toggle('hidden', u <= 0);
+                    }
+
+                    const body = document.getElementById('erp-notif-body');
+                    if (!body) return;
+
+                    let html = '';
+
+                    // 1. Unread Messages & Directives
+                    const unread = data.unread_items || [];
+                    html += `<div class="space-y-1.5">
+                        <div class="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-[#003d58]">
+                            <span>✉️ Unread Messages &amp; Directives</span>
+                            <span class="px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700">${data.unread_count || 0}</span>
+                        </div>`;
+                    if (!unread.length) {
+                        html += `<div class="text-xs text-slate-400 py-2">All caught up — no unread messages.</div>`;
+                    } else {
+                        html += unread.map(it => `
+                            <a href="/messages?id=${it.message_id}" class="block p-2.5 rounded-xl border border-slate-200 bg-[#fffaea]/70 hover:border-[#d29535] transition">
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-xs font-bold text-[#003d58] truncate">${it.msg_type === 'directive' ? '🎯 ' : '✉️ '}${escHtml(it.subject)}</span>
+                                    ${it.priority === 'urgent' ? '<span class="text-[9px] px-1.5 py-0.2 rounded bg-rose-600 text-white font-extrabold shrink-0">URGENT</span>' : ''}
+                                </div>
+                                <div class="text-[11px] text-slate-500 mt-0.5 flex items-center justify-between">
+                                    <span>From <strong>${escHtml(it.sender_username)}</strong> ${it.entity_label ? '· ' + escHtml(it.entity_label) : ''}</span>
+                                    ${it.alert_kind === 'reply' ? '<span class="text-emerald-700 font-semibold">New reply</span>' : ''}
+                                </div>
+                            </a>
+                        `).join('');
+                    }
+                    html += `</div>`;
+
+                    // 2. My Open Directives
+                    const tasks = data.open_tasks || [];
+                    html += `<div class="space-y-1.5 pt-3 border-t border-slate-200">
+                        <div class="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-[#003d58]">
+                            <span>🎯 My Open Directives</span>
+                            <span class="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">${data.open_tasks_count || 0}</span>
+                        </div>`;
+                    if (!tasks.length) {
+                        html += `<div class="text-xs text-slate-400 py-2">No open directives assigned to you.</div>`;
+                    } else {
+                        html += tasks.map(t => `
+                            <a href="/messages?folder=tasks&id=${t.message_id}" class="block p-2.5 rounded-xl border ${t.is_overdue ? 'border-rose-300 bg-rose-50/60' : 'border-slate-200 bg-white'} hover:border-[#003d58] transition">
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-xs font-bold text-slate-800 truncate">${escHtml(t.subject)}</span>
+                                    ${t.due_date ? `<span class="text-[10px] font-mono font-bold shrink-0 ${t.is_overdue ? 'text-rose-600' : 'text-slate-500'}">${escHtml(t.due_date)}</span>` : ''}
+                                </div>
+                                <div class="text-[11px] text-slate-500 mt-0.5">By <strong>${escHtml(t.sender_username)}</strong> ${t.entity_label ? '· ' + escHtml(t.entity_label) : ''}</div>
+                            </a>
+                        `).join('');
+                    }
+                    html += `</div>`;
+
+                    // 3. My Due Follow-up Reminders (logged by this user)
+                    const fups = data.due_followups || [];
+                    html += `<div class="space-y-1.5 pt-3 border-t border-slate-200">
+                        <div class="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-[#003d58]">
+                            <span>📞 My Due Follow-up Calls</span>
+                            <span class="px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800">${data.personal_due_count || 0}</span>
+                        </div>`;
+                    if (!fups.length) {
+                        html += `<div class="text-xs text-slate-400 py-2">No overdue follow-up dates scheduled by you.</div>`;
+                    } else {
+                        html += fups.map(f => `
+                            <a href="${escHtml(f.url)}" class="block p-2.5 rounded-xl border ${f.is_overdue ? 'border-rose-300 bg-rose-50/50' : 'border-amber-200 bg-amber-50/40'} hover:border-[#003d58] transition">
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-xs font-bold text-[#003d58] truncate">${escHtml(f.title)}</span>
+                                    <span class="text-[10px] font-mono font-bold ${f.is_overdue ? 'text-rose-600' : 'text-amber-700'} shrink-0">${escHtml(f.due_date)}</span>
+                                </div>
+                                <div class="text-[11px] text-slate-500 mt-0.5">${escHtml(f.subtitle)}</div>
+                            </a>
+                        `).join('');
+                    }
+                    html += `</div>`;
+
+                    // 4. Smart Radar Summary Cards (RBAC-filtered)
+                    const radar = data.radar_cards || [];
+                    if (radar.length) {
+                        html += `<div class="space-y-1.5 pt-3 border-t border-slate-200">
+                            <div class="text-[11px] font-extrabold uppercase tracking-wider text-[#003d58]">📡 Smart Follow-up Radar</div>` +
+                            radar.map(rc => `
+                                <a href="${escHtml(rc.url)}" class="block p-2.5 rounded-xl border ${rc.tone === 'amber' ? 'border-amber-200 bg-amber-50/50' : 'border-sky-200 bg-sky-50/50'} hover:shadow-xs transition">
+                                    <div class="text-xs font-bold text-[#003d58]">${escHtml(rc.title)}</div>
+                                    <div class="text-[11px] text-slate-500 mt-0.5">${escHtml(rc.subtitle)}</div>
+                                </a>
+                            `).join('') + `</div>`;
+                    }
+
+                    body.innerHTML = html;
+                } catch (e) { /* silent */ }
+            };
+
+            window.refreshErpNotifications();
+            setInterval(window.refreshErpNotifications, 60000);
+        })();
     });
+</script>
+
+<!-- Global Slide-Over Notification Center Drawer -->
+<div id="erp-notif-drawer" class="fixed inset-0 z-50 hidden">
+    <div onclick="toggleErpNotifDrawer()" class="absolute inset-0 bg-slate-900/45 backdrop-blur-[1px]"></div>
+    <aside class="absolute right-0 top-0 bottom-0 w-full max-w-md bg-white shadow-2xl border-l border-[#d7d3cb] flex flex-col">
+        <div class="px-5 py-4 text-white flex items-center justify-between shrink-0" style="background: linear-gradient(135deg, #00354d, #004e70);">
+            <div class="flex items-center gap-2.5">
+                <span class="text-lg">🔔</span>
+                <div>
+                    <div class="text-sm font-extrabold">Notifications &amp; Follow-up Alerts</div>
+                    <div class="text-[11px] text-amber-200/90">التنبيهات والمراسلات ومواعيد المتابعة</div>
+                </div>
+            </div>
+            <button type="button" onclick="toggleErpNotifDrawer()" class="p-1.5 rounded-lg hover:bg-white/15 text-slate-200">✕</button>
+        </div>
+        <div id="erp-notif-body" class="flex-1 overflow-y-auto p-4 space-y-4 bg-[#faf8f2]/50">
+            <div class="text-center text-xs text-slate-400 py-8">Loading alerts...</div>
+        </div>
+        <div class="px-4 py-3 border-t border-slate-200 bg-white flex items-center justify-between gap-2 shrink-0">
+            <a href="/messages?compose=1&type=directive" class="px-3 py-2 rounded-xl border border-[#003d58] text-[#003d58] hover:bg-[#003d58]/5 text-xs font-bold transition">🎯 New Directive</a>
+            <a href="/messages" class="px-4 py-2 rounded-xl bg-[#003d58] hover:bg-[#005275] text-white text-xs font-bold transition">Open Messages Hub →</a>
+        </div>
+    </aside>
+</div>
+
+<!-- Global Branded ERP Dialog Modal (Replaces native browser alert/confirm across all pages) -->
+<div id="erp-dialog-overlay" class="fixed inset-0 z-[99999] hidden items-center justify-center p-4 bg-slate-950/55 backdrop-blur-[2px]" dir="ltr">
+    <div id="erp-dialog-card" class="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-[#d7d3cb] overflow-hidden transform transition-all">
+        <!-- Branded Top Header: System Name + Username -->
+        <div id="erp-dialog-header" class="px-4 py-3 text-white flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+                <span id="erp-dialog-icon" class="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center text-sm shrink-0">ℹ️</span>
+                <div class="min-w-0">
+                    <div class="text-xs font-extrabold tracking-tight truncate">Discover Islam Society — ERP</div>
+                    <div id="erp-dialog-subtitle" class="text-[10px] font-semibold opacity-90 truncate">System Notification</div>
+                </div>
+            </div>
+            <span id="erp-dialog-user-badge" class="px-2 py-0.5 rounded-full bg-black/20 text-[10px] font-mono font-bold whitespace-nowrap shrink-0"></span>
+        </div>
+
+        <!-- Type Strip + Message Body -->
+        <div class="p-5 space-y-3">
+            <div class="flex items-center gap-2">
+                <span id="erp-dialog-type-pill" class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider"></span>
+            </div>
+            <div id="erp-dialog-message" class="text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-line font-medium"></div>
+        </div>
+
+        <!-- Footer Buttons -->
+        <div class="px-5 py-3 bg-[#faf8f2] border-t border-slate-200 flex items-center justify-end gap-2">
+            <button type="button" id="erp-dialog-cancel-btn" class="hidden px-4 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition">
+                Cancel (إلغاء)
+            </button>
+            <button type="button" id="erp-dialog-ok-btn" class="px-5 py-1.5 rounded-xl text-white text-xs font-extrabold shadow-xs transition">
+                OK (موافق)
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function initGlobalErpDialogs() {
+        const DIALOG_THEMES = {
+            success: {
+                headerBg: 'linear-gradient(135deg, #065f46, #059669)',
+                icon: '✅',
+                subtitle: 'Operation Completed · تم بنجاح',
+                pillText: 'SUCCESS · نجاح',
+                pillCls: 'bg-emerald-100 text-emerald-800 border border-emerald-200',
+                okCls: 'bg-emerald-600 hover:bg-emerald-700'
+            },
+            error: {
+                headerBg: 'linear-gradient(135deg, #9f1239, #e11d48)',
+                icon: '⛔',
+                subtitle: 'Action Blocked / Error · خطأ',
+                pillText: 'ERROR · خطأ',
+                pillCls: 'bg-rose-100 text-rose-800 border border-rose-200',
+                okCls: 'bg-rose-600 hover:bg-rose-700'
+            },
+            warning: {
+                headerBg: 'linear-gradient(135deg, #92400e, #d97706)',
+                icon: '⚠️',
+                subtitle: 'Warning & Confirmation · تحذير',
+                pillText: 'WARNING · تحذير',
+                pillCls: 'bg-amber-100 text-amber-900 border border-amber-300',
+                okCls: 'bg-amber-600 hover:bg-amber-700'
+            },
+            info: {
+                headerBg: 'linear-gradient(135deg, #002b3e, #003d58)',
+                icon: 'ℹ️',
+                subtitle: 'System Notice · تنبيه',
+                pillText: 'NOTICE · تنبيه',
+                pillCls: 'bg-sky-100 text-[#003d58] border border-sky-200',
+                okCls: 'bg-[#003d58] hover:bg-[#005175]'
+            }
+        };
+
+        function detectDialogType(msg) {
+            const s = String(msg || '').toLowerCase();
+            if (/error|failed|invalid|required|cannot|could not|denied|duplicate|not found|خطأ|فشل|إلزامي|إلزامية|لا يمكن|مكرر|غير موجود|يرجى إدخال/.test(s)) {
+                return 'error';
+            }
+            if (/warning|notice:|caution|are you sure|confirm|تنبيه|تحذير|هل تريد|متأكد/.test(s)) {
+                return 'warning';
+            }
+            if (/success|saved|deleted|generated|completed|updated|sent|بنجاح|تم الحفظ|تم التحديث/.test(s)) {
+                return 'success';
+            }
+            return 'info';
+        }
+
+        const queue = [];
+        let activeResolver = null;
+
+        function renderNext() {
+            if (activeResolver || !queue.length) return;
+            const item = queue.shift();
+            const overlay = document.getElementById('erp-dialog-overlay');
+            if (!overlay) {
+                item.resolve(true);
+                return;
+            }
+            const t = DIALOG_THEMES[item.type] || DIALOG_THEMES.info;
+            const uname = (window.ERP_USER && window.ERP_USER.username) ? window.ERP_USER.username : 'USER';
+
+            document.getElementById('erp-dialog-header').style.background = t.headerBg;
+            document.getElementById('erp-dialog-icon').textContent = t.icon;
+            document.getElementById('erp-dialog-subtitle').textContent = item.title || t.subtitle;
+            document.getElementById('erp-dialog-user-badge').textContent = '👤 ' + uname;
+
+            const pill = document.getElementById('erp-dialog-type-pill');
+            pill.textContent = t.pillText;
+            pill.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ' + t.pillCls;
+
+            const msgEl = document.getElementById('erp-dialog-message');
+            msgEl.textContent = String(item.message ?? '');
+            msgEl.dir = /[\u0600-\u06FF]/.test(msgEl.textContent) && !/^[A-Za-z0-9]/.test(msgEl.textContent.trim()) ? 'rtl' : 'ltr';
+
+            const cancelBtn = document.getElementById('erp-dialog-cancel-btn');
+            const okBtn = document.getElementById('erp-dialog-ok-btn');
+            cancelBtn.classList.toggle('hidden', !item.isConfirm);
+            okBtn.className = 'px-5 py-1.5 rounded-xl text-white text-xs font-extrabold shadow-xs transition ' + t.okCls;
+            okBtn.textContent = item.isConfirm ? (item.okLabel || 'Confirm (تأكيد)') : 'OK (موافق)';
+
+            activeResolver = item.resolve;
+            overlay.classList.remove('hidden');
+            overlay.classList.add('flex');
+            okBtn.focus();
+        }
+
+        function closeDialog(result) {
+            const overlay = document.getElementById('erp-dialog-overlay');
+            if (overlay) {
+                overlay.classList.add('hidden');
+                overlay.classList.remove('flex');
+            }
+            const res = activeResolver;
+            activeResolver = null;
+            if (res) res(result);
+            renderNext();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const okBtn = document.getElementById('erp-dialog-ok-btn');
+            const cancelBtn = document.getElementById('erp-dialog-cancel-btn');
+            if (okBtn) okBtn.addEventListener('click', () => closeDialog(true));
+            if (cancelBtn) cancelBtn.addEventListener('click', () => closeDialog(false));
+            document.addEventListener('keydown', (e) => {
+                if (!activeResolver) return;
+                if (e.key === 'Escape') closeDialog(false);
+                if (e.key === 'Enter') { e.preventDefault(); closeDialog(true); }
+            });
+        });
+
+        window.erpAlert = function(message, type = null, title = null) {
+            return new Promise((resolve) => {
+                queue.push({
+                    message,
+                    type: type || detectDialogType(message),
+                    title,
+                    isConfirm: false,
+                    resolve
+                });
+                renderNext();
+            });
+        };
+
+        window.erpConfirm = function(message, type = 'warning', title = null, okLabel = null) {
+            return new Promise((resolve) => {
+                queue.push({
+                    message,
+                    type: type || 'warning',
+                    title,
+                    okLabel,
+                    isConfirm: true,
+                    resolve
+                });
+                renderNext();
+            });
+        };
+
+        // Upgrade every native alert() across all ERP screens to the branded dialog automatically
+        window.alert = function(message) {
+            window.erpAlert(message);
+        };
+    })();
 </script>

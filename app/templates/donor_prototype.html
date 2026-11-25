@@ -150,19 +150,19 @@
                 <!-- Row 1: Donor No + 4 Name Parts -->
                 <div class="grid grid-cols-2 sm:grid-cols-6 gap-2.5 mb-2.5">
                     <div>
-                        <label class="block text-[11px] font-bold text-rose-700 mb-1">Donor No *</label>
-                        <input type="number" x-model="currentDonor.donor_no" readonly
-                               class="w-full bg-amber-50/70 border border-amber-300 text-slate-900 font-mono font-bold rounded px-2.5 py-1 text-xs">
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">Donor No * <span class="text-[10px] font-normal text-slate-400">(Auto)</span></label>
+                        <input type="text" :value="currentDonor.isNew ? 'AUTO' : currentDonor.donor_no" readonly tabindex="-1"
+                               class="w-full bg-amber-50/70 border border-amber-300 text-slate-900 font-mono font-bold rounded px-2.5 py-1 text-xs cursor-not-allowed">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">First Name (AR)</label>
-                        <input type="text" x-model="currentDonor.f_nm" @input="updateFullName()"
-                               class="ar-input w-full bg-slate-50 border border-slate-300 focus:border-blue-600 focus:bg-white rounded px-2.5 py-1 text-xs">
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">First Name (AR) *</label>
+                        <input type="text" x-model="currentDonor.f_nm" @input="updateFullName()" required
+                               class="ar-input w-full bg-white border border-rose-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-semibold">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">Second Name (AR)</label>
-                        <input type="text" x-model="currentDonor.s_nm" @input="updateFullName()"
-                               class="ar-input w-full bg-slate-50 border border-slate-300 focus:border-blue-600 focus:bg-white rounded px-2.5 py-1 text-xs">
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">Second Name (AR) *</label>
+                        <input type="text" x-model="currentDonor.s_nm" @input="updateFullName()" required
+                               class="ar-input w-full bg-white border border-rose-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-semibold">
                     </div>
                     <div>
                         <label class="block text-[11px] font-semibold text-slate-600 mb-1">Third Name (AR)</label>
@@ -170,23 +170,23 @@
                                class="ar-input w-full bg-slate-50 border border-slate-300 focus:border-blue-600 focus:bg-white rounded px-2.5 py-1 text-xs">
                     </div>
                     <div class="sm:col-span-2">
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">Family / Last Name (AR)</label>
-                        <input type="text" x-model="currentDonor.l_nm" @input="updateFullName()"
-                               class="ar-input w-full bg-slate-50 border border-slate-300 focus:border-blue-600 focus:bg-white rounded px-2.5 py-1 text-xs">
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">Family / Last Name (AR) *</label>
+                        <input type="text" x-model="currentDonor.l_nm" @input="updateFullName()" required
+                               class="ar-input w-full bg-white border border-rose-300 focus:border-blue-600 rounded px-2.5 py-1 text-xs font-semibold">
                     </div>
                 </div>
 
-                <!-- Row 2: Full Arabic Name + Full English Name -->
+                <!-- Row 2: Full Arabic Name (Auto Read-Only) + Full English Name (Required) -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2.5">
                     <div>
-                        <label class="block text-[11px] font-bold text-rose-700 mb-1">Full Donor Name (Arabic) *</label>
-                        <input type="text" x-model="currentDonor.donor_name"
-                               class="ar-input w-full bg-white border border-slate-300 focus:border-blue-600 font-bold text-slate-900 rounded px-2.5 py-1 text-xs">
+                        <label class="block text-[11px] font-bold text-slate-600 mb-1">Full Donor Name (Arabic) <span class="text-[10px] font-normal text-slate-400">(Auto-assembled · Read-only)</span></label>
+                        <input type="text" x-model="currentDonor.donor_name" readonly tabindex="-1"
+                               class="ar-input w-full bg-slate-100 border border-slate-300 font-bold text-slate-700 rounded px-2.5 py-1 text-xs cursor-not-allowed">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">Full Donor Name (English)</label>
-                        <input type="text" dir="ltr" x-model="currentDonor.donor_ename"
-                               class="w-full bg-white border border-slate-300 focus:border-blue-600 font-mono text-slate-800 rounded px-2.5 py-1 text-xs">
+                        <label class="block text-[11px] font-bold text-rose-700 mb-1">Full Donor Name (English) *</label>
+                        <input type="text" dir="ltr" x-model="currentDonor.donor_ename" required
+                               class="w-full bg-white border border-rose-300 focus:border-blue-600 font-mono font-bold text-slate-800 rounded px-2.5 py-1 text-xs">
                     </div>
                 </div>
 
@@ -409,7 +409,9 @@
                           x-text="currentDonor.items.length + ' SO(s)'"></span>
                 </div>
 
-                <button @click="openAddSoModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition">
+                <button @click="openAddSoModal()" :disabled="Boolean(currentDonor && currentDonor.isNew)"
+                        :title="(currentDonor && currentDonor.isNew) ? 'Save the new donor first before adding Standing Orders' : 'Add New Standing Order'"
+                        class="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-45 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition">
                     <span>+ Add Standing Order</span>
                 </button>
             </div>
@@ -504,50 +506,81 @@
 
     <!-- 5. Add New Standing Order Modal -->
     <div x-show="showAddSoModal" style="display: none;" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-5" @click.away="showAddSoModal = false">
+        <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-xl w-full p-5" @click.away="showAddSoModal = false">
             <div class="flex items-center justify-between border-b pb-3 mb-4">
-                <h3 class="font-bold text-sm text-slate-800">Add New Standing Order for: <span class="text-blue-700" x-text="currentDonor.donor_ename || currentDonor.donor_name"></span></h3>
+                <div>
+                    <h3 class="font-bold text-sm text-[#003d58]">Add New Standing Order for: <span class="text-blue-700" x-text="currentDonor.donor_ename || currentDonor.donor_name"></span></h3>
+                    <p class="text-[11px] text-slate-500">Fields marked with <span class="text-rose-600 font-bold">*</span> are required</p>
+                </div>
                 <button @click="showAddSoModal = false" class="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
             </div>
 
-            <div class="grid grid-cols-2 gap-3 text-xs mb-4">
+            <!-- Focus Warning for Immutable Start Date & Bank -->
+            <div x-show="soImmutableWarn" x-transition
+                 class="mb-3 p-2.5 rounded-lg bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold flex items-start gap-2">
+                <span>⚠️</span>
                 <div>
-                    <label class="block font-semibold text-slate-600 mb-1">Charity Item</label>
-                    <select x-model="newSo.item_no" class="w-full border border-slate-300 rounded px-2.5 py-1.5">
+                    <div>تنبيه هام: بمجرد حفظ هذا الاستقطاع لا يمكن تعديل <strong>تاريخ البداية</strong> أو <strong>البنك</strong> نهائياً!</div>
+                    <div class="text-[11px] font-semibold text-rose-700">Important: Once saved, Start Date and Bank are permanently locked and cannot be changed.</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 text-xs mb-3">
+                <div>
+                    <label class="block font-bold text-rose-700 mb-1">Charity Item *</label>
+                    <select x-model="newSo.item_no" required class="w-full border border-rose-300 rounded px-2.5 py-1.5 font-semibold">
                         <template x-for="ci in charityItems" :key="ci.item_cd">
                             <option :value="String(ci.item_cd)" x-text="ci.item_e_desc"></option>
                         </template>
                     </select>
                 </div>
                 <div>
-                    <label class="block font-semibold text-slate-600 mb-1">Monthly Amount (BHD)</label>
-                    <input type="number" x-model="newSo.monthly_pay" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono font-bold">
+                    <label class="block font-bold text-rose-700 mb-1">Monthly Amount (BHD) *</label>
+                    <input type="number" step="0.001" min="0.001" x-model="newSo.monthly_pay" required class="w-full border border-rose-300 rounded px-2.5 py-1.5 font-mono font-bold">
                 </div>
                 <div>
-                    <label class="block font-semibold text-slate-600 mb-1">Start Date</label>
-                    <input type="date" x-model="newSo.start_date" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono">
+                    <label class="block font-bold text-rose-700 mb-1">Start Date * <span class="text-[10px] font-normal text-slate-500">(Locked after save)</span></label>
+                    <input type="date" x-model="newSo.start_date" @focus="soImmutableWarn = true" required
+                           class="w-full border border-rose-300 rounded px-2.5 py-1.5 font-mono font-bold">
                 </div>
                 <div>
-                    <label class="block font-semibold text-slate-600 mb-1">Bank</label>
-                    <select x-model.number="newSo.bank2_cd" class="w-full border border-slate-300 rounded px-2.5 py-1.5">
+                    <label class="block font-bold text-rose-700 mb-1">Bank * <span class="text-[10px] font-normal text-slate-500">(Locked after save)</span></label>
+                    <select x-model.number="newSo.bank2_cd" @focus="soImmutableWarn = true" required class="w-full border border-rose-300 rounded px-2.5 py-1.5 font-semibold">
                         <template x-for="b in banks" :key="b.bank_cd">
                             <option :value="b.bank_cd" x-text="b.bank_e_desc"></option>
                         </template>
                     </select>
                 </div>
-                <div>
-                    <label class="block font-semibold text-slate-600 mb-1">Account No.</label>
-                    <input type="text" x-model="newSo.donor_acc_no" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono">
-                </div>
-                <div>
-                    <label class="block font-semibold text-slate-600 mb-1">Bank SO Code (Sort Field)</label>
-                    <input type="text" x-model="newSo.sort_field" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono font-bold">
+                <div class="col-span-2">
+                    <label class="block font-semibold text-slate-700 mb-1">Account No. <span class="text-[10px] text-slate-400">(Inherited from Donor Profile if available)</span></label>
+                    <input type="text" x-model="newSo.donor_acc_no" class="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono font-bold">
                 </div>
             </div>
 
-            <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 mb-4">
-                <strong>Automated Schedule (Insert_Payments):</strong> When saving a standing order with a past start date, the system automatically calculates elapsed months and generates unpaid due records in <code>MONEY_TRANS</code>.
+            <!-- Bank SO Code / Alt SO Code (At least one required, unique per bank) -->
+            <div class="p-3 rounded-lg bg-slate-50 border border-rose-200 mb-3 space-y-2 text-xs">
+                <div class="text-[11px] font-bold text-rose-700">
+                    Bank Standing Order Codes * <span class="font-normal text-slate-600">(At least one required — must be unique within the selected bank / مطلوب كود واحد على الأقل بدون تكرار في نفس البنك)</span>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1">Bank SO Code (Sort Field)</label>
+                        <input type="text" x-model="newSo.sort_field" placeholder="Enter Bank SO Code..."
+                               class="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 font-mono font-bold">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-emerald-800 mb-1">Alt. SO Code (الكود البديل)</label>
+                        <input type="text" x-model="newSo.alt_so_code" placeholder="Enter Alt. SO Code..."
+                               class="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 font-mono font-bold">
+                    </div>
+                </div>
             </div>
+
+            <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 mb-3">
+                <strong>Automated Schedule (Insert_Payments):</strong> When saving a standing order with a past start date, the system automatically inserts retroactive unpaid monthly records in <code>MONEY_TRANS</code> up to the current month.
+            </div>
+
+            <div x-show="soModalError" class="mb-3 p-2.5 rounded-lg bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold" x-text="soModalError"></div>
 
             <div class="flex justify-end gap-2">
                 <button @click="showAddSoModal = false" class="px-4 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600">Cancel</button>
@@ -644,6 +677,8 @@
                 currentIndex: 0,
                 selectedSoId: null,
                 showAddSoModal: false,
+                soImmutableWarn: false,
+                soModalError: '',
                 lookupsLoaded: false,
                 banks: [],
                 charityItems: [],
@@ -654,7 +689,7 @@
                 counts: { ALL: 0, ACTIVE: 0, INACTIVE: 0, NO_ITEMS: 0 },
                 maxDonorNo: 0,
                 donorNos: [],
-                newSo: { item_no: '1', monthly_pay: 10, start_date: '2026-06-01', bank2_cd: 1, donor_acc_no: '', sort_field: '' },
+                newSo: { item_no: '1', monthly_pay: 10, start_date: '', bank2_cd: 1, donor_acc_no: '', sort_field: '', alt_so_code: '' },
                 currentDonor: {
                     donor_no: 1, f_nm: '', s_nm: '', t_nm: '', l_nm: '',
                     donor_name: 'Loading...', donor_ename: '', donor_cpr: '',
@@ -689,9 +724,9 @@
                         this.donorNos = data.donor_nos || [];
                         this.currentIndex = Number(data.current_index || 0);
                         if (data.current_donor) {
-                            this.currentDonor = data.current_donor;
+                            this.currentDonor = { ...data.current_donor, isNew: false };
                         } else if (data.donors && data.donors.length > 0) {
-                            this.currentDonor = data.donors[0];
+                            this.currentDonor = { ...data.donors[0], isNew: false };
                         } else {
                             this.currentDonor = {
                                 donor_no: 0, f_nm: '', s_nm: '', t_nm: '', l_nm: '',
@@ -808,13 +843,39 @@
                     this.currentDonor.donor_name = parts.join(' ');
                 },
                 openAddSoModal() {
-                    this.newSo.item_no = (this.charityItems.length > 0 ? String(this.charityItems[0].item_cd) : '1');
-                    this.newSo.donor_acc_no = this.currentDonor.donor_acc_no;
-                    this.newSo.bank2_cd = Number(this.currentDonor.bank2_cd || 1);
-                    this.newSo.sort_field = String(Math.floor(Math.random() * 8999) + 1000);
+                    if (this.currentDonor.isNew) {
+                        alert('Please save the new donor first before adding a Standing Order. / يرجى حفظ بيانات المستقطع الجديد أولاً.');
+                        return;
+                    }
+                    const now = new Date();
+                    const defaultStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+                    this.soImmutableWarn = false;
+                    this.soModalError = '';
+                    this.newSo = {
+                        item_no: (this.charityItems.length > 0 ? String(this.charityItems[0].item_cd) : '1'),
+                        monthly_pay: 10,
+                        start_date: defaultStart,
+                        bank2_cd: Number(this.currentDonor.bank2_cd || 1),
+                        donor_acc_no: this.currentDonor.donor_acc_no || '',
+                        sort_field: '',
+                        alt_so_code: ''
+                    };
                     this.showAddSoModal = true;
                 },
                 async confirmAddSo() {
+                    this.soModalError = '';
+                    if (!this.newSo.item_no) { this.soModalError = 'Charity Item is required. / بند التبرع إلزامي.'; return; }
+                    if (!this.newSo.monthly_pay || Number(this.newSo.monthly_pay) <= 0) { this.soModalError = 'Monthly Amount (BHD) must be greater than 0. / قيمة الاستقطاع يجب أن تكون أكبر من صفر.'; return; }
+                    if (!this.newSo.start_date) { this.soModalError = 'Start Date is required. / تاريخ البداية إلزامي.'; return; }
+                    if (!this.newSo.bank2_cd) { this.soModalError = 'Bank is required. / البنك إلزامي.'; return; }
+                    const sf = String(this.newSo.sort_field || '').trim();
+                    const alt = String(this.newSo.alt_so_code || '').trim();
+                    const hasSf = sf && sf !== '0';
+                    const hasAlt = alt && alt !== '0';
+                    if (!hasSf && !hasAlt) {
+                        this.soModalError = 'Please enter at least Bank SO Code or Alt. SO Code (both cannot be empty). / يجب إدخال كود الاستقطاع أو الكود البديل على الأقل.';
+                        return;
+                    }
                     const res = await fetch('/api/standing-orders/add', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -825,7 +886,8 @@
                             donation_start_date: this.newSo.start_date,
                             bank2_cd: Number(this.newSo.bank2_cd || 1),
                             donor_acc_no: this.newSo.donor_acc_no || '',
-                            sort_field: String(this.newSo.sort_field)
+                            sort_field: sf,
+                            alt_so_code: alt
                         })
                     });
                     if (res.ok) {
@@ -833,8 +895,13 @@
                         await this.loadFromDatabase(this.currentDonor.donor_no);
                         alert('Standing Order saved and retroactive schedule generated in MONEY_TRANS successfully!');
                     } else {
-                        const err = await res.text();
-                        alert('Error saving Standing Order: ' + err);
+                        const rawTxt = await res.text();
+                        let msg = rawTxt || 'Error saving Standing Order.';
+                        try {
+                            const errJson = JSON.parse(rawTxt);
+                            msg = errJson.detail || msg;
+                        } catch (e) {}
+                        this.soModalError = msg;
                     }
                 },
                 async toggleSoStatus(item) {
@@ -875,9 +942,34 @@
                 },
                 async saveDonor() {
                     const d = { ...this.currentDonor };
-                    if (!d.donor_name || d.donor_name.trim() === '' || d.donor_name.trim() === 'Loading...') {
-                        alert('Please enter the donor name before saving.');
+                    if (!String(d.f_nm || '').trim() || !String(d.s_nm || '').trim() || !String(d.l_nm || '').trim()) {
+                        alert('First Name, Second Name, and Family/Last Name (Arabic) are required. / الاسم الأول والثاني والرابع (العائلة) بالعربي إلزامية.');
                         return;
+                    }
+                    this.updateFullName();
+                    d.donor_name = this.currentDonor.donor_name;
+                    if (!d.donor_name || d.donor_name.trim() === '' || d.donor_name.trim() === 'Loading...') {
+                        alert('Full Donor Name (Arabic) is required. / يرجى إدخال الاسم الكامل بالعربي.');
+                        return;
+                    }
+                    if (!d.donor_ename || d.donor_ename.trim() === '') {
+                        alert('Full Donor Name (English) is required. / يرجى إدخال الاسم الكامل بالإنجليزي.');
+                        return;
+                    }
+                    const hasAnyContact = Boolean(
+                        String(d.donor_tel1 || '').trim() ||
+                        String(d.donor_tel2 || '').trim() ||
+                        String(d.donor_mobile || '').trim()
+                    );
+                    if (!hasAnyContact) {
+                        const proceed = await window.erpConfirm(
+                            'All contact numbers (Phone 1, Mobile 1, Mobile 2) are empty!\n' +
+                            'تنبيه: لم يتم إدخال أي رقم تواصل للمستقطع.\n\n' +
+                            'Do you want to save without contact details? / هل تريد المتابعة والحفظ بدون أرقام تواصل؟',
+                            'warning',
+                            'Missing Contact Information · نقص بيانات التواصل'
+                        );
+                        if (!proceed) return;
                     }
                     const res = await fetch('/api/donors/save', {
                         method: 'POST',
@@ -886,18 +978,30 @@
                     });
                     if (res.ok) {
                         const result = await res.json();
+                        this.currentDonor.isNew = false;
+                        this.currentDonor.donor_no = result.donor_no;
+                        if (d.isNew) {
+                            this.currentFilter = 'ALL';
+                            this.searchQuery = '';
+                        }
                         await this.loadFromDatabase(result.donor_no);
-                        alert('Donor record saved to PostgreSQL successfully!');
+                        alert(`Donor #${result.donor_no} saved to PostgreSQL successfully!`);
                     } else {
-                        const err = await res.text();
-                        alert('Error saving donor: ' + err);
+                        let msg = 'Error saving donor.';
+                        try {
+                            const errJson = await res.json();
+                            msg = errJson.detail || msg;
+                        } catch (e) {
+                            msg = await res.text();
+                        }
+                        alert(msg);
                     }
                 },
                 async deleteDonor() {
                     if (!this.currentDonor) return;
                     const dno = this.currentDonor.donor_no;
                     const dname = this.currentDonor.donor_name || '';
-                    if (!confirm(`Are you sure you want to delete Donor #(${dno}) - ${dname}?`)) return;
+                    if (!(await window.erpConfirm(`Are you sure you want to delete Donor #(${dno}) — ${dname}?\nهل أنت متأكد من حذف هذا المستقطع؟`, 'warning', 'Confirm Deletion · تأكيد الحذف'))) return;
 
                     if (this.currentDonor.isNew) {
                         await this.loadFromDatabase();
@@ -920,7 +1024,7 @@
                     }
                 },
                 async deleteSo(item) {
-                    if (!confirm(`Are you sure you want to delete Standing Order #(${item.so_id})?`)) return;
+                    if (!(await window.erpConfirm(`Are you sure you want to delete Standing Order #(${item.so_id})?\nهل أنت متأكد من حذف هذا الاستقطاع؟`, 'warning', 'Confirm Standing Order Deletion · تأكيد حذف استقطاع'))) return;
                     const res = await fetch(`/api/standing-orders/${item.so_id}`, { method: 'DELETE' });
                     if (res.ok) {
                         alert(`Standing Order #(${item.so_id}) deleted successfully.`);

@@ -40,12 +40,12 @@
             <button type="button" @click="activeTab = 'risk_rule'"
                     :class="activeTab === 'risk_rule' ? 'bg-[#003d58] text-white shadow-xs' : 'bg-white text-[#003d58] border border-[#d7d3cb] hover:bg-[#fffaea]'"
                     class="px-4 py-2 rounded-xl text-xs font-bold transition">
-                🎯 Cash Donor Risk Ranking Rule (قاعدة ترتيب المتأخرين)
+                💵 Cash Donor Risk Rule (متأخري النقدي)
             </button>
-            <button type="button" @click="activeTab = 'future'"
-                    :class="activeTab === 'future' ? 'bg-[#003d58] text-white shadow-xs' : 'bg-white text-slate-500 border border-[#d7d3cb] hover:bg-[#fffaea]'"
-                    class="px-4 py-2 rounded-xl text-xs font-semibold transition">
-                ⚙️ General ERP Parameters (Coming Soon)
+            <button type="button" @click="activeTab = 'so_risk_rule'"
+                    :class="activeTab === 'so_risk_rule' ? 'bg-[#003d58] text-white shadow-xs' : 'bg-white text-[#003d58] border border-[#d7d3cb] hover:bg-[#fffaea]'"
+                    class="px-4 py-2 rounded-xl text-xs font-bold transition">
+                🏦 Standing Orders Risk Rule (الاستقطاعات المتأخرة)
             </button>
         </div>
 
@@ -148,13 +148,92 @@
             </form>
         </section>
 
-        <!-- TAB 2: Extensible Placeholder for Future General ERP Settings -->
-        <section x-show="activeTab === 'future'" x-cloak class="bg-white rounded-2xl border border-[#d7d3cb] p-8 text-center space-y-2">
-            <div class="text-2xl">⚙️</div>
-            <h3 class="text-sm font-bold text-[#003d58]">Future General ERP Settings</h3>
-            <p class="text-xs text-[#757277] max-w-md mx-auto">
-                This modular Settings hub is ready to host additional organization-wide configurations (Standing Orders grace periods, society branding, SMS/WhatsApp templates, and fiscal year rules).
-            </p>
+        <!-- TAB 2: Standing Orders Delayed Risk Scoring Rule -->
+        <section x-show="activeTab === 'so_risk_rule'" x-cloak class="bg-white rounded-2xl border border-[#d7d3cb] shadow-2xs overflow-hidden">
+            <div class="px-5 py-4 bg-[#faf8f2] border-b border-[#d7d3cb] flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-sm font-bold text-[#003d58]">Delayed Standing Orders — Composite Priority Rule (0–100)</h2>
+                    <p class="text-xs text-[#757277] mt-0.5">Changes saved here immediately re-rank donors in <strong>Standing Orders Follow-up (/followup)</strong>.</p>
+                </div>
+                <div class="px-3 py-1.5 rounded-xl font-mono text-xs font-extrabold border"
+                     :class="soTotalWeight() === 100 ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-rose-50 border-rose-300 text-rose-800'">
+                    Total Weights: <span x-text="soTotalWeight()"></span> / 100
+                </div>
+            </div>
+
+            <form @submit.prevent="saveSoConfig()" class="p-5 space-y-6">
+                <div class="space-y-3">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-[#003d58]">1. Factor Weights (Must Sum to 100)</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-2">
+                            <label class="block text-xs font-bold text-[#003d58]">💰 Monthly SO Amount</label>
+                            <p class="text-[11px] text-[#757277]">Active monthly BHD commitment</p>
+                            <input type="number" min="0" max="100" x-model.number="soConfig.weight_monthly" required
+                                   class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-extrabold text-sm text-[#003d58]">
+                        </div>
+                        <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-2">
+                            <label class="block text-xs font-bold text-[#003d58]">⏳ Delay Months Window</label>
+                            <p class="text-[11px] text-[#757277]">Peak win-back urgency (3–6m)</p>
+                            <input type="number" min="0" max="100" x-model.number="soConfig.weight_delay" required
+                                   class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-extrabold text-sm text-[#003d58]">
+                        </div>
+                        <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-2">
+                            <label class="block text-xs font-bold text-[#003d58]">🏆 Paid History / Loyalty</label>
+                            <p class="text-[11px] text-[#757277]">Total historical paid months</p>
+                            <input type="number" min="0" max="100" x-model.number="soConfig.weight_loyalty" required
+                                   class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-extrabold text-sm text-[#003d58]">
+                        </div>
+                        <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-2">
+                            <label class="block text-xs font-bold text-[#003d58]">📞 Follow-up Gap</label>
+                            <p class="text-[11px] text-[#757277]">Never called or stale follow-up</p>
+                            <input type="number" min="0" max="100" x-model.number="soConfig.weight_followup" required
+                                   class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-extrabold text-sm text-[#003d58]">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-3 pt-4 border-t border-[#d7d3cb]/70">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-[#003d58]">2. Risk Tier Thresholds &amp; Follow-up Window</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200 space-y-1.5">
+                            <label class="block text-xs font-bold text-rose-800">🔴 Critical Min Score</label>
+                            <input type="number" min="1" max="100" x-model.number="soConfig.tier_critical_min" required
+                                   class="w-full h-9 px-3 bg-white border border-rose-300 rounded-lg font-mono font-bold text-rose-900">
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1.5">
+                            <label class="block text-xs font-bold text-amber-900">🟠 High Min Score</label>
+                            <input type="number" min="1" max="100" x-model.number="soConfig.tier_high_min" required
+                                   class="w-full h-9 px-3 bg-white border border-amber-300 rounded-lg font-mono font-bold text-amber-900">
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-yellow-50/70 border border-yellow-200 space-y-1.5">
+                            <label class="block text-xs font-bold text-yellow-800">🟡 Medium Min Score</label>
+                            <input type="number" min="1" max="100" x-model.number="soConfig.tier_medium_min" required
+                                   class="w-full h-9 px-3 bg-white border border-yellow-300 rounded-lg font-mono font-bold text-yellow-900">
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-slate-50 border border-[#d7d3cb] space-y-1.5">
+                            <label class="block text-xs font-bold text-[#003d58]">📅 Follow-up Stale (Days)</label>
+                            <input type="number" min="1" max="365" x-model.number="soConfig.followup_stale_days" required
+                                   class="w-full h-9 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-bold text-[#003d58]">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-[#d7d3cb]/70 flex flex-wrap items-center justify-between gap-3">
+                    <button type="button" @click="resetSoDefaults()"
+                            class="h-9 px-4 rounded-xl border border-[#d7d3cb] bg-white hover:bg-[#fffaea] text-xs font-bold text-[#003d58] transition">
+                        ↺ Reset to Recommended Defaults (35 / 30 / 20 / 15)
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <a href="/followup" class="h-9 px-4 rounded-xl border border-[#d7d3cb] bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 inline-flex items-center">
+                            View in SO Follow-up →
+                        </a>
+                        <button type="button" @click="saveSoConfig()" :disabled="savingSo || soTotalWeight() !== 100"
+                                class="h-9 px-6 rounded-xl bg-[#003d58] hover:bg-[#d29535] hover:text-[#002435] disabled:opacity-45 text-white text-xs font-extrabold shadow-xs transition">
+                            <span x-text="savingSo ? 'Saving...' : 'Save SO Settings'"></span>
+                        </button>
+                    </div>
+                </div>
+            </form>
         </section>
     </div>
 
@@ -163,11 +242,24 @@
             return {
                 activeTab: 'risk_rule',
                 saving: false,
+                savingSo: false,
                 toast: { message: '', type: 'success' },
                 config: {
                     weight_monetary: 35,
                     weight_frequency: 25,
                     weight_recency: 25,
+                    weight_followup: 15,
+                    tier_critical_min: 75,
+                    tier_high_min: 55,
+                    tier_medium_min: 35,
+                    followup_stale_days: 60,
+                    updated_by: 'SYSTEM',
+                    updated_at: ''
+                },
+                soConfig: {
+                    weight_monthly: 35,
+                    weight_delay: 30,
+                    weight_loyalty: 20,
                     weight_followup: 15,
                     tier_critical_min: 75,
                     tier_high_min: 55,
@@ -182,6 +274,13 @@
                         + Number(this.config.weight_frequency || 0)
                         + Number(this.config.weight_recency || 0)
                         + Number(this.config.weight_followup || 0);
+                },
+
+                soTotalWeight() {
+                    return Number(this.soConfig.weight_monthly || 0)
+                        + Number(this.soConfig.weight_delay || 0)
+                        + Number(this.soConfig.weight_loyalty || 0)
+                        + Number(this.soConfig.weight_followup || 0);
                 },
 
                 showToast(message, type = 'success') {
@@ -200,11 +299,26 @@
                     this.config.followup_stale_days = 60;
                 },
 
+                resetSoDefaults() {
+                    this.soConfig.weight_monthly = 35;
+                    this.soConfig.weight_delay = 30;
+                    this.soConfig.weight_loyalty = 20;
+                    this.soConfig.weight_followup = 15;
+                    this.soConfig.tier_critical_min = 75;
+                    this.soConfig.tier_high_min = 55;
+                    this.soConfig.tier_medium_min = 35;
+                    this.soConfig.followup_stale_days = 60;
+                },
+
                 async init() {
-                    const res = await fetch('/api/settings/risk-config');
-                    if (res.ok) {
-                        this.config = await res.json();
-                    }
+                    const qs = new URLSearchParams(window.location.search);
+                    if (qs.get('tab') === 'so_risk_rule') this.activeTab = 'so_risk_rule';
+                    const [r1, r2] = await Promise.all([
+                        fetch('/api/settings/risk-config'),
+                        fetch('/api/settings/so-risk-config')
+                    ]);
+                    if (r1.ok) this.config = await r1.json();
+                    if (r2.ok) this.soConfig = await r2.json();
                 },
 
                 async saveConfig() {
@@ -228,6 +342,30 @@
                         this.showToast(data.message || 'Settings saved!', 'success');
                     } finally {
                         this.saving = false;
+                    }
+                },
+
+                async saveSoConfig() {
+                    if (this.soTotalWeight() !== 100) {
+                        this.showToast('The 4 weights must sum to exactly 100.', 'error');
+                        return;
+                    }
+                    this.savingSo = true;
+                    try {
+                        const res = await fetch('/api/settings/so-risk-config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.soConfig)
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                            this.showToast(data.detail || 'Error saving SO settings.', 'error');
+                            return;
+                        }
+                        if (data.config) this.soConfig = data.config;
+                        this.showToast(data.message || 'Standing Orders settings saved!', 'success');
+                    } finally {
+                        this.savingSo = false;
                     }
                 }
             };

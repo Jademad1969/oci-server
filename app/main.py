@@ -12,7 +12,8 @@ import hashlib, hmac, json, base64, os
 
 from app.database import get_db, DATABASE_URL
 
-APP_VERSION = "v1.2.0"
+APP_VERSION = "v1.3.0"
+APP_RELEASE_DATE = "2026-11-25"
 
 def build_app_env_info() -> dict:
     db_name = DATABASE_URL.rsplit("/", 1)[-1].split("?")[0] if "/" in DATABASE_URL else "unknown"
@@ -64,6 +65,7 @@ def build_app_env_info() -> dict:
         "is_development": env_key == "development",
         "db_name": db_name,
         "version": APP_VERSION,
+        "release_date": APP_RELEASE_DATE,
         **meta,
     }
 
@@ -287,6 +289,7 @@ async def health_check():
         "raw_app_env": APP_ENV_INFO["raw"],
         "database": APP_ENV_INFO["db_name"],
         "version": APP_ENV_INFO["version"],
+        "release_date": APP_ENV_INFO["release_date"],
     }
 
 @app.get("/", response_class=HTMLResponse)

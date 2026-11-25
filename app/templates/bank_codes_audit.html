@@ -68,10 +68,17 @@
                 </button>
             </div>
 
-            <div>
-                <button @click="updateCodesAndMissingTrans()"
-                        class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-2">
-                    <span>Update Codes & Missing Transactions</span>
+            <div class="flex items-center gap-2.5">
+                <span x-show="!hasCodeOrTransIssues && stats.so_total_count > 0"
+                      class="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">
+                    ✔ All Codes Matched &amp; Synced
+                </span>
+                <button type="button" @click="updateCodesAndMissingTrans()"
+                        :disabled="!hasCodeOrTransIssues"
+                        :class="!hasCodeOrTransIssues ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-75' : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'"
+                        :title="hasCodeOrTransIssues ? 'Fix mismatched codes and insert missing monthly transactions' : 'No code mismatches or missing transactions to update'"
+                        class="px-5 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                    <span>Update Codes &amp; Missing Transactions</span>
                 </button>
             </div>
         </div>
@@ -299,6 +306,11 @@
                 stats: {
                     so_total_count: 0, so_active_count: 0, so_inactive_count: 0, so_active_sum: 0,
                     trans_count: 0, match_orig: 0, unmatch_orig: 0, match_alt: 0, unmatch_alt: 0, without_trans: 0
+                },
+                get hasCodeOrTransIssues() {
+                    return (Number(this.stats.unmatch_orig || 0) > 0)
+                        || (Number(this.stats.unmatch_alt || 0) > 0)
+                        || (Number(this.stats.without_trans || 0) > 0);
                 },
                 get soTotalPages() {
                     return Math.max(1, Math.ceil((this.soList.length || 0) / this.pageSize));

@@ -236,17 +236,32 @@
 
             <!-- (2) Count Reconciliation Indicators (4 Cols) -->
             <section class="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-xs p-4">
-                <h3 class="text-xs font-extrabold text-rose-800 border-b border-slate-200 pb-2 mb-3">
-                    Reconciliation Count Indicators
-                </h3>
+                <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3 gap-2">
+                    <h3 class="text-xs font-extrabold text-rose-800">
+                        Reconciliation Count Indicators
+                    </h3>
+                    <button type="button" @click="printExceptionReport('ALL')"
+                            :disabled="totalExceptionsCount === 0"
+                            :class="totalExceptionsCount === 0 ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#003d58] hover:bg-[#d29535] hover:text-[#002435] text-white shadow-2xs'"
+                            class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition inline-flex items-center gap-1"
+                            title="Print all reconciliation problem indicators (Not in System, No Txn, Duplicate, Blocked, Unknown)">
+                        <span>🖨️ Print All Issues</span>
+                        <span x-show="totalExceptionsCount > 0" class="font-mono px-1.5 rounded-full bg-rose-500 text-white text-[10px]" x-text="totalExceptionsCount"></span>
+                    </button>
+                </div>
                 <div class="grid grid-cols-2 gap-2 text-center">
                     <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center px-3">
                         <span class="text-[11px] font-bold text-slate-600">In Bank:</span>
                         <span class="text-lg font-extrabold font-mono text-slate-900" x-text="indicators.so_in_bank"></span>
                     </div>
-                    <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center px-3">
+                    <div :class="indicators.unknown_count > 0 ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200'"
+                         class="p-2.5 rounded-lg border flex justify-between items-center px-3 gap-1">
                         <span class="text-[11px] font-bold text-slate-600">Unknown:</span>
-                        <span class="text-lg font-extrabold font-mono text-slate-900" x-text="indicators.unknown_count"></span>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-lg font-extrabold font-mono text-slate-900" x-text="indicators.unknown_count"></span>
+                            <button type="button" x-show="indicators.unknown_count > 0" @click="printExceptionReport('UNKNOWN')"
+                                    title="Print Unknown Entries" class="px-1.5 py-0.5 rounded bg-white border border-amber-300 hover:bg-amber-200 text-[10px]">🖨️</button>
+                        </div>
                     </div>
                     <div class="bg-emerald-50 p-2.5 rounded-lg border border-emerald-200 flex justify-between items-center px-3">
                         <span class="text-[11px] font-bold text-emerald-800">In System:</span>
@@ -257,24 +272,40 @@
                         <span class="text-lg font-extrabold font-mono text-emerald-700" x-text="indicators.in_money_trans"></span>
                     </div>
                     <div :class="indicators.not_in_sys > 0 ? 'bg-amber-100 border-amber-400' : 'bg-slate-50 border-slate-200'"
-                         class="p-2.5 rounded-lg border flex justify-between items-center px-3">
+                         class="p-2.5 rounded-lg border flex justify-between items-center px-3 gap-1">
                         <span class="text-[11px] font-bold text-slate-700">Not in Sys:</span>
-                        <span class="text-lg font-extrabold font-mono text-amber-800" x-text="indicators.not_in_sys"></span>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-lg font-extrabold font-mono text-amber-800" x-text="indicators.not_in_sys"></span>
+                            <button type="button" x-show="indicators.not_in_sys > 0" @click="printExceptionReport('NOT_IN_SYS')"
+                                    title="Print Not in System Details" class="px-1.5 py-0.5 rounded bg-white border border-amber-400 hover:bg-amber-200 text-[10px]">🖨️</button>
+                        </div>
                     </div>
                     <div :class="indicators.matched_no_trans > 0 ? 'bg-amber-100 border-amber-400' : 'bg-slate-50 border-slate-200'"
-                         class="p-2.5 rounded-lg border flex justify-between items-center px-3">
+                         class="p-2.5 rounded-lg border flex justify-between items-center px-3 gap-1">
                         <span class="text-[11px] font-bold text-slate-700">No Txn:</span>
-                        <span class="text-lg font-extrabold font-mono text-amber-800" x-text="indicators.matched_no_trans"></span>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-lg font-extrabold font-mono text-amber-800" x-text="indicators.matched_no_trans"></span>
+                            <button type="button" x-show="indicators.matched_no_trans > 0" @click="printExceptionReport('NO_TXN')"
+                                    title="Print Matched Without Transactions Details" class="px-1.5 py-0.5 rounded bg-white border border-amber-400 hover:bg-amber-200 text-[10px]">🖨️</button>
+                        </div>
                     </div>
                     <div :class="indicators.duplicated_in_bank > 0 ? 'bg-rose-100 border-rose-400' : 'bg-slate-50 border-slate-200'"
-                         class="p-2.5 rounded-lg border flex justify-between items-center px-3">
+                         class="p-2.5 rounded-lg border flex justify-between items-center px-3 gap-1">
                         <span class="text-[11px] font-bold text-rose-700">Duplicate:</span>
-                        <span class="text-lg font-extrabold font-mono text-rose-700" x-text="indicators.duplicated_in_bank"></span>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-lg font-extrabold font-mono text-rose-700" x-text="indicators.duplicated_in_bank"></span>
+                            <button type="button" x-show="indicators.duplicated_in_bank > 0" @click="printExceptionReport('DUPLICATE')"
+                                    title="Print Duplicate Standing Orders Details" class="px-1.5 py-0.5 rounded bg-white border border-rose-400 hover:bg-rose-200 text-[10px]">🖨️</button>
+                        </div>
                     </div>
                     <div :class="indicators.cannot_update > 0 ? 'bg-rose-100 border-rose-400' : 'bg-slate-50 border-slate-200'"
-                         class="p-2.5 rounded-lg border flex justify-between items-center px-3">
+                         class="p-2.5 rounded-lg border flex justify-between items-center px-3 gap-1">
                         <span class="text-[11px] font-bold text-rose-800">Blocked:</span>
-                        <span class="text-lg font-extrabold font-mono text-rose-800" x-text="indicators.cannot_update"></span>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-lg font-extrabold font-mono text-rose-800" x-text="indicators.cannot_update"></span>
+                            <button type="button" x-show="indicators.cannot_update > 0" @click="printExceptionReport('BLOCKED')"
+                                    title="Print Blocked / Cannot Update Details" class="px-1.5 py-0.5 rounded bg-white border border-rose-400 hover:bg-rose-200 text-[10px]">🖨️</button>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -340,6 +371,162 @@
                 get currentBankName() {
                     const b = this.banks.find(x => Number(x.bank_cd) === Number(this.selectedBank));
                     return b ? (b.bank_e_desc || b.bank_desc) : 'Selected Bank';
+                },
+                get totalExceptionsCount() {
+                    return Number(this.indicators.not_in_sys || 0)
+                        + Number(this.indicators.matched_no_trans || 0)
+                        + Number(this.indicators.duplicated_in_bank || 0)
+                        + Number(this.indicators.cannot_update || 0)
+                        + Number(this.indicators.unknown_count || 0);
+                },
+                buildExceptionGroups() {
+                    const soRows = this.rows.filter(r => Number(r.cash_deposit) === 2);
+                    const codeCounts = {};
+                    soRows.forEach(r => {
+                        const c = String(r.st_order_no || '').trim();
+                        if (c) codeCounts[c] = (codeCounts[c] || 0) + 1;
+                    });
+                    return {
+                        NOT_IN_SYS: {
+                            title: 'Not in System — استقطاعات غير موجودة في النظام',
+                            rows: soRows.filter(r => Number(r.sys_found) === 0 && String(r.st_order_no || '').trim() !== '')
+                        },
+                        NO_TXN: {
+                            title: 'Matched Without Monthly Transactions — استقطاعات بدون حركات شهرية',
+                            rows: soRows.filter(r => Number(r.sys_found) === 1 && Number(r.money_trans_found) === 0)
+                        },
+                        DUPLICATE: {
+                            title: 'Duplicate Standing Orders in Bank Statement — استقطاعات متكررة في كشف البنك',
+                            rows: soRows.filter(r => {
+                                const c = String(r.st_order_no || '').trim();
+                                return c && codeCounts[c] > 1;
+                            })
+                        },
+                        BLOCKED: {
+                            title: 'Blocked / Cannot Update — حركات متعذر تحديثها',
+                            rows: soRows.filter(r => Number(r.money_trans_status) === 0 && (Number(r.sys_found) === 0 || Number(r.money_trans_found) === 0 || (r.sys_amt !== null && r.sys_amt !== undefined && Number(r.bank_stmnt_payamt) !== Number(r.sys_amt))))
+                        },
+                        UNKNOWN: {
+                            title: 'Unknown / Unparsed Bank Entries — حركات غير معرّفة',
+                            rows: soRows.filter(r => !String(r.st_order_no || '').trim())
+                        }
+                    };
+                },
+                printExceptionReport(category = 'ALL') {
+                    const groups = this.buildExceptionGroups();
+                    const keys = category === 'ALL'
+                        ? ['NOT_IN_SYS', 'NO_TXN', 'DUPLICATE', 'BLOCKED', 'UNKNOWN']
+                        : [category];
+                    const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                    let sectionsHtml = '';
+                    let totalPrinted = 0;
+                    keys.forEach(k => {
+                        const g = groups[k];
+                        if (!g || !g.rows.length) return;
+                        totalPrinted += g.rows.length;
+                        const sumAmt = g.rows.reduce((acc, x) => acc + Number(x.bank_stmnt_payamt || 0), 0);
+                        sectionsHtml += `
+                            <div class="sec">
+                                <div class="sec-head">
+                                    <span>${esc(g.title)}</span>
+                                    <span>${g.rows.length} row(s) • ${sumAmt.toFixed(3)} BHD</span>
+                                </div>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>Deposit Date</th>
+                                            <th>SO Code</th>
+                                            <th>Donor #</th>
+                                            <th>Donor Name</th>
+                                            <th>Pay Description</th>
+                                            <th class="num">Bank Amt</th>
+                                            <th class="num">System Amt</th>
+                                            <th>In Sys</th>
+                                            <th>Has Txn</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${g.rows.map((r, i) => `
+                                            <tr>
+                                                <td class="mono">${i + 1}</td>
+                                                <td class="mono">${esc(r.bank_stmnt_month || '-')}</td>
+                                                <td class="mono bold">${esc(r.st_order_no || '-')}</td>
+                                                <td class="mono">${esc(r.donor_no || '-')}</td>
+                                                <td>${esc(r.donor_ename || r.donor_name || '-')}</td>
+                                                <td class="mono">${esc(r.bank_stmnt_paydesc || '-')}</td>
+                                                <td class="num mono bold">${Number(r.bank_stmnt_payamt || 0).toFixed(3)}</td>
+                                                <td class="num mono">${r.sys_amt !== null && r.sys_amt !== undefined ? Number(r.sys_amt).toFixed(3) : '-'}</td>
+                                                <td class="mono">${r.sys_found === 1 ? 'Yes' : 'No'}</td>
+                                                <td class="mono">${r.money_trans_found === 1 ? 'Yes' : 'No'}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>`;
+                    });
+
+                    if (totalPrinted === 0) {
+                        alert('No exception rows found for the selected indicator.');
+                        return;
+                    }
+
+                    const win = window.open('', '_blank', 'width=1100,height=800');
+                    if (!win) {
+                        alert('Please allow pop-ups to print the exceptions report.');
+                        return;
+                    }
+                    win.document.write(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Bank Reconciliation Exceptions — ${esc(this.currentBankName)} (${esc(this.selectedMonth)})</title>
+<style>
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 20px; font-size: 12px; }
+    .hdr { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #003d58; padding-bottom: 12px; margin-bottom: 16px; }
+    .hdr-left { display: flex; align-items: center; gap: 12px; }
+    .hdr img { height: 48px; }
+    .hdr h1 { margin: 0; font-size: 16px; color: #003d58; }
+    .hdr p { margin: 2px 0 0; font-size: 11px; color: #64748b; }
+    .meta { text-align: right; font-size: 11px; color: #334155; font-family: monospace; }
+    .kpi-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .kpi { background: #fffaea; border: 1px solid #d29535; border-radius: 8px; padding: 6px 12px; font-size: 11px; }
+    .kpi strong { color: #003d58; font-family: monospace; font-size: 13px; margin-left: 4px; }
+    .sec { margin-bottom: 18px; page-break-inside: avoid; }
+    .sec-head { background: #003d58; color: #fff; padding: 7px 12px; font-weight: 700; font-size: 12px; display: flex; justify-content: space-between; border-radius: 6px 6px 0 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th, td { border: 1px solid #d7d3cb; padding: 5px 7px; text-align: left; }
+    th { background: #f8fafc; color: #003d58; font-weight: 700; white-space: nowrap; }
+    .num { text-align: right; }
+    .mono { font-family: monospace; white-space: nowrap; }
+    .bold { font-weight: 700; }
+    @media print { .no-print { display: none; } body { margin: 10px; } }
+</style></head><body>
+    <div class="hdr">
+        <div class="hdr-left">
+            <img src="${window.location.origin}/static/logo.webp" alt="Discover Islam Society">
+            <div>
+                <h1>Bank Reconciliation Exceptions Report</h1>
+                <p>Bank: <strong>${esc(this.currentBankName)}</strong> &nbsp;|&nbsp; Statement Month: <strong>${esc(this.selectedMonth)}</strong></p>
+            </div>
+        </div>
+        <div class="meta">
+            <div>Discover Islam Society — ERP</div>
+            <div>Printed: ${esc(new Date().toLocaleString())}</div>
+        </div>
+    </div>
+    <div class="kpi-bar">
+        <div class="kpi">Not in Sys:<strong>${this.indicators.not_in_sys}</strong></div>
+        <div class="kpi">No Txn:<strong>${this.indicators.matched_no_trans}</strong></div>
+        <div class="kpi">Duplicate:<strong>${this.indicators.duplicated_in_bank}</strong></div>
+        <div class="kpi">Blocked:<strong>${this.indicators.cannot_update}</strong></div>
+        <div class="kpi">Unknown:<strong>${this.indicators.unknown_count}</strong></div>
+    </div>
+    ${sectionsHtml}
+    <div class="no-print" style="text-align:right;margin-top:14px;">
+        <button onclick="window.print()" style="background:#003d58;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;">🖨️ Print Report</button>
+    </div>
+    <script>window.onload = function(){ setTimeout(function(){ window.print(); }, 250); };<\/script>
+</body></html>`);
+                    win.document.close();
                 },
                 get filteredRows() {
                     if (this.viewFilter === 'NO_TRANS') {

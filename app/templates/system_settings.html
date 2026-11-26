@@ -47,6 +47,11 @@
                     class="px-4 py-2 rounded-xl text-xs font-bold transition">
                 🏦 Standing Orders Risk Rule (الاستقطاعات المتأخرة)
             </button>
+            <button type="button" @click="activeTab = 'so_setup'"
+                    :class="activeTab === 'so_setup' ? 'bg-[#003d58] text-white shadow-xs' : 'bg-white text-[#003d58] border border-[#d7d3cb] hover:bg-[#fffaea]'"
+                    class="px-4 py-2 rounded-xl text-xs font-bold transition">
+                ⚙️ SO Operational Setup (إعدادات تشغيل الاستقطاعات)
+            </button>
         </div>
 
         <!-- Toast Alert -->
@@ -235,6 +240,84 @@
                 </div>
             </form>
         </section>
+
+        <!-- TAB 3: Standing Orders Operational Setup (sys_donor_setup) -->
+        <section x-show="activeTab === 'so_setup'" x-cloak class="bg-white rounded-2xl border border-[#d7d3cb] shadow-2xs overflow-hidden">
+            <div class="px-5 py-4 bg-[#faf8f2] border-b border-[#d7d3cb] flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-sm font-bold text-[#003d58]">Standing Orders Operational Setup (إعدادات تشغيل الاستقطاعات — sys_donor_setup)</h2>
+                    <p class="text-xs text-[#757277] mt-0.5">Control monthly transaction auto-generation, minimum SO amount, grace period, and delay thresholds.</p>
+                </div>
+                <span class="px-3 py-1 rounded-full text-[11px] font-extrabold border"
+                      :class="soSetup.auto_generate_monthly_so ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-amber-50 border-amber-300 text-amber-900'"
+                      x-text="soSetup.auto_generate_monthly_so ? '● Monthly Auto-Gen: ENABLED' : '● Monthly Auto-Gen: DISABLED'"></span>
+            </div>
+
+            <div class="p-5 space-y-5">
+                <!-- Master Control Switch: Auto Generate Monthly SO Transactions -->
+                <div class="p-4 rounded-xl border flex flex-wrap items-center justify-between gap-4"
+                     :class="soSetup.auto_generate_monthly_so ? 'bg-emerald-50/70 border-emerald-300' : 'bg-amber-50/60 border-amber-300'">
+                    <div class="space-y-0.5 max-w-2xl">
+                        <div class="text-xs font-extrabold text-[#003d58]">🔄 Auto Generate Monthly SO Transactions (توليد حركات الاستقطاعات الشهرية آلياً)</div>
+                        <p class="text-[11px] text-slate-600">
+                            Controls whether <code>sp_generate_monthly_payments</code> and monthly generation API are allowed to insert monthly due records into <code>MONEY_TRANS</code> for active standing orders (safely skips existing records). Keep <strong>Disabled (No)</strong> until Go-Live cutover is complete.
+                        </p>
+                    </div>
+                    <div class="inline-flex items-center bg-white p-1 rounded-xl border border-slate-300 text-xs font-extrabold shrink-0">
+                        <button type="button" @click="soSetup.auto_generate_monthly_so = true"
+                                :class="soSetup.auto_generate_monthly_so ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'"
+                                class="px-3.5 py-1.5 rounded-lg transition">Yes — Enabled (نعم)</button>
+                        <button type="button" @click="soSetup.auto_generate_monthly_so = false"
+                                :class="!soSetup.auto_generate_monthly_so ? 'bg-rose-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'"
+                                class="px-3.5 py-1.5 rounded-lg transition">No — Disabled (لا)</button>
+                    </div>
+                </div>
+
+                <!-- Operational Parameters Grid -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                    <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-1.5">
+                        <label class="block font-bold text-[#003d58]">💰 SO Minimum Amount (BHD)</label>
+                        <p class="text-[11px] text-[#757277]">الحد الأدنى لقيمة الاستقطاع الشهري</p>
+                        <input type="number" step="0.001" min="0" x-model.number="soSetup.so_min_amt"
+                               class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-extrabold text-sm text-[#003d58]">
+                    </div>
+                    <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-1.5">
+                        <label class="block font-bold text-[#003d58]">⏳ Accepted Delayed Months</label>
+                        <p class="text-[11px] text-[#757277]">أقصى عدد شهور تأخير مقبولة قبل الإيقاف</p>
+                        <input type="number" min="0" max="120" x-model.number="soSetup.accepted_delayed_months"
+                               class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-extrabold text-sm text-[#003d58]">
+                    </div>
+                    <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-1.5">
+                        <label class="block font-bold text-[#003d58]">🛡️ Grace Period (Months)</label>
+                        <p class="text-[11px] text-[#757277]">فترة السماح قبل اعتبار الاستقطاع متأخراً</p>
+                        <input type="number" min="0" max="60" x-model.number="soSetup.grace_period_months"
+                               class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-extrabold text-sm text-[#003d58]">
+                    </div>
+                    <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-1.5">
+                        <label class="block font-bold text-[#003d58]">📅 Not Paid Reference Month 1</label>
+                        <p class="text-[11px] text-[#757277]">شهر المرجع الأول لعدم السداد</p>
+                        <input type="date" x-model="soSetup.not_paid_month"
+                               class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-bold text-sm text-[#003d58]">
+                    </div>
+                    <div class="p-4 rounded-xl bg-[#faf8f2] border border-[#d7d3cb] space-y-1.5">
+                        <label class="block font-bold text-[#003d58]">📅 Not Paid Reference Month 2</label>
+                        <p class="text-[11px] text-[#757277]">شهر المرجع الثاني لعدم السداد</p>
+                        <input type="date" x-model="soSetup.not_paid_month2"
+                               class="w-full h-10 px-3 bg-white border border-[#d7d3cb] rounded-lg font-mono font-bold text-sm text-[#003d58]">
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-[#d7d3cb]/70 flex flex-wrap items-center justify-between gap-3">
+                    <div class="text-[11px] font-mono text-slate-500" x-show="soSetup.updated_at">
+                        Last Updated: <strong x-text="soSetup.updated_at"></strong>
+                    </div>
+                    <button type="button" @click="saveSoSetup()" :disabled="savingSetup"
+                            class="h-9 px-6 rounded-xl bg-[#003d58] hover:bg-[#d29535] hover:text-[#002435] disabled:opacity-45 text-white text-xs font-extrabold shadow-xs transition">
+                        <span x-text="savingSetup ? 'Saving...' : 'Save SO Operational Setup'"></span>
+                    </button>
+                </div>
+            </div>
+        </section>
     </div>
 
     <script>
@@ -243,6 +326,7 @@
                 activeTab: 'risk_rule',
                 saving: false,
                 savingSo: false,
+                savingSetup: false,
                 toast: { message: '', type: 'success' },
                 config: {
                     weight_monetary: 35,
@@ -266,6 +350,15 @@
                     tier_medium_min: 35,
                     followup_stale_days: 60,
                     updated_by: 'SYSTEM',
+                    updated_at: ''
+                },
+                soSetup: {
+                    not_paid_month: '',
+                    not_paid_month2: '',
+                    so_min_amt: 10.0,
+                    accepted_delayed_months: 6,
+                    grace_period_months: 2,
+                    auto_generate_monthly_so: false,
                     updated_at: ''
                 },
 
@@ -313,12 +406,15 @@
                 async init() {
                     const qs = new URLSearchParams(window.location.search);
                     if (qs.get('tab') === 'so_risk_rule') this.activeTab = 'so_risk_rule';
-                    const [r1, r2] = await Promise.all([
+                    else if (qs.get('tab') === 'so_setup') this.activeTab = 'so_setup';
+                    const [r1, r2, r3] = await Promise.all([
                         fetch('/api/settings/risk-config'),
-                        fetch('/api/settings/so-risk-config')
+                        fetch('/api/settings/so-risk-config'),
+                        fetch('/api/settings/so-setup')
                     ]);
                     if (r1.ok) this.config = await r1.json();
                     if (r2.ok) this.soConfig = await r2.json();
+                    if (r3.ok) this.soSetup = await r3.json();
                 },
 
                 async saveConfig() {
@@ -366,6 +462,26 @@
                         this.showToast(data.message || 'Standing Orders settings saved!', 'success');
                     } finally {
                         this.savingSo = false;
+                    }
+                },
+
+                async saveSoSetup() {
+                    this.savingSetup = true;
+                    try {
+                        const res = await fetch('/api/settings/so-setup', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.soSetup)
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                            this.showToast(data.detail || 'Error saving SO operational setup.', 'error');
+                            return;
+                        }
+                        if (data.setup) this.soSetup = data.setup;
+                        this.showToast(data.message || 'SO Operational Setup saved!', 'success');
+                    } finally {
+                        this.savingSetup = false;
                     }
                 }
             };

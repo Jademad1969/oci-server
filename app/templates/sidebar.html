@@ -617,7 +617,7 @@
         </div>
         {% endif %}
 
-        {% if perms.get('users', 'none') != 'none' or perms.get('system_settings', 'none') != 'none' %}
+        {% if perms.get('users', 'none') != 'none' or perms.get('system_settings', 'none') != 'none' or perms.get('lookups', 'none') != 'none' %}
         <div class="space-y-1 pt-1 border-t border-white/10">
             <div class="sidebar-section-label px-2.5 pt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#d29535]/90">Administration</div>
             {% if perms.get('users', 'none') != 'none' %}
@@ -643,6 +643,18 @@
                     <span class="sidebar-text whitespace-nowrap truncate">System Settings</span>
                 </span>
                 {% if perms.get('system_settings') == 'view' %}<span class="sidebar-badge text-[9px] px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-200 font-bold">VIEW</span>{% endif %}
+            </a>
+            {% endif %}
+            {% if perms.get('lookups', 'none') != 'none' %}
+            <a href="/lookups" data-nav-path="/lookups" data-page-key="lookups" title="Lookup Tables"
+               class="erp-nav-link flex items-center justify-between gap-2 px-3 py-2 font-medium">
+                <span class="flex items-center gap-2.5 min-w-0">
+                    <svg class="w-[17px] h-[17px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
+                    </svg>
+                    <span class="sidebar-text whitespace-nowrap truncate">Lookup Tables</span>
+                </span>
+                {% if perms.get('lookups') == 'view' %}<span class="sidebar-badge text-[9px] px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-200 font-bold">VIEW</span>{% endif %}
             </a>
             {% endif %}
         </div>

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cash Analytical Reports - Discover Islam Society</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -282,6 +283,28 @@
             </template>
         </section>
 
+        <!-- 3.5 Donor Donation Trend Curve (Visible for Report #7: Donor Statement) -->
+        <section x-show="filters.report_type === 'donor_statement' && reportData.rows && reportData.rows.length > 0" x-cloak
+                 class="bg-white rounded-2xl border border-[#d7d3cb] shadow-2xs p-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <h3 class="text-sm font-extrabold text-[#003d58]">📈 Donor Donation Trend Curve (منحنى تبرعات المتبرع)</h3>
+                    <p class="text-[11px] text-[#757277]">Valid cash receipts aggregated chronologically in BHD</p>
+                </div>
+                <div class="no-print inline-flex items-center bg-[#faf8f2] p-0.5 rounded-lg border border-[#d7d3cb] text-[11px] font-bold">
+                    <button type="button" @click="setChartGranularity('year')"
+                            :class="chartGranularity === 'year' ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:text-[#003d58]'"
+                            class="px-2.5 py-1 rounded-md transition">📅 By Year (سنوي)</button>
+                    <button type="button" @click="setChartGranularity('month')"
+                            :class="chartGranularity === 'month' ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:text-[#003d58]'"
+                            class="px-2.5 py-1 rounded-md transition">📆 By Month (شهري)</button>
+                </div>
+            </div>
+            <div class="relative w-full" style="height: 250px;">
+                <canvas id="donorStatementTrendChart"></canvas>
+            </div>
+        </section>
+
         <!-- 4. Report Results Table -->
         <section class="bg-white rounded-2xl border border-[#d7d3cb] shadow-2xs overflow-hidden">
             <div class="px-4 py-3 bg-[#faf8f2] border-b border-[#d7d3cb] flex flex-wrap items-center justify-between gap-3">
@@ -385,6 +408,7 @@
     </div>
 
     <script>
+        let _donorStatementChart = null;
         function cashReportsApp() {
             const today = new Date();
             const pad = n => String(n).padStart(2, '0');
@@ -415,6 +439,7 @@
                 reportData: { title: 'Loading...', subtitle: '', supports_followup_action: false, summary: [], columns: [], rows: [] },
                 page: 1,
                 pageSize: 100,
+                chartGranularity: 'year',
 
                 fmtBhd(v) {
                     return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
@@ -534,6 +559,98 @@
                     await this.runReport();
                 },
 
+                setChartGranularity(g) {
+                    this.chartGranularity = g;
+                    this.$nextTick(() => requestAnimationFrame(() => this.renderDonorTrendChart()));
+                },
+
+                renderDonorTrendChart() {
+                    if (_donorStatementChart) {
+                        _donorStatementChart.destroy();
+                        _donorStatementChart = null;
+                    }
+                    if (this.filters.report_type !== 'donor_statement') return;
+                    const rows = (this.reportData && this.reportData.rows) ? this.reportData.rows : [];
+                    if (!rows.length) return;
+                    const canvas = document.getElementById('donorStatementTrendChart');
+                    if (!canvas || typeof Chart === 'undefined') return;
+
+                    // Aggregate valid receipts by Year or YYYY-MM
+                    const validRows = rows.filter(r => {
+                        const st = String(r.status_label || r.receipt_status || 'Valid').toLowerCase();
+                        return st === 'valid' || st === '1';
+                    });
+                    const useRows = validRows.length ? validRows : rows;
+
+                    const buckets = {};
+                    const counts = {};
+                    useRows.forEach(r => {
+                        const dt = String(r.trans_date || '').trim();
+                        if (!dt || dt.length < 7) return;
+                        const key = this.chartGranularity === 'year' ? dt.slice(0, 4) : dt.slice(0, 7);
+                        const val = Number(r.amount_bhd ?? r.trans_val ?? 0);
+                        buckets[key] = (buckets[key] || 0) + val;
+                        counts[key] = (counts[key] || 0) + 1;
+                    });
+
+                    const labels = Object.keys(buckets).sort();
+                    if (!labels.length) return;
+                    const values = labels.map(k => Number(buckets[k].toFixed(3)));
+
+                    const ctx = canvas.getContext('2d');
+                    const grad = ctx.createLinearGradient(0, 0, 0, 240);
+                    grad.addColorStop(0, 'rgba(0, 61, 88, 0.28)');
+                    grad.addColorStop(1, 'rgba(210, 149, 53, 0.03)');
+
+                    _donorStatementChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels,
+                            datasets: [{
+                                label: 'Total Donated (BHD)',
+                                data: values,
+                                borderColor: '#003d58',
+                                backgroundColor: grad,
+                                borderWidth: 2.5,
+                                pointBackgroundColor: '#d29535',
+                                pointBorderColor: '#003d58',
+                                pointBorderWidth: 2,
+                                pointRadius: 4.5,
+                                pointHoverRadius: 6.5,
+                                tension: 0.3,
+                                fill: true
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        label: (ctx) => {
+                                            const k = labels[ctx.dataIndex];
+                                            const c = counts[k] || 0;
+                                            return ` ${Number(ctx.parsed.y).toLocaleString('en-US', {minimumFractionDigits: 3, maximumFractionDigits: 3})} BHD (${c} receipt${c === 1 ? '' : 's'})`;
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    grid: { color: 'rgba(215, 211, 203, 0.45)' },
+                                    ticks: { callback: (v) => v + ' BD', font: { family: 'monospace', size: 11 } }
+                                },
+                                x: {
+                                    grid: { display: false },
+                                    ticks: { font: { family: 'monospace', size: 11 } }
+                                }
+                            }
+                        }
+                    });
+                },
+
                 async runReport() {
                     this.loading = true;
                     this.page = 1;
@@ -541,6 +658,14 @@
                         const res = await fetch('/api/cash-reports/run?' + this.buildQueryString());
                         if (res.ok) {
                             this.reportData = await res.json();
+                            if (this.filters.report_type === 'donor_statement') {
+                                const yrs = new Set((this.reportData.rows || []).map(r => String(r.trans_date || '').slice(0, 4)).filter(Boolean));
+                                this.chartGranularity = yrs.size > 1 ? 'year' : 'month';
+                                this.$nextTick(() => requestAnimationFrame(() => this.renderDonorTrendChart()));
+                            } else if (_donorStatementChart) {
+                                _donorStatementChart.destroy();
+                                _donorStatementChart = null;
+                            }
                         }
                     } finally {
                         this.loading = false;

@@ -81,7 +81,7 @@ def create_session_token(data: dict) -> str:
     sig = hmac.new(SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
-DEFAULT_PAGE_KEYS = ("about", "messages", "donors", "audit", "reconcile", "followup", "so_delayed", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "cash_followup", "cash_reports", "users", "system_settings")
+DEFAULT_PAGE_KEYS = ("about", "messages", "donors", "audit", "reconcile", "followup", "so_delayed", "so_dashboard", "reports", "reports_matrix", "data_views_export", "cash_donors", "voucher_receipt", "voucher_control", "cash_dashboard", "cash_followup", "cash_reports", "users", "system_settings", "lookups")
 
 def normalize_page_permissions(role_code: Optional[str], raw_perms: Any, valid_keys: tuple = DEFAULT_PAGE_KEYS) -> dict:
     if isinstance(raw_perms, str):
@@ -123,6 +123,8 @@ def resolve_page_key(path: str) -> str:
         return "messages"
     if path.startswith("/api/notifications"):
         return "about"
+    if path.startswith("/lookups") or path.startswith("/api/lookups"):
+        return "lookups"
     if path.startswith("/settings") or path.startswith("/api/settings"):
         return "system_settings"
     if path.startswith("/users") or path.startswith("/api/users"):
@@ -923,7 +925,15 @@ async def update_bank_codes_and_missing(payload: BankAuditActionSchema, db: Asyn
 
 @app.post("/api/money-trans/generate-monthly")
 async def generate_monthly_payments_proc(payload: GenerateMonthlySchema, db: AsyncSession = Depends(get_db)):
-    """يحاكي الإجراء المخزن Generat_Payments لتوليد استحقاقات الشهر لكافة الاستقطاعات النشطة"""
+    """يحاكي الإجراء المخزن Generat_Payments لتوليد استحقاقات الشهر لكافة الاستقطاعات النشطة مع التحقق من إعداد sys_donor_setup"""
+    setup_res = await db.execute(text("SELECT COALESCE(auto_generate_monthly_so, FALSE) FROM sys_donor_setup WHERE setup_id = 1"))
+    auto_enabled = bool(setup_res.scalar())
+    if not auto_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="Monthly SO generation is currently DISABLED in System Settings (SO Operational Setup). Enable it from /settings first. / توليد حركات الاستقطاعات الشهرية معطّل حالياً في إعدادات النظام (/settings)."
+        )
+
     month_date = datetime.strptime(f"{payload.month_str}-01", "%Y-%m-%d").date()
 
     gen_sql = text("""
@@ -941,6 +951,7 @@ async def generate_monthly_payments_proc(payload: GenerateMonthlySchema, db: Asy
               SELECT 1 FROM money_trans x
               WHERE x.so_id = s.so_id AND x.month_year = :month_date
           )
+        ON CONFLICT (so_id, month_year) DO NOTHING
     """)
     res = await db.execute(gen_sql, {"month_date": month_date})
 
@@ -6275,6 +6286,89 @@ async def save_so_risk_config_api(payload: SoRiskConfigSchema, request: Request,
     return {"status": "success", "message": "Standing Orders Risk Rule saved! Applied immediately to SO Follow-up ranking.", "config": cfg}
 
 
+class SoDonorSetupSchema(BaseModel):
+    not_paid_month: Optional[date] = None
+    not_paid_month2: Optional[date] = None
+    so_min_amt: float
+    accepted_delayed_months: int
+    grace_period_months: int
+    auto_generate_monthly_so: bool = False
+
+    @field_validator("not_paid_month", "not_paid_month2", mode="before")
+    @classmethod
+    def clean_opt_dates(cls, v: Any):
+        if v == "" or v is None:
+            return None
+        return v
+
+
+@app.get("/api/settings/so-setup")
+async def get_so_donor_setup_api(db: AsyncSession = Depends(get_db)):
+    res = await db.execute(text("""
+        SELECT setup_id, not_paid_month, not_paid_month2, so_min_amt,
+               accepted_delayed_months, grace_period_months,
+               COALESCE(auto_generate_monthly_so, FALSE) AS auto_generate_monthly_so,
+               COALESCE(TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI'), '') AS updated_at
+        FROM sys_donor_setup
+        WHERE setup_id = 1
+    """))
+    row = res.first()
+    if not row:
+        return {
+            "setup_id": 1, "not_paid_month": "", "not_paid_month2": "",
+            "so_min_amt": 10.0, "accepted_delayed_months": 6, "grace_period_months": 2,
+            "auto_generate_monthly_so": False, "updated_at": ""
+        }
+    m = row._mapping
+    return {
+        "setup_id": 1,
+        "not_paid_month": m["not_paid_month"].isoformat() if m["not_paid_month"] else "",
+        "not_paid_month2": m["not_paid_month2"].isoformat() if m["not_paid_month2"] else "",
+        "so_min_amt": round(float(m["so_min_amt"] or 0), 3),
+        "accepted_delayed_months": int(m["accepted_delayed_months"] or 6),
+        "grace_period_months": int(m["grace_period_months"] or 2),
+        "auto_generate_monthly_so": bool(m["auto_generate_monthly_so"]),
+        "updated_at": m["updated_at"],
+    }
+
+
+@app.post("/api/settings/so-setup")
+async def save_so_donor_setup_api(payload: SoDonorSetupSchema, db: AsyncSession = Depends(get_db)):
+    if payload.so_min_amt < 0:
+        raise HTTPException(status_code=400, detail="SO Minimum Amount cannot be negative.")
+    if not (0 <= payload.accepted_delayed_months <= 120):
+        raise HTTPException(status_code=400, detail="Accepted Delayed Months must be between 0 and 120.")
+    if not (0 <= payload.grace_period_months <= 60):
+        raise HTTPException(status_code=400, detail="Grace Period Months must be between 0 and 60.")
+
+    await db.execute(text("""
+        INSERT INTO sys_donor_setup (
+            setup_id, not_paid_month, not_paid_month2, so_min_amt,
+            accepted_delayed_months, grace_period_months, auto_generate_monthly_so, updated_at
+        ) VALUES (
+            1, :m1, :m2, :min_amt, :acc_del, :grace, :auto_gen, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (setup_id) DO UPDATE SET
+            not_paid_month = EXCLUDED.not_paid_month,
+            not_paid_month2 = EXCLUDED.not_paid_month2,
+            so_min_amt = EXCLUDED.so_min_amt,
+            accepted_delayed_months = EXCLUDED.accepted_delayed_months,
+            grace_period_months = EXCLUDED.grace_period_months,
+            auto_generate_monthly_so = EXCLUDED.auto_generate_monthly_so,
+            updated_at = CURRENT_TIMESTAMP
+    """), {
+        "m1": payload.not_paid_month,
+        "m2": payload.not_paid_month2,
+        "min_amt": payload.so_min_amt,
+        "acc_del": payload.accepted_delayed_months,
+        "grace": payload.grace_period_months,
+        "auto_gen": bool(payload.auto_generate_monthly_so),
+    })
+    await db.commit()
+    cfg = await get_so_donor_setup_api(db)
+    return {"status": "success", "message": "SO Operational Setup saved successfully! / تم حفظ إعدادات تشغيل الاستقطاعات بنجاح.", "setup": cfg}
+
+
 # =================================================================================
 # INTERNAL MESSAGING, ACTION DIRECTIVES & SMART NOTIFICATIONS (/messages)
 # =================================================================================
@@ -7540,3 +7634,415 @@ async def so_delayed_export_csv_api(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+
+# =================================================================================
+# CENTRAL LOOKUP TABLES MANAGEMENT (/lookups) — Metadata-Driven 15 lkp_* Tables
+# =================================================================================
+
+LOOKUP_GROUPS = [
+    {"key": "banking",  "title_en": "Banking & Accounts",       "title_ar": "البنوك والحسابات",      "icon": "🏦"},
+    {"key": "donation", "title_en": "Donation Items & Bands",   "title_ar": "بنود التبرع والمشاريع", "icon": "💰"},
+    {"key": "followup", "title_en": "Follow-up & Messaging",    "title_ar": "المتابعة والتواصل",     "icon": "📞"},
+    {"key": "general",  "title_en": "General & Geography",      "title_ar": "البيانات العامة والعناوين", "icon": "🌐"},
+]
+
+LOOKUP_REGISTRY: dict[str, dict[str, Any]] = {
+    "lkp_banks": {
+        "group": "banking", "title_en": "Banks", "title_ar": "البنوك",
+        "pk": ["bank_cd"], "auto_pk": True, "order_by": "bank_cd ASC",
+        "columns": [
+            {"name": "bank_cd", "label": "Bank Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "bank_desc", "label": "Bank Name (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "bank_e_desc", "label": "Bank Name (EN)", "type": "str", "required": True, "in_table": True},
+            {"name": "bank_type_islam", "label": "Bank Type", "type": "select", "default": 1, "in_table": True,
+             "options": [{"value": 1, "label": "Islamic"}, {"value": 2, "label": "Conventional"}]},
+            {"name": "dic_accno", "label": "Society Account No", "type": "str", "in_table": True},
+            {"name": "po_box", "label": "P.O. Box", "type": "int", "in_table": False},
+            {"name": "fawri_keywords", "label": "SO Fawri / Cash Keywords", "type": "str", "default": "FAWRI,CASH,BENEFIT", "in_table": False},
+            {"name": "bnkstmnt_code_type", "label": "SO Statement Code Type", "type": "select", "default": 1, "in_table": False,
+             "options": [{"value": 1, "label": "1 - Standard SO Code"}, {"value": 2, "label": "2 - Alt / Custom Code"}]},
+            {"name": "run_deactivate_delayed_so", "label": "SO Auto Deactivate Delayed", "type": "select", "default": 1, "required": True, "in_table": False,
+             "options": [{"value": 1, "label": "Yes (1)"}, {"value": 0, "label": "No (0)"}]},
+            {"name": "auto_so_based_code", "label": "Auto SO Code", "type": "select", "default": 1, "required": True, "in_table": False,
+             "options": [{"value": 1, "label": "Yes (1)"}, {"value": 0, "label": "No (0)"}]},
+        ],
+    },
+    "lkp_bank_accounts": {
+        "group": "banking", "title_en": "Society Bank Accounts", "title_ar": "حسابات الجمعية البنكية",
+        "pk": ["bank_cd", "bank_acc_no"], "auto_pk": False, "order_by": "bank_cd ASC, bank_acc_no ASC",
+        "columns": [
+            {"name": "bank_cd", "label": "Bank", "type": "fk", "fk_table": "lkp_banks", "fk_val": "bank_cd", "fk_lbl": "COALESCE(NULLIF(TRIM(bank_e_desc), ''), bank_desc)", "required": True, "pk": True, "in_table": True},
+            {"name": "bank_acc_no", "label": "Account No", "type": "str", "required": True, "pk": True, "in_table": True},
+            {"name": "iban", "label": "IBAN", "type": "str", "in_table": True},
+            {"name": "account_name", "label": "Account Name", "type": "str", "in_table": True},
+            {"name": "account_status", "label": "Status", "type": "select", "default": 1, "required": True, "in_table": True,
+             "options": [{"value": 1, "label": "Active (1)"}, {"value": 2, "label": "Inactive (2)"}]},
+            {"name": "so_account", "label": "SO Account?", "type": "select", "default": 1, "required": True, "in_table": True,
+             "options": [{"value": 1, "label": "Yes (1)"}, {"value": 0, "label": "No (0)"}]},
+            {"name": "deactivation_date", "label": "Deactivation Date", "type": "date", "in_table": False},
+            {"name": "deactivation_reason", "label": "Deactivation Reason", "type": "str", "in_table": False},
+        ],
+    },
+    "lkp_acc_types": {
+        "group": "banking", "title_en": "Account Types", "title_ar": "أنواع الحسابات",
+        "pk": ["acc_type_no"], "auto_pk": True, "order_by": "acc_type_no ASC",
+        "columns": [
+            {"name": "acc_type_no", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "acc_type_desc", "label": "Description (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "acc_type_e_desc", "label": "Description (EN)", "type": "str", "in_table": True},
+        ],
+    },
+    "lkp_payment_types": {
+        "group": "banking", "title_en": "Payment Methods", "title_ar": "طرق الدفع",
+        "pk": ["type_cd"], "auto_pk": True, "order_by": "type_cd ASC",
+        "columns": [
+            {"name": "type_cd", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "type_desc", "label": "Payment Method (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "type_edesc", "label": "Payment Method (EN)", "type": "str", "required": True, "in_table": True},
+        ],
+    },
+    "lkp_charity_items": {
+        "group": "donation", "title_en": "SO Charity Items", "title_ar": "بنود الاستقطاعات الخيرية",
+        "pk": ["item_cd"], "auto_pk": True, "pk_is_str": True, "order_by": "CASE WHEN item_cd ~ '^[0-9]+$' THEN item_cd::int ELSE 9999 END, item_cd",
+        "columns": [
+            {"name": "item_cd", "label": "Item Code", "type": "str", "required": True, "pk": True, "in_table": True},
+            {"name": "item_desc", "label": "Item Name (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "item_e_desc", "label": "Item Name (EN)", "type": "str", "in_table": True},
+            {"name": "item_max_value", "label": "Max Value (BD)", "type": "float", "in_table": True},
+            {"name": "has_details", "label": "Has Details", "type": "select", "default": 0, "in_table": True,
+             "options": [{"value": 1, "label": "Yes (1)"}, {"value": 0, "label": "No (0)"}]},
+            {"name": "receipt_print", "label": "Print Receipt", "type": "select", "default": 1, "in_table": True,
+             "options": [{"value": 1, "label": "Yes (1)"}, {"value": 0, "label": "No (0)"}]},
+        ],
+    },
+    "lkp_band_master": {
+        "group": "donation", "title_en": "Cash Main Bands", "title_ar": "البنود الرئيسية للتبرعات النقدية",
+        "pk": ["band_cd"], "auto_pk": True, "order_by": "band_cd ASC",
+        "columns": [
+            {"name": "band_cd", "label": "Band Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "band_desc", "label": "Band Name (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "band_edesc", "label": "Band Name (EN)", "type": "str", "in_table": True},
+            {"name": "estimate_val", "label": "Estimated Value", "type": "float", "in_table": True},
+            {"name": "outgoing_val", "label": "Outgoing Value", "type": "float", "in_table": True},
+            {"name": "benefit_code", "label": "Benefit Code", "type": "str", "in_table": True},
+        ],
+    },
+    "lkp_band_details": {
+        "group": "donation", "title_en": "Cash Sub-Bands", "title_ar": "البنود الفرعية للتبرعات النقدية",
+        "pk": ["band_det_cd"], "auto_pk": True, "order_by": "band_det_cd ASC",
+        "columns": [
+            {"name": "band_det_cd", "label": "Sub-Band Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "band_cd", "label": "Main Band", "type": "fk", "fk_table": "lkp_band_master", "fk_val": "band_cd", "fk_lbl": "COALESCE(NULLIF(TRIM(band_edesc), ''), band_desc)", "in_table": True},
+            {"name": "band_det_desc", "label": "Sub-Band Name (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "band_det_edesc", "label": "Sub-Band Name (EN)", "type": "str", "in_table": True},
+            {"name": "estimate_det_val", "label": "Estimated Value", "type": "float", "in_table": True},
+            {"name": "outgoing_det_val", "label": "Outgoing Value", "type": "float", "in_table": False},
+        ],
+    },
+    "lkp_follow_results": {
+        "group": "followup", "title_en": "Follow-up Results", "title_ar": "نتائج المتابعة",
+        "pk": ["result_cd"], "auto_pk": True, "order_by": "result_cd ASC",
+        "columns": [
+            {"name": "result_cd", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "result_nm", "label": "Result (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "result_enm", "label": "Result (EN)", "type": "str", "in_table": True},
+        ],
+    },
+    "lkp_delay_reasons": {
+        "group": "followup", "title_en": "Delay / Stop Reasons", "title_ar": "أسباب التأخير والتوقف",
+        "pk": ["reason_cd"], "auto_pk": True, "order_by": "reason_cd ASC",
+        "columns": [
+            {"name": "reason_cd", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "reason_nm", "label": "Reason (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "reason_enm", "label": "Reason (EN)", "type": "str", "in_table": True},
+        ],
+    },
+    "lkp_contact_feedback": {
+        "group": "followup", "title_en": "Contact Feedback", "title_ar": "تقييم التواصل",
+        "pk": ["feedback_cd"], "auto_pk": True, "order_by": "feedback_cd ASC",
+        "columns": [
+            {"name": "feedback_cd", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "feedback_desc", "label": "Feedback (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "feedback_e_desc", "label": "Feedback (EN)", "type": "str", "in_table": True},
+        ],
+    },
+    "lkp_messages": {
+        "group": "followup", "title_en": "Follow-up Message Templates", "title_ar": "قوالب رسائل المتابعة",
+        "pk": ["message_cd"], "auto_pk": True, "order_by": "message_cd ASC",
+        "columns": [
+            {"name": "message_cd", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "message_brief", "label": "Brief Title", "type": "str", "required": True, "in_table": True},
+            {"name": "message_text", "label": "Message Text (AR)", "type": "textarea", "required": True, "rtl": True, "in_table": True},
+            {"name": "message_etext", "label": "Message Text (EN)", "type": "textarea", "in_table": False},
+            {"name": "message_type", "label": "Type", "type": "int", "in_table": True},
+        ],
+    },
+    "lkp_name_prefixes": {
+        "group": "general", "title_en": "Name Titles / Prefixes", "title_ar": "الألقاب والمسميات",
+        "pk": ["prefix_cd"], "auto_pk": True, "order_by": "prefix_cd ASC",
+        "columns": [
+            {"name": "prefix_cd", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "prefix_name", "label": "Title (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "prefix_ename", "label": "Title (EN)", "type": "str", "in_table": True},
+        ],
+    },
+    "lkp_cares": {
+        "group": "general", "title_en": "Salutations (Care)", "title_ar": "صيغ المخاطبة",
+        "pk": ["care_cd"], "auto_pk": True, "order_by": "care_cd ASC",
+        "columns": [
+            {"name": "care_cd", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "care_nm", "label": "Salutation (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "care_enm", "label": "Salutation (EN)", "type": "str", "in_table": True},
+        ],
+    },
+    "lkp_regions": {
+        "group": "general", "title_en": "Regions", "title_ar": "المناطق",
+        "pk": ["region_cd"], "auto_pk": True, "order_by": "region_cd ASC",
+        "columns": [
+            {"name": "region_cd", "label": "Code", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "region_desc", "label": "Region (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "region_e_desc", "label": "Region (EN)", "type": "str", "in_table": True},
+        ],
+    },
+    "lkp_towns": {
+        "group": "general", "title_en": "Blocks & Towns", "title_ar": "المجمعات والمدن",
+        "pk": ["block_cd"], "auto_pk": False, "order_by": "block_cd ASC",
+        "columns": [
+            {"name": "block_cd", "label": "Block No.", "type": "int", "required": True, "pk": True, "in_table": True},
+            {"name": "town_nm", "label": "Town / Area (AR)", "type": "str", "required": True, "rtl": True, "in_table": True},
+            {"name": "etown_nm", "label": "Town / Area (EN)", "type": "str", "in_table": True},
+        ],
+    },
+}
+
+
+def _coerce_lookup_val(col: dict, val: Any) -> Any:
+    ctype = col["type"]
+    if val is None or (isinstance(val, str) and val.strip() == ""):
+        return None
+    if ctype == "bool_select":
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("true", "1", "yes", "t")
+    if ctype in ("int", "fk", "select"):
+        return int(val)
+    if ctype == "float":
+        return float(val)
+    if ctype == "date":
+        if isinstance(val, date):
+            return val
+        return date.fromisoformat(str(val)[:10])
+    return str(val).strip()
+
+
+@app.get("/lookups", response_class=HTMLResponse)
+async def lookup_tables_page(request: Request):
+    return templates.TemplateResponse("lookup_tables.html", {"request": request})
+
+
+@app.get("/api/lookups/catalog")
+async def lookups_catalog_api(db: AsyncSession = Depends(get_db)):
+    counts: dict[str, int] = {}
+    for tname in LOOKUP_REGISTRY:
+        res = await db.execute(text(f"SELECT COUNT(*) FROM {tname}"))
+        counts[tname] = int(res.scalar() or 0)
+
+    tables = []
+    for tname, meta in LOOKUP_REGISTRY.items():
+        tables.append({
+            "key": tname,
+            "group": meta["group"],
+            "title_en": meta["title_en"],
+            "title_ar": meta["title_ar"],
+            "row_count": counts.get(tname, 0),
+            "pk": meta["pk"],
+            "auto_pk": meta.get("auto_pk", False),
+        })
+    return {"groups": LOOKUP_GROUPS, "tables": tables}
+
+
+@app.get("/api/lookups/{table_key}")
+async def lookups_table_rows_api(
+    table_key: str,
+    q: str = "",
+    page: int = 1,
+    page_size: int = 25,
+    db: AsyncSession = Depends(get_db),
+):
+    meta = LOOKUP_REGISTRY.get(table_key)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Unknown lookup table '{table_key}'.")
+
+    cols = meta["columns"]
+    col_names = [c["name"] for c in cols]
+    page = max(1, page)
+    page_size = min(max(1, page_size), 100)
+    offset = (page - 1) * page_size
+
+    # Load FK options for dropdown columns
+    fk_options: dict[str, list[dict]] = {}
+    fk_maps: dict[str, dict[Any, str]] = {}
+    for c in cols:
+        if c["type"] == "fk":
+            fk_res = await db.execute(text(f"SELECT {c['fk_val']} AS val, {c['fk_lbl']} AS lbl FROM {c['fk_table']} ORDER BY {c['fk_val']}"))
+            opts = [{"value": r.val, "label": f"{r.val} — {r.lbl}"} for r in fk_res.fetchall()]
+            fk_options[c["name"]] = opts
+            fk_maps[c["name"]] = {o["value"]: o["label"] for o in opts}
+
+    where_sql = "1=1"
+    params: dict[str, Any] = {"lim": page_size, "off": offset}
+    q_clean = (q or "").strip()
+    if q_clean:
+        params["q"] = f"%{q_clean}%"
+        like_parts = [f"CAST({cn} AS TEXT) ILIKE :q" for cn in col_names]
+        where_sql = "(" + " OR ".join(like_parts) + ")"
+
+    cnt_res = await db.execute(text(f"SELECT COUNT(*) FROM {table_key} WHERE {where_sql}"), params)
+    total = int(cnt_res.scalar() or 0)
+
+    sel_sql = f"SELECT {', '.join(col_names)} FROM {table_key} WHERE {where_sql} ORDER BY {meta['order_by']} LIMIT :lim OFFSET :off"
+    rows_res = await db.execute(text(sel_sql), params)
+    rows = []
+    for r in rows_res.fetchall():
+        d = dict(r._mapping)
+        for c in cols:
+            cn = c["name"]
+            v = d.get(cn)
+            if isinstance(v, (date, datetime)):
+                d[cn] = v.isoformat()[:10]
+            elif c["type"] == "float" and v is not None:
+                d[cn] = round(float(v), 3)
+            elif c["type"] == "bool_select" and v is not None:
+                d[cn] = "true" if bool(v) else "false"
+            if c["type"] == "fk" and v is not None:
+                d[cn + "__label"] = fk_maps.get(cn, {}).get(v, str(v))
+        rows.append(d)
+
+    return {
+        "table_key": table_key,
+        "meta": {
+            "title_en": meta["title_en"],
+            "title_ar": meta["title_ar"],
+            "pk": meta["pk"],
+            "auto_pk": meta.get("auto_pk", False),
+            "singleton": meta.get("singleton", False),
+            "columns": cols,
+        },
+        "fk_options": fk_options,
+        "rows": rows,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+    }
+
+
+@app.post("/api/lookups/{table_key}/save")
+async def lookups_table_save_api(table_key: str, request: Request, db: AsyncSession = Depends(get_db)):
+    meta = LOOKUP_REGISTRY.get(table_key)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Unknown lookup table '{table_key}'.")
+
+    payload = await request.json()
+    is_new = bool(payload.get("is_new", False))
+    if is_new and meta.get("singleton"):
+        raise HTTPException(status_code=403, detail="This is a single-row setup table; adding new records is not allowed. / هذا الجدول سجل واحد فقط ولا يسمح بإضافة سجلات جديدة.")
+    rec = payload.get("record") or {}
+    cols = meta["columns"]
+    pk_cols = meta["pk"]
+
+    values: dict[str, Any] = {}
+    for c in cols:
+        cn = c["name"]
+        raw_v = rec.get(cn)
+        coerced = _coerce_lookup_val(c, raw_v)
+        if coerced is None and "default" in c and is_new:
+            coerced = c["default"]
+        if is_new and c.get("pk") and meta.get("auto_pk") and coerced is None:
+            # Auto-generate next PK safely
+            if meta.get("pk_is_str"):
+                mx = await db.execute(text(f"SELECT COALESCE(MAX(CASE WHEN {cn} ~ '^[0-9]+$' THEN {cn}::int ELSE 0 END), 0) + 1 FROM {table_key}"))
+                coerced = str(int(mx.scalar() or 1))
+            else:
+                mx = await db.execute(text(f"SELECT COALESCE(MAX({cn}), 0) + 1 FROM {table_key}"))
+                coerced = int(mx.scalar() or 1)
+        if c.get("required") and coerced is None:
+            raise HTTPException(status_code=400, detail=f"Field '{c['label']}' is required. / الحقل '{c['label']}' إلزامي.")
+        values[cn] = coerced
+
+    try:
+        if is_new:
+            col_list = ", ".join(values.keys())
+            val_list = ", ".join(f":{k}" for k in values.keys())
+            await db.execute(text(f"INSERT INTO {table_key} ({col_list}) VALUES ({val_list})"), values)
+        else:
+            set_cols = [c["name"] for c in cols if c["name"] not in pk_cols]
+            if not set_cols:
+                raise HTTPException(status_code=400, detail="No editable columns on this table.")
+            set_sql = ", ".join(f"{k} = :{k}" for k in set_cols)
+            where_sql = " AND ".join(f"{k} = :pk_{k}" for k in pk_cols)
+            upd_params = {k: values[k] for k in set_cols}
+            for k in pk_cols:
+                orig_pk = payload.get("original_pk", {}).get(k, values[k])
+                c_meta = next(c for c in cols if c["name"] == k)
+                upd_params[f"pk_{k}"] = _coerce_lookup_val(c_meta, orig_pk)
+            res = await db.execute(text(f"UPDATE {table_key} SET {set_sql} WHERE {where_sql}"), upd_params)
+            if res.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Record not found.")
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        err_str = str(e).lower()
+        if "unique" in err_str or "duplicate" in err_str:
+            raise HTTPException(status_code=409, detail="This code already exists! Please use a unique code. / هذا الكود موجود بالفعل.")
+        raise HTTPException(status_code=400, detail=f"Database error: {str(e)[:220]}")
+
+    return {"status": "success", "message": "Lookup record saved successfully! / تم حفظ السجل بنجاح."}
+
+
+@app.post("/api/lookups/{table_key}/delete")
+async def lookups_table_delete_api(table_key: str, request: Request, db: AsyncSession = Depends(get_db)):
+    meta = LOOKUP_REGISTRY.get(table_key)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Unknown lookup table '{table_key}'.")
+    if meta.get("singleton"):
+        raise HTTPException(status_code=403, detail="Deleting the setup record is not allowed. / لا يمكن حذف سجل الإعدادات.")
+
+    payload = await request.json()
+    pk_vals = payload.get("pk") or {}
+    cols = meta["columns"]
+    pk_cols = meta["pk"]
+
+    where_parts = []
+    params: dict[str, Any] = {}
+    for k in pk_cols:
+        c_meta = next(c for c in cols if c["name"] == k)
+        v = _coerce_lookup_val(c_meta, pk_vals.get(k))
+        if v is None:
+            raise HTTPException(status_code=400, detail=f"Missing primary key '{k}'.")
+        where_parts.append(f"{k} = :pk_{k}")
+        params[f"pk_{k}"] = v
+
+    try:
+        res = await db.execute(text(f"DELETE FROM {table_key} WHERE {' AND '.join(where_parts)}"), params)
+        await db.commit()
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Record not found.")
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        err_str = str(e).lower()
+        if "foreign key" in err_str or "violates" in err_str or "23503" in err_str:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot delete this record because it is currently used by existing ERP data! / لا يمكن حذف هذا السجل لأنه مرتبط ببيانات فعلية في النظام."
+            )
+        raise HTTPException(status_code=400, detail=f"Cannot delete record: {str(e)[:200]}")
+
+    return {"status": "success", "message": "Lookup record deleted successfully! / تم حذف السجل بنجاح."}

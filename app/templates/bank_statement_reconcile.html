@@ -498,12 +498,22 @@
                                         <td class="py-1.5 px-3 text-right font-mono font-bold"
                                             :class="r.amt_mismatch ? 'text-purple-700 underline' : 'text-emerald-700'"
                                             x-text="r.sys_amt !== null && r.sys_amt !== undefined ? Number(r.sys_amt).toFixed(3) : '-'"></td>
-                                        <td class="py-1.5 px-3 text-center font-mono font-bold"
-                                            :class="r.sys_found === 1 ? 'text-emerald-700' : 'text-rose-600'"
-                                            x-text="r.cash_deposit === 2 ? r.sys_found : '-'"></td>
-                                        <td class="py-1.5 px-3 text-center font-mono font-bold"
-                                            :class="r.money_trans_found === 1 ? 'text-emerald-700' : 'text-amber-700'"
-                                            x-text="r.cash_deposit === 2 ? (r.money_trans_found === 1 ? 'Yes' : 'No') : '-'"></td>
+                                        <td class="py-1.5 px-3 text-center">
+                                            <template x-if="r.cash_deposit === 2">
+                                                <span :class="r.sys_found === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-700 border-rose-300'"
+                                                      class="px-2 py-0.5 rounded text-[10px] font-extrabold font-mono border"
+                                                      x-text="r.sys_found === 1 ? 'YES' : 'NO'"></span>
+                                            </template>
+                                            <span x-show="r.cash_deposit !== 2" class="font-mono text-slate-400 font-bold">-</span>
+                                        </td>
+                                        <td class="py-1.5 px-3 text-center">
+                                            <template x-if="r.cash_deposit === 2">
+                                                <span :class="r.money_trans_found === 1 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-amber-100 text-amber-800 border-amber-300'"
+                                                      class="px-2 py-0.5 rounded text-[10px] font-extrabold font-mono border"
+                                                      x-text="r.money_trans_found === 1 ? 'YES' : 'NO'"></span>
+                                            </template>
+                                            <span x-show="r.cash_deposit !== 2" class="font-mono text-slate-400 font-bold">-</span>
+                                        </td>
                                         <td class="py-1.5 px-3 max-w-[200px] truncate" x-text="r.donor_no ? ('#' + r.donor_no + ' ' + (r.donor_name || '')) : '-'"></td>
                                         <td class="py-1.5 px-3 font-mono text-[11px] text-slate-500 max-w-[320px] truncate" :title="r.raw_desc" x-text="r.raw_desc"></td>
                                     </tr>
@@ -721,20 +731,29 @@
                                           x-text="r.cash_deposit === 2 ? 'Standing Order' : 'Cash / Fawri'"></span>
                                 </td>
                                 <td class="py-2 px-3 text-center">
-                                    <span :class="r.sys_found === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-700 border-rose-300'"
-                                          class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
-                                          x-text="r.sys_found === 1 ? 'YES' : 'NO'"></span>
+                                    <template x-if="r.cash_deposit === 2">
+                                        <span :class="r.sys_found === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-700 border-rose-300'"
+                                              class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
+                                              x-text="r.sys_found === 1 ? 'YES' : 'NO'"></span>
+                                    </template>
+                                    <span x-show="r.cash_deposit !== 2" class="font-mono text-slate-400 font-bold">-</span>
                                 </td>
                                 <td class="py-2 px-3 text-center font-mono font-bold text-sm bg-slate-100/80" x-text="r.st_order_no || '-'"></td>
                                 <td class="py-2 px-3 text-center">
-                                    <span :class="r.money_trans_found === 1 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-slate-100 text-slate-600 border-slate-300'"
-                                          class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
-                                          x-text="r.money_trans_found === 1 ? 'YES' : 'NO'"></span>
+                                    <template x-if="r.cash_deposit === 2">
+                                        <span :class="r.money_trans_found === 1 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-slate-100 text-slate-600 border-slate-300'"
+                                              class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
+                                              x-text="r.money_trans_found === 1 ? 'YES' : 'NO'"></span>
+                                    </template>
+                                    <span x-show="r.cash_deposit !== 2" class="font-mono text-slate-400 font-bold">-</span>
                                 </td>
                                 <td class="py-2 px-3 text-center">
-                                    <span :class="r.money_trans_status === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300'"
-                                          class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
-                                          x-text="r.money_trans_status === 1 ? 'YES' : 'NO'"></span>
+                                    <template x-if="r.cash_deposit === 2">
+                                        <span :class="r.money_trans_status === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300'"
+                                              class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
+                                              x-text="r.money_trans_status === 1 ? 'YES' : 'NO'"></span>
+                                    </template>
+                                    <span x-show="r.cash_deposit !== 2" class="font-mono text-slate-400 font-bold">-</span>
                                 </td>
                                 <td class="py-2 px-3 text-center font-mono" x-text="r.money_trans_month"></td>
                                 <td class="py-2 px-3 text-center font-mono text-slate-500" x-text="r.time_stamp"></td>
@@ -1367,23 +1386,23 @@
                         list = list.filter(r => Number(r.cash_deposit) !== 2);
                     }
                     if (f.in_sys === 'YES') {
-                        list = list.filter(r => Number(r.sys_found) === 1);
+                        list = list.filter(r => Number(r.cash_deposit) === 2 && Number(r.sys_found) === 1);
                     } else if (f.in_sys === 'NO') {
-                        list = list.filter(r => Number(r.sys_found) !== 1);
+                        list = list.filter(r => Number(r.cash_deposit) === 2 && Number(r.sys_found) !== 1);
                     }
                     if (f.so_code) {
                         const q = f.so_code.trim().toLowerCase();
                         list = list.filter(r => String(r.st_order_no || '').toLowerCase().includes(q));
                     }
                     if (f.has_txn === 'YES') {
-                        list = list.filter(r => Number(r.money_trans_found) === 1);
+                        list = list.filter(r => Number(r.cash_deposit) === 2 && Number(r.money_trans_found) === 1);
                     } else if (f.has_txn === 'NO') {
-                        list = list.filter(r => Number(r.money_trans_found) !== 1);
+                        list = list.filter(r => Number(r.cash_deposit) === 2 && Number(r.money_trans_found) !== 1);
                     }
                     if (f.updated === 'YES') {
-                        list = list.filter(r => Number(r.money_trans_status) === 1);
+                        list = list.filter(r => Number(r.cash_deposit) === 2 && Number(r.money_trans_status) === 1);
                     } else if (f.updated === 'NO') {
-                        list = list.filter(r => Number(r.money_trans_status) !== 1);
+                        list = list.filter(r => Number(r.cash_deposit) === 2 && Number(r.money_trans_status) !== 1);
                     }
                     if (f.txn_month) {
                         const q = f.txn_month.trim().toLowerCase();

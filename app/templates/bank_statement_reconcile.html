@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bank Statement Load & Reconciliation - Discover Islam Society</title>
+    <title>Bank Statement Analyzer & Reconciliation - Discover Islam Society</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@500;600;700&display=swap" rel="stylesheet">
@@ -12,45 +12,47 @@
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #f1f5f9; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        [x-cloak] { display: none !important; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col" x-data="reconcileApp()">
     {% include 'sidebar.html' %}
 
     <!-- 1. Top Module Header -->
-    <header class="bg-slate-900 text-white shadow-md border-b border-slate-700 sticky top-0 z-30">
-        <div class="max-w-[1600px] mx-auto px-4 h-13 py-2.5 flex items-center justify-between">
+    <header class="bg-[#003d58] text-white shadow-md border-b border-[#d29535]/40 sticky top-0 z-30">
+        <div class="max-w-[1600px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-3">
-                <div class="bg-teal-600 text-white font-bold px-2.5 py-1 rounded text-xs tracking-wider">
-                    CSV RECONCILE
+                <div class="bg-[#d29535] text-[#002435] font-extrabold px-2.5 py-1 rounded text-xs tracking-wider">
+                    SMART RECONCILE
                 </div>
                 <div>
-                    <h1 class="font-bold text-sm text-slate-100">
-                        Bank Statement Load & Payment Status Reconciliation (CSV)
+                    <h1 class="font-bold text-sm text-white">
+                        Bank Statement Analyzer & Payment Reconciliation (Excel / CSV)
                     </h1>
-                    <p class="text-[11px] text-slate-400">Upload monthly bank CSV statements, match standing orders, and update MONEY_TRANS payment status</p>
+                    <p class="text-[11px] text-slate-300">
+                        Step 1: Analyze raw bank statement &amp; inspect all exception reports &rarr; Step 2: Approve, load &amp; update MONEY_TRANS
+                    </p>
                 </div>
             </div>
 
             <div class="flex items-center gap-3 text-xs">
-                <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 flex items-center gap-2">
+                <div class="bg-[#002435] px-3 py-1 rounded border border-white/15 flex items-center gap-2">
                     <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span class="text-slate-400">USER:</span>
-                    <span class="font-bold text-emerald-400 font-mono" x-text="(window.ERP_USER && window.ERP_USER.username) || 'TAREK'"></span>
+                    <span class="text-slate-300">USER:</span>
+                    <span class="font-bold text-[#f3c677] font-mono" x-text="(window.ERP_USER && window.ERP_USER.username) || 'ADMIN'"></span>
                 </div>
             </div>
         </div>
     </header>
 
-    <!-- 2. Control Bar: Bank, Month, Month Status, CSV Upload & Actions -->
+    <!-- 2. Shared Control Bar: Bank, Month, Month Status + 2-Step Switcher -->
     <div class="bg-white border-b border-slate-200 shadow-xs">
         <div class="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
-
             <div class="flex flex-wrap items-center gap-4">
                 <div>
                     <label class="block text-[11px] font-bold text-slate-600 mb-1">Select Bank:</label>
-                    <select x-model.number="selectedBank" @change="loadStatementData()"
-                            class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-1.5 text-xs font-bold text-blue-900 min-w-[240px]">
+                    <select x-model.number="selectedBank" @change="onContextChange()"
+                            class="bg-slate-50 border border-slate-300 focus:border-[#003d58] rounded-lg px-3 py-1.5 text-xs font-bold text-[#003d58] min-w-[240px]">
                         <template x-for="b in banks" :key="b.bank_cd">
                             <option :value="b.bank_cd" x-text="b.bank_e_desc || b.bank_desc"></option>
                         </template>
@@ -59,8 +61,8 @@
 
                 <div>
                     <label class="block text-[11px] font-bold text-slate-600 mb-1">Statement Month:</label>
-                    <input type="month" x-model="selectedMonth" @change="loadStatementData()"
-                           class="bg-slate-50 border border-slate-300 focus:border-blue-600 rounded-lg px-3 py-1.5 text-xs font-mono font-bold text-slate-800">
+                    <input type="month" x-model="selectedMonth" @change="onContextChange()"
+                           class="bg-slate-50 border border-slate-300 focus:border-[#003d58] rounded-lg px-3 py-1.5 text-xs font-mono font-bold text-slate-800">
                 </div>
 
                 <div>
@@ -73,35 +75,515 @@
                 </div>
 
                 <div class="pt-4">
-                    <button @click="loadStatementData()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
-                        Show
+                    <button @click="loadStatementData(false)" class="bg-slate-700 hover:bg-slate-800 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
+                        🔄 Refresh
                     </button>
                 </div>
             </div>
 
-            <!-- CSV Upload & Primary Actions -->
-            <div class="flex flex-wrap items-center gap-2 pt-2 sm:pt-4">
-                <input type="file" x-ref="csvFileInput" accept=".csv" @change="uploadCsvFile($event)" class="hidden">
-
-                <button @click="$refs.csvFileInput.click()" :disabled="isMonthClosed"
-                        :class="isMonthClosed ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-indigo-600 hover:bg-indigo-700'"
-                        class="text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5">
-                    <span>📂 Load CSV</span>
+            <!-- 2-Step Workflow Tabs -->
+            <div class="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button type="button" @click="activeStep = 'analyzer'"
+                        :class="activeStep === 'analyzer' ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:bg-white'"
+                        class="px-4 py-2 rounded-lg text-xs font-extrabold transition flex items-center gap-2">
+                    <span class="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black"
+                          :class="activeStep === 'analyzer' ? 'bg-[#d29535] text-[#002435]' : 'bg-slate-300 text-slate-700'">1</span>
+                    <span>Statement Analyzer</span>
+                    <span x-show="analysis" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-200"
+                          :class="activeStep === 'analyzer' ? 'bg-emerald-500/25 text-emerald-200' : 'bg-emerald-100 text-emerald-800'"
+                          x-text="analysis ? analysis.ready_rows.length : ''"></span>
                 </button>
 
-                <button @click="loadSampleCsvForTesting()" :disabled="isMonthClosed"
-                        :class="isMonthClosed ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-100'"
-                        class="bg-amber-50 text-amber-900 border border-amber-300 px-3 py-1.5 rounded-lg text-xs font-bold transition"
-                        title="Generate a sample bank statement matching active SOs for testing">
-                    ⚡ Load Sample CSV
-                </button>
+                <span class="text-slate-400 font-bold text-xs">&rarr;</span>
 
-                <div class="h-5 w-px bg-slate-300 mx-0.5"></div>
+                <button type="button" @click="activeStep = 'reconcile'"
+                        :class="activeStep === 'reconcile' ? 'bg-[#003d58] text-white shadow-xs' : 'text-slate-600 hover:bg-white'"
+                        class="px-4 py-2 rounded-lg text-xs font-extrabold transition flex items-center gap-2">
+                    <span class="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black"
+                          :class="activeStep === 'reconcile' ? 'bg-[#d29535] text-[#002435]' : 'bg-slate-300 text-slate-700'">2</span>
+                    <span>Reconciliation &amp; Update</span>
+                    <span x-show="rows.length > 0" class="font-mono text-[10px] px-1.5 py-0.5 rounded"
+                          :class="activeStep === 'reconcile' ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-800'"
+                          x-text="rows.length"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====================================================================== -->
+    <!-- STEP 1: STATEMENT ANALYZER (DRY-RUN PREVIEW & INDICATOR REPORTS)       -->
+    <!-- ====================================================================== -->
+    <main x-show="activeStep === 'analyzer'" x-cloak class="max-w-[1600px] w-full mx-auto px-4 py-4 flex-1 flex flex-col gap-4">
+
+        <!-- Upload / Analyze Card -->
+        <section class="bg-white rounded-xl border border-slate-200 shadow-xs p-4">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-[#003d58]/10 text-[#003d58] flex items-center justify-center text-xl">
+                        🔍
+                    </div>
+                    <div>
+                        <h2 class="text-sm font-extrabold text-[#003d58]">
+                            Step 1: Raw Bank Statement Analyzer (Read-Only Dry Run)
+                        </h2>
+                        <p class="text-xs text-slate-500">
+                            Upload raw Bank Excel (<code class="font-mono bg-slate-100 px-1 rounded">.xlsx</code>) or CSV (<code class="font-mono bg-slate-100 px-1 rounded">.csv</code>).
+                            Automatically extracts Standing Orders &amp; Fawri, excludes Fawateer / Debits / Cheques, and runs full system matching before writing anything to the database.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                    <input type="file" x-ref="analyzerFileInput" accept=".xlsx,.csv" @change="onAnalyzerFileSelected($event)" class="hidden">
+
+                    <button type="button" @click="$refs.analyzerFileInput.click()" :disabled="analyzing || isMonthClosed"
+                            :class="(analyzing || isMonthClosed) ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-[#003d58] hover:bg-[#002b40]'"
+                            class="text-white px-4 py-2 rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-2">
+                        <span x-show="!analyzing && !isMonthClosed">📂 Select &amp; Analyze Excel / CSV</span>
+                        <span x-show="!analyzing && isMonthClosed">🔒 Month Closed</span>
+                        <span x-show="analyzing">⏳ Analyzing...</span>
+                    </button>
+
+                    <!-- Worksheet Selector (shown when Excel has multiple sheets) -->
+                    <template x-if="analysis && analysis.meta && analysis.meta.sheet_names && analysis.meta.sheet_names.length > 1">
+                        <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1">
+                            <span class="text-[11px] font-bold text-slate-600">Sheet:</span>
+                            <select x-model="selectedSheet" @change="reanalyzeSelectedSheet()" :disabled="isMonthClosed"
+                                    class="bg-transparent text-xs font-bold text-[#003d58] focus:outline-none disabled:opacity-50">
+                                <template x-for="sn in analysis.meta.sheet_names" :key="sn">
+                                    <option :value="sn" x-text="sn"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </template>
+
+                    <button type="button" x-show="analysis" @click="clearAnalysis()" :disabled="isMonthClosed"
+                            :class="isMonthClosed ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200'"
+                            class="bg-slate-100 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg text-xs font-bold transition">
+                        ✕ Clear
+                    </button>
+                </div>
+            </div>
+
+            <!-- Closed Month Lock Banner in Analyzer -->
+            <div x-show="isMonthClosed" class="mt-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-lg px-3.5 py-2.5 text-xs font-bold flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                    <span>🔒</span>
+                    <span>
+                        Month <span class="font-mono" x-text="selectedMonth"></span> is CLOSED for <span x-text="currentBankName"></span>.
+                        Analyzer controls are locked — select an open month or reopen this month in Step 2.
+                    </span>
+                </div>
+                <button type="button" @click="activeStep = 'reconcile'"
+                        class="bg-rose-700 hover:bg-rose-800 text-white px-3 py-1 rounded-md text-[11px] font-bold shrink-0">
+                    Go to Step 2 &rarr;
+                </button>
+            </div>
+
+            <!-- Active File Metadata Strip -->
+            <template x-if="analysis">
+                <div class="mt-3 pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="bg-indigo-50 text-indigo-800 border border-indigo-200 px-2.5 py-1 rounded-lg font-bold font-mono"
+                              x-text="'📄 ' + analysis.filename"></span>
+                        <span x-show="analysis.meta.selected_sheet"
+                              class="bg-cyan-50 text-cyan-800 border border-cyan-200 px-2.5 py-1 rounded-lg font-bold font-mono"
+                              x-text="'Sheet: ' + analysis.meta.selected_sheet"></span>
+                        <span class="bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg font-semibold"
+                              x-text="'Profile: ' + analysis.meta.parser_profile"></span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg font-mono font-bold"
+                              x-text="'Raw Rows: ' + analysis.meta.raw_total_rows"></span>
+                        <span class="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg font-mono font-bold"
+                              x-text="'Ready to Load: ' + analysis.ready_rows.length"></span>
+                        <span class="bg-rose-50 text-rose-800 border border-rose-200 px-2.5 py-1 rounded-lg font-mono font-bold"
+                              x-text="'Excluded: ' + analysis.excluded_summary.total + ' (Fawateer: ' + analysis.excluded_summary.fawateer + ', Debit/0: ' + analysis.excluded_summary.debit_or_zero + ', Other: ' + analysis.excluded_summary.non_so + ')'"></span>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Smart Warnings / Alerts -->
+            <template x-if="analysis && analysis.warnings && analysis.warnings.length > 0">
+                <div class="mt-3 space-y-2">
+                    <template x-for="(w, wi) in analysis.warnings" :key="wi">
+                        <div :class="w.level === 'error' ? 'bg-rose-50 border-rose-300 text-rose-900' : (w.level === 'warning' ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-blue-50 border-blue-300 text-blue-900')"
+                             class="border rounded-lg px-3.5 py-2 text-xs font-semibold flex items-center gap-2">
+                            <span x-text="w.level === 'error' ? '🚫' : (w.level === 'warning' ? '⚠️' : 'ℹ️')"></span>
+                            <span x-text="w.text"></span>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </section>
+
+        <!-- Empty State before upload -->
+        <template x-if="!analysis">
+            <section class="bg-white rounded-xl border-2 border-dashed border-slate-300 p-12 text-center flex flex-col items-center justify-center gap-3">
+                <div class="text-4xl">📊</div>
+                <h3 class="text-sm font-extrabold text-slate-700">No Bank Statement Analyzed Yet</h3>
+                <p class="text-xs text-slate-500 max-w-lg">
+                    Click <strong>Select &amp; Analyze Excel / CSV</strong> above to upload the raw monthly statement for
+                    <strong class="text-[#003d58]" x-text="currentBankName"></strong> (<span class="font-mono" x-text="selectedMonth"></span>).
+                    Nothing will be saved to the database until you review all indicators &amp; reports and click <strong>Approve &amp; Proceed</strong>.
+                </p>
+                <div class="flex items-center gap-3 mt-2">
+                    <button type="button" @click="$refs.analyzerFileInput.click()" :disabled="analyzing || isMonthClosed"
+                            :class="(analyzing || isMonthClosed) ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-[#003d58] hover:bg-[#002b40]'"
+                            class="text-white px-5 py-2.5 rounded-lg text-xs font-bold shadow-sm transition">
+                        <span x-show="!isMonthClosed">📂 Choose Bank Excel (.xlsx) or CSV File</span>
+                        <span x-show="isMonthClosed">🔒 Month Closed — Select an Open Month</span>
+                    </button>
+                    <button type="button" x-show="rows.length > 0" @click="activeStep = 'reconcile'"
+                            class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-xs font-bold shadow-sm transition">
+                        View Already Loaded Statement (<span x-text="rows.length"></span>) &rarr;
+                    </button>
+                </div>
+            </section>
+        </template>
+
+        <!-- Analysis Results: Indicators with Per-Indicator Print Reports + Financial Summary + Preview Table + Approval Bar -->
+        <template x-if="analysis">
+            <div class="flex flex-col gap-4">
+
+                <!-- Indicators & Financial Grid -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+                    <!-- Pre-Reconciliation Indicators (7 Cols) — EVERY Indicator has a Print Report Button -->
+                    <section class="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-xs p-4">
+                        <div class="flex flex-wrap items-center justify-between border-b border-slate-200 pb-2 mb-3 gap-2">
+                            <div>
+                                <h3 class="text-xs font-extrabold text-[#003d58]">
+                                    Pre-Reconciliation Indicators &amp; Diagnostic Reports
+                                </h3>
+                                <p class="text-[11px] text-slate-500">Click 🖨️ next to any indicator to open a detailed printable report before approving</p>
+                            </div>
+                            <button type="button" @click="printAnalyzerReport('ALL_ISSUES')"
+                                    :disabled="analyzerIssuesCount === 0"
+                                    :class="analyzerIssuesCount === 0 ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#003d58] hover:bg-[#d29535] hover:text-[#002435] text-white shadow-2xs'"
+                                    class="px-3 py-1.5 rounded-lg text-[11px] font-bold transition inline-flex items-center gap-1.5">
+                                <span>🖨️ Print All Issues</span>
+                                <span x-show="analyzerIssuesCount > 0" class="font-mono px-1.5 rounded-full bg-rose-500 text-white text-[10px]" x-text="analyzerIssuesCount"></span>
+                            </button>
+                        </div>
+
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                            <!-- In Bank (SO) -->
+                            <div class="bg-slate-50 border border-slate-200 p-2.5 rounded-lg flex justify-between items-center gap-1">
+                                <span class="text-[11px] font-bold text-slate-700">In Bank (SO):</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-slate-900" x-text="analysis.indicators.so_in_bank"></span>
+                                    <button type="button" x-show="analysis.indicators.so_in_bank > 0" @click="printAnalyzerReport('SO_ALL')"
+                                            title="Print All Standing Orders in Statement" class="px-1.5 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-200 text-[10px]">🖨️</button>
+                                </div>
+                            </div>
+
+                            <!-- In System -->
+                            <div class="bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg flex justify-between items-center gap-1">
+                                <span class="text-[11px] font-bold text-emerald-800">In System:</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-emerald-700" x-text="analysis.indicators.so_in_sys"></span>
+                                    <button type="button" x-show="analysis.indicators.so_in_sys > 0" @click="printAnalyzerReport('IN_SYS')"
+                                            title="Print Matched in System" class="px-1.5 py-0.5 rounded bg-white border border-emerald-300 hover:bg-emerald-200 text-[10px]">🖨️</button>
+                                </div>
+                            </div>
+
+                            <!-- In Txns (Ready to Pay) -->
+                            <div class="bg-emerald-50 border border-emerald-300 p-2.5 rounded-lg flex justify-between items-center gap-1">
+                                <span class="text-[11px] font-bold text-emerald-900">In Txns (Ready):</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-emerald-800" x-text="analysis.indicators.in_money_trans"></span>
+                                    <button type="button" x-show="analysis.indicators.in_money_trans > 0" @click="printAnalyzerReport('IN_TXNS')"
+                                            title="Print Ready to Update Transactions" class="px-1.5 py-0.5 rounded bg-white border border-emerald-400 hover:bg-emerald-200 text-[10px]">🖨️</button>
+                                </div>
+                            </div>
+
+                            <!-- Cash / Fawri -->
+                            <div class="bg-blue-50 border border-blue-200 p-2.5 rounded-lg flex justify-between items-center gap-1">
+                                <span class="text-[11px] font-bold text-blue-900">Cash / Fawri:</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-blue-800" x-text="analysis.indicators.fawri_count"></span>
+                                    <button type="button" x-show="analysis.indicators.fawri_count > 0" @click="printAnalyzerReport('FAWRI')"
+                                            title="Print Cash / Fawri Direct Transfers" class="px-1.5 py-0.5 rounded bg-white border border-blue-300 hover:bg-blue-200 text-[10px]">🖨️</button>
+                                </div>
+                            </div>
+
+                            <!-- Not in System -->
+                            <div :class="analysis.indicators.not_in_sys > 0 ? 'bg-amber-100 border-amber-400' : 'bg-slate-50 border-slate-200'"
+                                 class="p-2.5 rounded-lg border flex justify-between items-center gap-1">
+                                <span class="text-[11px] font-bold text-amber-950">Not in Sys:</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-amber-900" x-text="analysis.indicators.not_in_sys"></span>
+                                    <button type="button" x-show="analysis.indicators.not_in_sys > 0" @click="printAnalyzerReport('NOT_IN_SYS')"
+                                            title="Print Standing Orders Not Found in System" class="px-1.5 py-0.5 rounded bg-white border border-amber-400 hover:bg-amber-200 text-[10px]">🖨️</button>
+                                </div>
+                            </div>
+
+                            <!-- Without Txns -->
+                            <div :class="analysis.indicators.matched_no_trans > 0 ? 'bg-amber-100 border-amber-400' : 'bg-slate-50 border-slate-200'"
+                                 class="p-2.5 rounded-lg border flex justify-between items-center gap-1">
+                                <span class="text-[11px] font-bold text-amber-950">No Txn:</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-amber-900" x-text="analysis.indicators.matched_no_trans"></span>
+                                    <button type="button" x-show="analysis.indicators.matched_no_trans > 0" @click="printAnalyzerReport('NO_TXN')"
+                                            title="Print Standing Orders Without Monthly Transactions" class="px-1.5 py-0.5 rounded bg-white border border-amber-400 hover:bg-amber-200 text-[10px]">🖨️</button>
+                                </div>
+                            </div>
+
+                            <!-- Duplicate in Bank (Allowed to Load) -->
+                            <div :class="analysis.indicators.duplicated_in_bank > 0 ? 'bg-rose-50 border-rose-300' : 'bg-slate-50 border-slate-200'"
+                                 class="p-2.5 rounded-lg border flex justify-between items-center gap-1"
+                                 title="Duplicate SO codes in bank statement (allowed to load — e.g. delayed prior-month installment)">
+                                <span class="text-[11px] font-bold text-rose-800">Duplicate:</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-rose-800" x-text="analysis.indicators.duplicated_in_bank"></span>
+                                    <button type="button" x-show="analysis.indicators.duplicated_in_bank > 0" @click="printAnalyzerReport('DUPLICATE')"
+                                            title="Print Duplicate Standing Orders" class="px-1.5 py-0.5 rounded bg-white border border-rose-300 hover:bg-rose-200 text-[10px]">🖨️</button>
+                                </div>
+                            </div>
+
+                            <!-- Amount Mismatch -->
+                            <div :class="analysis.indicators.amt_mismatch_count > 0 ? 'bg-purple-50 border-purple-300' : 'bg-slate-50 border-slate-200'"
+                                 class="p-2.5 rounded-lg border flex justify-between items-center gap-1">
+                                <span class="text-[11px] font-bold text-purple-900">Amt Diff:</span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-purple-800" x-text="analysis.indicators.amt_mismatch_count"></span>
+                                    <button type="button" x-show="analysis.indicators.amt_mismatch_count > 0" @click="printAnalyzerReport('AMT_MISMATCH')"
+                                            title="Print Bank vs System Amount Differences" class="px-1.5 py-0.5 rounded bg-white border border-purple-300 hover:bg-purple-200 text-[10px]">🖨️</button>
+                                </div>
+                            </div>
+
+                            <!-- Excluded Rows -->
+                            <div class="bg-slate-100 border border-slate-300 p-2.5 rounded-lg flex justify-between items-center gap-1 col-span-2 sm:col-span-4">
+                                <span class="text-[11px] font-bold text-slate-700">
+                                    Excluded (Fawateer: <span class="font-mono" x-text="analysis.excluded_summary.fawateer"></span>
+                                    &bull; Debit/Zero: <span class="font-mono" x-text="analysis.excluded_summary.debit_or_zero"></span>
+                                    &bull; Other: <span class="font-mono" x-text="analysis.excluded_summary.non_so"></span>)
+                                </span>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-base font-extrabold font-mono text-slate-800" x-text="analysis.excluded_summary.total"></span>
+                                    <button type="button" x-show="analysis.excluded_summary.total > 0" @click="printAnalyzerReport('EXCLUDED')"
+                                            title="Print Excluded Rows Report" class="px-2 py-0.5 rounded bg-white border border-slate-400 hover:bg-slate-200 text-[10px] font-bold">🖨️ Report</button>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Financial Summary & Approval Card (5 Cols) -->
+                    <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-xs p-4 flex flex-col justify-between gap-4">
+                        <div>
+                            <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
+                                <h3 class="text-xs font-extrabold text-[#003d58]">Expected Financial Totals (BHD)</h3>
+                                <span class="text-[11px] font-bold bg-emerald-50 text-emerald-800 px-2.5 py-0.5 rounded border border-emerald-200"
+                                      x-text="'Match Ratio: ' + analysis.indicators.potential_update_pct + '%'"></span>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2.5 text-center">
+                                <div class="bg-blue-50/70 p-2.5 rounded-lg border border-blue-200">
+                                    <span class="block text-[11px] font-bold text-blue-900">SO Total</span>
+                                    <span class="text-lg font-extrabold font-mono text-blue-800" x-text="Number(analysis.indicators.sum_so_amt || 0).toFixed(3)"></span>
+                                </div>
+                                <div class="bg-amber-50/70 p-2.5 rounded-lg border border-amber-200">
+                                    <span class="block text-[11px] font-bold text-amber-900">Cash / Fawri</span>
+                                    <span class="text-lg font-extrabold font-mono text-amber-800" x-text="Number(analysis.indicators.sum_cash_amt || 0).toFixed(3)"></span>
+                                </div>
+                                <div class="bg-rose-50/70 p-2.5 rounded-lg border border-rose-200">
+                                    <span class="block text-[11px] font-bold text-rose-900">Duplicate Amt</span>
+                                    <span class="text-lg font-extrabold font-mono text-rose-700" x-text="Number(analysis.indicators.sum_dup_amt || 0).toFixed(3)"></span>
+                                </div>
+                                <div class="bg-[#003d58] text-white p-2.5 rounded-lg border border-[#002435]">
+                                    <span class="block text-[11px] font-semibold text-slate-300">Net Statement</span>
+                                    <span class="text-lg font-extrabold font-mono text-[#f3c677]" x-text="Number(analysis.indicators.total_loaded_amt || 0).toFixed(3)"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 1 -> Step 2 Approval CTA -->
+                        <div class="bg-emerald-50/70 border border-emerald-300 rounded-xl p-3 flex flex-col gap-2">
+                            <p class="text-[11px] font-semibold text-emerald-950">
+                                Ready to load <strong class="font-mono" x-text="analysis.ready_rows.length"></strong> verified row(s)
+                                into Reconciliation for <strong x-text="currentBankName"></strong> (<span class="font-mono" x-text="selectedMonth"></span>)?
+                            </p>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button type="button" @click="approveAndLoadToReconcile()"
+                                        :disabled="approving || isMonthClosed || analysis.is_closed || analysis.already_loaded_count > 0 || analysis.ready_rows.length === 0"
+                                        :class="(approving || isMonthClosed || analysis.is_closed || analysis.already_loaded_count > 0 || analysis.ready_rows.length === 0) ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-emerald-600 hover:bg-emerald-700'"
+                                        class="flex-1 text-white px-4 py-2.5 rounded-lg text-xs font-extrabold shadow-xs transition">
+                                    <span x-show="!approving">✔ Approve &amp; Proceed to Reconciliation &rarr;</span>
+                                    <span x-show="approving">⏳ Loading into Reconciliation...</span>
+                                </button>
+                                <button type="button" x-show="analysis.already_loaded_count > 0" @click="activeStep = 'reconcile'"
+                                        class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-2.5 rounded-lg text-xs font-bold transition">
+                                    Go to Step 2
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Interactive Preview Table -->
+                <section class="bg-white rounded-xl border border-slate-200 shadow-xs p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3 mb-3">
+                        <div class="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+                            <button type="button" @click="analyzerTab = 'READY'"
+                                    :class="analyzerTab === 'READY' ? 'bg-[#003d58] text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                                    class="px-3 py-1.5 rounded-lg transition">
+                                All Ready (<span x-text="analysis.ready_rows.length"></span>)
+                            </button>
+                            <button type="button" @click="analyzerTab = 'NOT_IN_SYS'"
+                                    :class="analyzerTab === 'NOT_IN_SYS' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-900 hover:bg-amber-100'"
+                                    class="px-3 py-1.5 rounded-lg transition">
+                                Not in Sys (<span x-text="analysis.indicators.not_in_sys"></span>)
+                            </button>
+                            <button type="button" @click="analyzerTab = 'NO_TXN'"
+                                    :class="analyzerTab === 'NO_TXN' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-900 hover:bg-amber-100'"
+                                    class="px-3 py-1.5 rounded-lg transition">
+                                No Txn (<span x-text="analysis.indicators.matched_no_trans"></span>)
+                            </button>
+                            <button type="button" @click="analyzerTab = 'DUPLICATE'"
+                                    :class="analyzerTab === 'DUPLICATE' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-800 hover:bg-rose-100'"
+                                    class="px-3 py-1.5 rounded-lg transition">
+                                Duplicate (<span x-text="analysis.indicators.duplicated_in_bank"></span>)
+                            </button>
+                            <button type="button" @click="analyzerTab = 'AMT_MISMATCH'"
+                                    :class="analyzerTab === 'AMT_MISMATCH' ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-900 hover:bg-purple-100'"
+                                    class="px-3 py-1.5 rounded-lg transition">
+                                Amt Diff (<span x-text="analysis.indicators.amt_mismatch_count"></span>)
+                            </button>
+                            <button type="button" @click="analyzerTab = 'FAWRI'"
+                                    :class="analyzerTab === 'FAWRI' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-800 hover:bg-blue-100'"
+                                    class="px-3 py-1.5 rounded-lg transition">
+                                Cash / Fawri (<span x-text="analysis.indicators.fawri_count"></span>)
+                            </button>
+                            <button type="button" @click="analyzerTab = 'EXCLUDED'"
+                                    :class="analyzerTab === 'EXCLUDED' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                                    class="px-3 py-1.5 rounded-lg transition">
+                                Excluded (<span x-text="analysis.excluded_rows.length"></span>)
+                            </button>
+                        </div>
+
+                        <input type="text" x-model="analyzerSearch" placeholder="Filter by SO code, donor, description..."
+                               class="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-xs w-64 focus:border-[#003d58] focus:outline-none">
+                    </div>
+
+                    <!-- Ready / Issue Rows Table -->
+                    <div x-show="analyzerTab !== 'EXCLUDED'" class="overflow-auto max-h-[380px] border border-slate-200 rounded-lg">
+                        <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
+                            <thead class="sticky top-0 bg-slate-800 text-white">
+                                <tr>
+                                    <th class="py-2 px-3 text-center">Row#</th>
+                                    <th class="py-2 px-3 text-center">Date</th>
+                                    <th class="py-2 px-3 text-center">Extracted Code</th>
+                                    <th class="py-2 px-3">Type</th>
+                                    <th class="py-2 px-3 text-right">Bank Amt</th>
+                                    <th class="py-2 px-3 text-right">System Amt</th>
+                                    <th class="py-2 px-3 text-center">In Sys</th>
+                                    <th class="py-2 px-3 text-center">Has Txn</th>
+                                    <th class="py-2 px-3">Donor</th>
+                                    <th class="py-2 px-3">Raw Bank Description</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-200">
+                                <template x-for="r in analyzerFilteredReadyRows" :key="r.idx">
+                                    <tr :class="r.is_duplicate ? 'bg-rose-50' : (r.cash_deposit === 2 && r.sys_found === 0 ? 'bg-amber-50' : (r.amt_mismatch ? 'bg-purple-50/70' : 'hover:bg-slate-50'))">
+                                        <td class="py-1.5 px-3 text-center font-mono text-slate-400" x-text="r.row_num"></td>
+                                        <td class="py-1.5 px-3 text-center font-mono" x-text="r.bank_stmnt_month"></td>
+                                        <td class="py-1.5 px-3 text-center font-mono font-bold text-[#003d58]" x-text="r.st_order_no || r.bank_stmnt_paydesc"></td>
+                                        <td class="py-1.5 px-3">
+                                            <span :class="r.cash_deposit === 2 ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'"
+                                                  class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                                  x-text="r.cash_deposit === 2 ? 'Standing Order' : 'Cash / Fawri'"></span>
+                                        </td>
+                                        <td class="py-1.5 px-3 text-right font-mono font-bold text-blue-800" x-text="Number(r.bank_stmnt_payamt || 0).toFixed(3)"></td>
+                                        <td class="py-1.5 px-3 text-right font-mono font-bold"
+                                            :class="r.amt_mismatch ? 'text-purple-700 underline' : 'text-emerald-700'"
+                                            x-text="r.sys_amt !== null && r.sys_amt !== undefined ? Number(r.sys_amt).toFixed(3) : '-'"></td>
+                                        <td class="py-1.5 px-3 text-center font-mono font-bold"
+                                            :class="r.sys_found === 1 ? 'text-emerald-700' : 'text-rose-600'"
+                                            x-text="r.cash_deposit === 2 ? r.sys_found : '-'"></td>
+                                        <td class="py-1.5 px-3 text-center font-mono font-bold"
+                                            :class="r.money_trans_found === 1 ? 'text-emerald-700' : 'text-amber-700'"
+                                            x-text="r.cash_deposit === 2 ? (r.money_trans_found === 1 ? 'Yes' : 'No') : '-'"></td>
+                                        <td class="py-1.5 px-3 max-w-[200px] truncate" x-text="r.donor_no ? ('#' + r.donor_no + ' ' + (r.donor_name || '')) : '-'"></td>
+                                        <td class="py-1.5 px-3 font-mono text-[11px] text-slate-500 max-w-[320px] truncate" :title="r.raw_desc" x-text="r.raw_desc"></td>
+                                    </tr>
+                                </template>
+                                <tr x-show="analyzerFilteredReadyRows.length === 0">
+                                    <td colspan="10" class="py-8 text-center text-slate-400 font-bold">No matching rows in this filter.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Excluded Rows Table -->
+                    <div x-show="analyzerTab === 'EXCLUDED'" class="overflow-auto max-h-[380px] border border-slate-200 rounded-lg">
+                        <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
+                            <thead class="sticky top-0 bg-slate-800 text-white">
+                                <tr>
+                                    <th class="py-2 px-3 text-center">Excel Row#</th>
+                                    <th class="py-2 px-3 text-center">Date</th>
+                                    <th class="py-2 px-3">Exclusion Reason</th>
+                                    <th class="py-2 px-3 text-right">Debit</th>
+                                    <th class="py-2 px-3 text-right">Credit</th>
+                                    <th class="py-2 px-3">Raw Bank Description</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-200">
+                                <template x-for="(ex, i) in analyzerFilteredExcludedRows" :key="i">
+                                    <tr class="hover:bg-slate-50">
+                                        <td class="py-1.5 px-3 text-center font-mono text-slate-400" x-text="ex.row_num"></td>
+                                        <td class="py-1.5 px-3 text-center font-mono" x-text="ex.date"></td>
+                                        <td class="py-1.5 px-3">
+                                            <span :class="ex.reason_code === 'DEBIT_OR_ZERO' ? 'bg-rose-100 text-rose-800' : (ex.reason_code === 'FAWATEER' ? 'bg-slate-200 text-slate-800' : 'bg-amber-100 text-amber-800')"
+                                                  class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                                  x-text="ex.reason_label"></span>
+                                        </td>
+                                        <td class="py-1.5 px-3 text-right font-mono text-rose-700 font-bold" x-text="Number(ex.debit || 0).toFixed(3)"></td>
+                                        <td class="py-1.5 px-3 text-right font-mono text-slate-700" x-text="Number(ex.credit || 0).toFixed(3)"></td>
+                                        <td class="py-1.5 px-3 font-mono text-[11px] text-slate-600" x-text="ex.raw_desc"></td>
+                                    </tr>
+                                </template>
+                                <tr x-show="analyzerFilteredExcludedRows.length === 0">
+                                    <td colspan="6" class="py-8 text-center text-slate-400 font-bold">No excluded rows found.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+        </template>
+    </main>
+
+    <!-- ====================================================================== -->
+    <!-- STEP 2: RECONCILIATION & PAYMENT UPDATE (LOADED STATEMENT)             -->
+    <!-- ====================================================================== -->
+    <main x-show="activeStep === 'reconcile'" x-cloak class="max-w-[1600px] w-full mx-auto px-4 py-3 flex-1 flex flex-col gap-4">
+
+        <!-- Step 2 Action Bar -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-xs px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+                <span class="bg-[#003d58] text-white font-bold px-3.5 py-1 rounded-lg text-xs" x-text="currentBankName"></span>
+                <span class="bg-slate-100 border border-slate-300 text-slate-800 font-mono font-extrabold px-3 py-1 rounded-lg text-sm" x-text="filteredRows.length"></span>
+                <span class="text-xs font-semibold text-slate-500">Loaded Rows</span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+                <button type="button" @click="activeStep = 'analyzer'"
+                        class="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold transition">
+                    &larr; Back to Analyzer
+                </button>
 
                 <button @click="confirmUpdateTransactions()" :disabled="isMonthClosed || rows.length === 0"
                         :class="(isMonthClosed || rows.length === 0) ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-emerald-600 hover:bg-emerald-700'"
                         class="text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow-xs transition">
                     ✔ Update Payments
+                </button>
+
+                <button type="button" @click="printCollectionReport()" :disabled="rows.length === 0"
+                        :class="rows.length === 0 ? 'opacity-50 cursor-not-allowed bg-slate-400' : 'bg-[#003d58] hover:bg-[#d29535] hover:text-[#002435]'"
+                        class="text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-xs transition"
+                        title="Print Monthly Collection Report (Standing Orders + Direct Transfers / Fawri + Grand Total)">
+                    🖨️ Print Collection Report
                 </button>
 
                 <button @click="deleteBankStatement()" :disabled="isMonthClosed || rows.length === 0"
@@ -121,20 +603,10 @@
                 </button>
             </div>
         </div>
-    </div>
-
-    <!-- 3. Main Content: Loaded Bank Statement Table + Bottom Reconciliation Panels -->
-    <main class="max-w-[1600px] w-full mx-auto px-4 py-3 flex-1 flex flex-col gap-4">
 
         <!-- Table Header & Filter (All / Without Txns) -->
         <section class="bg-white rounded-xl border border-slate-200 shadow-xs p-4 flex-1 flex flex-col">
             <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-3 mb-3">
-                <div class="flex items-center gap-3">
-                    <span class="bg-cyan-600 text-white font-bold px-3.5 py-1 rounded-lg text-xs" x-text="currentBankName"></span>
-                    <span class="bg-slate-100 border border-slate-300 text-slate-800 font-mono font-extrabold px-3 py-1 rounded-lg text-sm" x-text="filteredRows.length"></span>
-                    <span class="text-xs font-semibold text-slate-500">Displayed Rows</span>
-                </div>
-
                 <div class="flex items-center gap-4 bg-slate-100 px-3.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold">
                     <label class="flex items-center gap-2 cursor-pointer">
                         <input type="radio" name="rowFilter" value="ALL" x-model="viewFilter" class="w-3.5 h-3.5 accent-blue-600">
@@ -145,23 +617,93 @@
                         <span>Without Txns (<span x-text="rows.filter(r => r.cash_deposit === 2 && r.money_trans_found === 0).length"></span>)</span>
                     </label>
                 </div>
+
+                <div class="text-xs text-slate-500">
+                    Click any row to inspect Standing Order details below.
+                </div>
             </div>
 
-            <div class="overflow-auto max-h-[380px] border border-slate-200 rounded-lg">
+            <div class="overflow-auto max-h-[420px] border border-slate-200 rounded-lg">
                 <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
-                    <thead class="sticky top-0 bg-slate-800 text-white">
+                    <thead class="sticky top-0 z-10 bg-slate-800 text-white">
                         <tr>
-                            <th class="py-2.5 px-3 text-center">Deposit Date</th>
-                            <th class="py-2.5 px-3">Pay Description</th>
-                            <th class="py-2.5 px-3 text-center">Bank Amt</th>
-                            <th class="py-2.5 px-3 text-center">System Amt</th>
-                            <th class="py-2.5 px-3 text-center">Entry Type</th>
-                            <th class="py-2.5 px-3 text-center">In Sys</th>
-                            <th class="py-2.5 px-3 text-center bg-slate-700">SO Code</th>
-                            <th class="py-2.5 px-3 text-center">Has Txn</th>
-                            <th class="py-2.5 px-3 text-center">Updated</th>
-                            <th class="py-2.5 px-3 text-center">Txn Month</th>
-                            <th class="py-2.5 px-3 text-center">Loaded At</th>
+                            <th class="py-2 px-2.5 text-center">Deposit Date</th>
+                            <th class="py-2 px-2.5">Pay Description</th>
+                            <th class="py-2 px-2.5 text-center">Bank Amt</th>
+                            <th class="py-2 px-2.5 text-center">System Amt</th>
+                            <th class="py-2 px-2.5 text-center">Entry Type</th>
+                            <th class="py-2 px-2.5 text-center">In Sys</th>
+                            <th class="py-2 px-2.5 text-center bg-slate-700">SO Code</th>
+                            <th class="py-2 px-2.5 text-center">Has Txn</th>
+                            <th class="py-2 px-2.5 text-center">Updated</th>
+                            <th class="py-2 px-2.5 text-center">Txn Month</th>
+                            <th class="py-2 px-2.5 text-center">Loaded At</th>
+                        </tr>
+                        <!-- Column Header Filters Row -->
+                        <tr class="bg-slate-100 text-slate-800 border-b border-slate-300">
+                            <th class="p-1">
+                                <input type="text" x-model="colFilters.deposit_date" placeholder="Date..."
+                                       class="w-full px-1.5 py-1 text-[11px] font-normal bg-white border border-slate-300 rounded focus:outline-none focus:border-[#003d58]">
+                            </th>
+                            <th class="p-1">
+                                <input type="text" x-model="colFilters.pay_desc" placeholder="Desc..."
+                                       class="w-full px-1.5 py-1 text-[11px] font-normal bg-white border border-slate-300 rounded focus:outline-none focus:border-[#003d58]">
+                            </th>
+                            <th class="p-1">
+                                <input type="text" x-model="colFilters.bank_amt" placeholder="Amt..."
+                                       class="w-20 mx-auto block px-1.5 py-1 text-[11px] font-normal bg-white border border-slate-300 rounded text-center focus:outline-none focus:border-[#003d58]">
+                            </th>
+                            <th class="p-1">
+                                <input type="text" x-model="colFilters.sys_amt" placeholder="Sys..."
+                                       class="w-20 mx-auto block px-1.5 py-1 text-[11px] font-normal bg-white border border-slate-300 rounded text-center focus:outline-none focus:border-[#003d58]">
+                            </th>
+                            <th class="p-1">
+                                <select x-model="colFilters.entry_type"
+                                        class="w-full px-1 py-1 text-[11px] font-semibold bg-white border border-slate-300 rounded focus:outline-none focus:border-[#003d58]">
+                                    <option value="ALL">All</option>
+                                    <option value="SO">Standing Order</option>
+                                    <option value="FAWRI">Cash / Fawri</option>
+                                </select>
+                            </th>
+                            <th class="p-1">
+                                <select x-model="colFilters.in_sys"
+                                        class="w-full px-1 py-1 text-[11px] font-semibold bg-white border border-slate-300 rounded focus:outline-none focus:border-[#003d58]">
+                                    <option value="ALL">All</option>
+                                    <option value="YES">YES</option>
+                                    <option value="NO">NO</option>
+                                </select>
+                            </th>
+                            <th class="p-1">
+                                <input type="text" x-model="colFilters.so_code" placeholder="SO Code..."
+                                       class="w-24 mx-auto block px-1.5 py-1 text-[11px] font-normal bg-white border border-slate-300 rounded text-center focus:outline-none focus:border-[#003d58]">
+                            </th>
+                            <th class="p-1">
+                                <select x-model="colFilters.has_txn"
+                                        class="w-full px-1 py-1 text-[11px] font-semibold bg-white border border-slate-300 rounded focus:outline-none focus:border-[#003d58]">
+                                    <option value="ALL">All</option>
+                                    <option value="YES">YES</option>
+                                    <option value="NO">NO</option>
+                                </select>
+                            </th>
+                            <th class="p-1">
+                                <select x-model="colFilters.updated"
+                                        class="w-full px-1 py-1 text-[11px] font-semibold bg-white border border-slate-300 rounded focus:outline-none focus:border-[#003d58]">
+                                    <option value="ALL">All</option>
+                                    <option value="YES">YES</option>
+                                    <option value="NO">NO</option>
+                                </select>
+                            </th>
+                            <th class="p-1">
+                                <input type="text" x-model="colFilters.txn_month" placeholder="Month..."
+                                       class="w-24 mx-auto block px-1.5 py-1 text-[11px] font-normal bg-white border border-slate-300 rounded text-center focus:outline-none focus:border-[#003d58]">
+                            </th>
+                            <th class="p-1 text-center">
+                                <button type="button" x-show="hasActiveColFilters" @click="clearColFilters()"
+                                        class="px-2 py-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-800 text-[10px] font-bold border border-rose-300">
+                                    ✕ Clear
+                                </button>
+                                <span x-show="!hasActiveColFilters" class="text-[10px] text-slate-400 font-normal">Filter</span>
+                            </th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-200">
@@ -171,22 +713,28 @@
                                 class="cursor-pointer transition">
                                 <td class="py-2 px-3 text-center font-mono" x-text="r.bank_stmnt_month"></td>
                                 <td class="py-2 px-3 font-mono font-semibold text-slate-900" x-text="r.bank_stmnt_paydesc"></td>
-                                <td class="py-2 px-3 text-center font-mono font-bold text-sm text-blue-800" x-text="r.bank_stmnt_payamt"></td>
-                                <td class="py-2 px-3 text-center font-mono font-bold text-sm text-emerald-800" x-text="r.sys_amt ?? '-'"></td>
+                                <td class="py-2 px-3 text-center font-mono font-bold text-sm text-blue-800" x-text="Number(r.bank_stmnt_payamt || 0).toFixed(3)"></td>
+                                <td class="py-2 px-3 text-center font-mono font-bold text-sm text-emerald-800" x-text="r.sys_amt !== null && r.sys_amt !== undefined ? Number(r.sys_amt).toFixed(3) : '-'"></td>
                                 <td class="py-2 px-3 text-center">
                                     <span :class="r.cash_deposit === 2 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-amber-100 text-amber-800 border-amber-300'"
                                           class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border"
                                           x-text="r.cash_deposit === 2 ? 'Standing Order' : 'Cash / Fawri'"></span>
                                 </td>
-                                <td class="py-2 px-3 text-center font-mono font-bold"
-                                    :class="r.sys_found === 1 ? 'text-emerald-700' : 'text-rose-600'"
-                                    x-text="r.sys_found"></td>
+                                <td class="py-2 px-3 text-center">
+                                    <span :class="r.sys_found === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-700 border-rose-300'"
+                                          class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
+                                          x-text="r.sys_found === 1 ? 'YES' : 'NO'"></span>
+                                </td>
                                 <td class="py-2 px-3 text-center font-mono font-bold text-sm bg-slate-100/80" x-text="r.st_order_no || '-'"></td>
                                 <td class="py-2 px-3 text-center">
-                                    <input type="checkbox" :checked="r.money_trans_found === 1" disabled class="w-4 h-4 accent-blue-600">
+                                    <span :class="r.money_trans_found === 1 ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-slate-100 text-slate-600 border-slate-300'"
+                                          class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
+                                          x-text="r.money_trans_found === 1 ? 'YES' : 'NO'"></span>
                                 </td>
                                 <td class="py-2 px-3 text-center">
-                                    <input type="checkbox" :checked="r.money_trans_status === 1" disabled class="w-4 h-4 accent-emerald-600">
+                                    <span :class="r.money_trans_status === 1 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300'"
+                                          class="px-2 py-0.5 rounded text-[11px] font-extrabold font-mono border"
+                                          x-text="r.money_trans_status === 1 ? 'YES' : 'NO'"></span>
                                 </td>
                                 <td class="py-2 px-3 text-center font-mono" x-text="r.money_trans_month"></td>
                                 <td class="py-2 px-3 text-center font-mono text-slate-500" x-text="r.time_stamp"></td>
@@ -194,7 +742,7 @@
                         </template>
                         <tr x-show="filteredRows.length === 0">
                             <td colspan="11" class="py-10 text-center text-slate-400 font-bold text-sm">
-                                No statement rows loaded for this bank and month. Click "Load CSV" or "Load Sample CSV" to begin.
+                                No statement rows loaded for this bank and month. Go to <strong>Step 1 (Statement Analyzer)</strong> to analyze and approve a bank statement.
                             </td>
                         </tr>
                     </tbody>
@@ -244,7 +792,7 @@
                             :disabled="totalExceptionsCount === 0"
                             :class="totalExceptionsCount === 0 ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#003d58] hover:bg-[#d29535] hover:text-[#002435] text-white shadow-2xs'"
                             class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition inline-flex items-center gap-1"
-                            title="Print all reconciliation problem indicators (Not in System, No Txn, Duplicate, Blocked, Unknown)">
+                            title="Print all reconciliation problem indicators">
                         <span>🖨️ Print All Issues</span>
                         <span x-show="totalExceptionsCount > 0" class="font-mono px-1.5 rounded-full bg-rose-500 text-white text-[10px]" x-text="totalExceptionsCount"></span>
                     </button>
@@ -299,12 +847,13 @@
                         </div>
                     </div>
                     <div :class="indicators.cannot_update > 0 ? 'bg-rose-100 border-rose-400' : 'bg-slate-50 border-slate-200'"
-                         class="p-2.5 rounded-lg border flex justify-between items-center px-3 gap-1">
-                        <span class="text-[11px] font-bold text-rose-800">Blocked:</span>
+                         class="p-2.5 rounded-lg border flex justify-between items-center px-3 gap-1"
+                         title="Not in System + Matched Without Transactions">
+                        <span class="text-[11px] font-bold text-rose-800">Cannot Upd:</span>
                         <div class="flex items-center gap-1.5">
                             <span class="text-lg font-extrabold font-mono text-rose-800" x-text="indicators.cannot_update"></span>
-                            <button type="button" x-show="indicators.cannot_update > 0" @click="printExceptionReport('BLOCKED')"
-                                    title="Print Blocked / Cannot Update Details" class="px-1.5 py-0.5 rounded bg-white border border-rose-400 hover:bg-rose-200 text-[10px]">🖨️</button>
+                            <button type="button" x-show="indicators.cannot_update > 0" @click="printExceptionReport('CANNOT_UPDATE')"
+                                    title="Print Cannot Update (Not in Sys + No Txn)" class="px-1.5 py-0.5 rounded bg-white border border-rose-400 hover:bg-rose-200 text-[10px]">🖨️</button>
                         </div>
                     </div>
                 </div>
@@ -313,23 +862,23 @@
             <!-- (3) Financial Totals & Percentages (5 Cols) -->
             <section class="lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-xs p-4">
                 <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
-                    <h3 class="text-xs font-extrabold text-rose-800">Financial Totals & Ratios (BHD)</h3>
+                    <h3 class="text-xs font-extrabold text-rose-800">Financial Totals &amp; Ratios (BHD)</h3>
                     <span class="text-[11px] font-bold bg-blue-50 text-blue-800 px-2.5 py-0.5 rounded border border-blue-200"
-                          x-text="'Loaded Total: ' + indicators.total_loaded_amt + ' BHD'"></span>
+                          x-text="'Loaded Total: ' + Number(indicators.total_loaded_amt || 0).toFixed(3) + ' BHD'"></span>
                 </div>
 
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">
                     <div class="bg-blue-50/70 p-2.5 rounded-lg border border-blue-200">
                         <span class="block text-[11px] font-bold text-blue-900 mb-0.5">SO Total</span>
-                        <span class="text-lg font-extrabold font-mono text-blue-800" x-text="indicators.sum_so_amt"></span>
+                        <span class="text-lg font-extrabold font-mono text-blue-800" x-text="Number(indicators.sum_so_amt || 0).toFixed(3)"></span>
                     </div>
                     <div class="bg-amber-50/70 p-2.5 rounded-lg border border-amber-200">
                         <span class="block text-[11px] font-bold text-amber-900 mb-0.5">Cash / Fawri</span>
-                        <span class="text-lg font-extrabold font-mono text-amber-800" x-text="indicators.sum_cash_amt"></span>
+                        <span class="text-lg font-extrabold font-mono text-amber-800" x-text="Number(indicators.sum_cash_amt || 0).toFixed(3)"></span>
                     </div>
                     <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
                         <span class="block text-[11px] font-bold text-slate-600 mb-0.5">Duplicate Amt</span>
-                        <span class="text-lg font-extrabold font-mono text-rose-700" x-text="indicators.sum_dup_amt"></span>
+                        <span class="text-lg font-extrabold font-mono text-rose-700" x-text="Number(indicators.sum_dup_amt || 0).toFixed(3)"></span>
                     </div>
                     <div class="bg-emerald-50 p-2.5 rounded-lg border border-emerald-300">
                         <span class="block text-[11px] font-bold text-emerald-900 mb-0.5">Update Ratio</span>
@@ -341,22 +890,36 @@
                     </div>
                     <div class="bg-slate-800 text-white p-2.5 rounded-lg border border-slate-700">
                         <span class="block text-[11px] font-semibold text-slate-300 mb-0.5">Net Statement</span>
-                        <span class="text-lg font-extrabold font-mono text-emerald-400" x-text="indicators.total_loaded_amt"></span>
+                        <span class="text-lg font-extrabold font-mono text-emerald-400" x-text="Number(indicators.total_loaded_amt || 0).toFixed(3)"></span>
                     </div>
                 </div>
             </section>
-
         </div>
     </main>
 
     <script>
+        let _lastUploadedFile = null;
+
         function reconcileApp() {
             return {
+                activeStep: 'analyzer',
                 banks: [],
                 selectedBank: 1,
                 selectedMonth: '2026-11',
                 isMonthClosed: false,
                 viewFilter: 'ALL',
+                colFilters: {
+                    deposit_date: '',
+                    pay_desc: '',
+                    bank_amt: '',
+                    sys_amt: '',
+                    entry_type: 'ALL',
+                    in_sys: 'ALL',
+                    so_code: '',
+                    has_txn: 'ALL',
+                    updated: 'ALL',
+                    txn_month: ''
+                },
                 rows: [],
                 selectedRow: null,
                 indicators: {
@@ -365,8 +928,22 @@
                     sum_so_amt: 0, sum_cash_amt: 0, sum_dup_amt: 0, total_loaded_amt: 0,
                     potential_update_pct: 0, updated_count: 0
                 },
+                // Step 1 Analyzer State
+                analyzing: false,
+                approving: false,
+                analysis: null,
+                selectedSheet: '',
+                analyzerTab: 'READY',
+                analyzerSearch: '',
+
                 async init() {
-                    await this.loadStatementData();
+                    await this.loadStatementData(true);
+                },
+                async onContextChange() {
+                    this.analysis = null;
+                    _lastUploadedFile = null;
+                    this.selectedSheet = '';
+                    await this.loadStatementData(true);
                 },
                 get currentBankName() {
                     const b = this.banks.find(x => Number(x.bank_cd) === Number(this.selectedBank));
@@ -375,9 +952,218 @@
                 get totalExceptionsCount() {
                     return Number(this.indicators.not_in_sys || 0)
                         + Number(this.indicators.matched_no_trans || 0)
-                        + Number(this.indicators.duplicated_in_bank || 0)
-                        + Number(this.indicators.cannot_update || 0)
-                        + Number(this.indicators.unknown_count || 0);
+                        + Number(this.indicators.duplicated_in_bank || 0);
+                },
+                get analyzerIssuesCount() {
+                    if (!this.analysis || !this.analysis.indicators) return 0;
+                    const ind = this.analysis.indicators;
+                    return Number(ind.not_in_sys || 0)
+                        + Number(ind.matched_no_trans || 0)
+                        + Number(ind.duplicated_in_bank || 0)
+                        + Number(ind.amt_mismatch_count || 0);
+                },
+                get analyzerFilteredReadyRows() {
+                    if (!this.analysis) return [];
+                    let list = this.analysis.ready_rows || [];
+                    if (this.analyzerTab === 'NOT_IN_SYS') {
+                        list = list.filter(r => r.cash_deposit === 2 && r.sys_found === 0);
+                    } else if (this.analyzerTab === 'NO_TXN') {
+                        list = list.filter(r => r.cash_deposit === 2 && r.sys_found === 1 && r.money_trans_found === 0);
+                    } else if (this.analyzerTab === 'DUPLICATE') {
+                        list = list.filter(r => r.is_duplicate);
+                    } else if (this.analyzerTab === 'AMT_MISMATCH') {
+                        list = list.filter(r => r.amt_mismatch);
+                    } else if (this.analyzerTab === 'FAWRI') {
+                        list = list.filter(r => r.cash_deposit !== 2);
+                    }
+                    const q = (this.analyzerSearch || '').trim().toLowerCase();
+                    if (q) {
+                        list = list.filter(r =>
+                            String(r.st_order_no || '').toLowerCase().includes(q) ||
+                            String(r.donor_no || '').toLowerCase().includes(q) ||
+                            String(r.donor_name || '').toLowerCase().includes(q) ||
+                            String(r.raw_desc || '').toLowerCase().includes(q)
+                        );
+                    }
+                    return list;
+                },
+                get analyzerFilteredExcludedRows() {
+                    if (!this.analysis) return [];
+                    let list = this.analysis.excluded_rows || [];
+                    const q = (this.analyzerSearch || '').trim().toLowerCase();
+                    if (q) {
+                        list = list.filter(r =>
+                            String(r.raw_desc || '').toLowerCase().includes(q) ||
+                            String(r.reason_label || '').toLowerCase().includes(q) ||
+                            String(r.date || '').toLowerCase().includes(q)
+                        );
+                    }
+                    return list;
+                },
+                clearAnalysis() {
+                    this.analysis = null;
+                    _lastUploadedFile = null;
+                    this.selectedSheet = '';
+                    this.analyzerTab = 'READY';
+                    this.analyzerSearch = '';
+                },
+                async onAnalyzerFileSelected(event) {
+                    const file = event.target.files[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    _lastUploadedFile = file;
+                    this.selectedSheet = '';
+                    await this.runAnalyzer(file, '');
+                },
+                async reanalyzeSelectedSheet() {
+                    if (!_lastUploadedFile) return;
+                    await this.runAnalyzer(_lastUploadedFile, this.selectedSheet);
+                },
+                async runAnalyzer(file, sheetName) {
+                    this.analyzing = true;
+                    try {
+                        const fd = new FormData();
+                        fd.append('bank_cd', this.selectedBank);
+                        fd.append('month_str', this.selectedMonth);
+                        fd.append('file', file);
+                        if (sheetName) fd.append('sheet_name', sheetName);
+
+                        const res = await fetch('/api/bank-reconcile/analyze', { method: 'POST', body: fd });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({ detail: 'Analysis failed' }));
+                            await (window.erpAlert ? window.erpAlert(err.detail || 'Analysis failed', 'error', 'Analyzer Error') : alert(err.detail));
+                            return;
+                        }
+                        const data = await res.json();
+                        this.analysis = data;
+                        this.selectedSheet = (data.meta && data.meta.selected_sheet) || '';
+                        this.analyzerTab = 'READY';
+                    } finally {
+                        this.analyzing = false;
+                    }
+                },
+                async approveAndLoadToReconcile() {
+                    if (!this.analysis || !this.analysis.ready_rows || this.analysis.ready_rows.length === 0) return;
+                    const msg = `Approve and load ${this.analysis.ready_rows.length} verified row(s) (${Number(this.analysis.indicators.total_loaded_amt).toFixed(3)} BHD) into Reconciliation for ${this.currentBankName} (${this.selectedMonth})?`;
+                    const ok = window.erpConfirm ? await window.erpConfirm(msg, 'Approve & Load Statement') : confirm(msg);
+                    if (!ok) return;
+
+                    this.approving = true;
+                    try {
+                        const payload = {
+                            bank_cd: Number(this.selectedBank),
+                            month_str: this.selectedMonth,
+                            rows: this.analysis.ready_rows.map(r => ({
+                                date: String(r.bank_stmnt_month || ''),
+                                desc: String(r.bank_stmnt_paydesc || ''),
+                                amt: Number(r.bank_stmnt_payamt || 0)
+                            }))
+                        };
+                        const res = await fetch('/api/bank-reconcile/approve-load', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({ detail: 'Failed to load statement' }));
+                            await (window.erpAlert ? window.erpAlert(err.detail || 'Failed to load', 'error', 'Load Blocked') : alert(err.detail));
+                            return;
+                        }
+                        const result = await res.json();
+                        await this.loadStatementData(false);
+                        this.activeStep = 'reconcile';
+                        if (window.erpAlert) {
+                            await window.erpAlert(`Loaded ${result.loaded_count} row(s) into Reconciliation. Review and click "Update Payments" when ready.`, 'success', 'Statement Loaded');
+                        }
+                    } finally {
+                        this.approving = false;
+                    }
+                },
+                printAnalyzerReport(category = 'ALL_ISSUES') {
+                    if (!this.analysis) return;
+                    const ready = this.analysis.ready_rows || [];
+                    const soRows = ready.filter(r => Number(r.cash_deposit) === 2);
+                    const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                    if (category === 'EXCLUDED') {
+                        const exRows = this.analysis.excluded_rows || [];
+                        if (!exRows.length) return;
+                        const win = window.open('', '_blank', 'width=1100,height=800');
+                        if (!win) { alert('Please allow pop-ups to print the report.'); return; }
+                        win.document.write(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Excluded Bank Rows — ${esc(this.currentBankName)} (${esc(this.selectedMonth)})</title>
+<style>
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 20px; font-size: 12px; }
+    .hdr { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #003d58; padding-bottom: 12px; margin-bottom: 16px; }
+    .hdr-left { display: flex; align-items: center; gap: 12px; }
+    .hdr img { height: 48px; }
+    .hdr h1 { margin: 0; font-size: 16px; color: #003d58; }
+    .hdr p { margin: 2px 0 0; font-size: 11px; color: #64748b; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th, td { border: 1px solid #d7d3cb; padding: 5px 7px; text-align: left; }
+    th { background: #003d58; color: #fff; font-weight: 700; white-space: nowrap; }
+    .num { text-align: right; } .mono { font-family: monospace; white-space: nowrap; }
+    @media print { .no-print { display: none; } body { margin: 10px; } }
+</style></head><body>
+    <div class="hdr">
+        <div class="hdr-left">
+            <img src="${window.location.origin}/static/logo.webp" alt="Discover Islam Society">
+            <div>
+                <h1>Analyzer Report — Excluded Statement Rows (${exRows.length})</h1>
+                <p>Bank: <strong>${esc(this.currentBankName)}</strong> | Month: <strong>${esc(this.selectedMonth)}</strong> | File: <strong>${esc(this.analysis.filename)}</strong></p>
+            </div>
+        </div>
+        <div class="mono" style="text-align:right;font-size:11px;">Discover Islam Society — ERP<br>${esc(new Date().toLocaleString())}</div>
+    </div>
+    <table>
+        <thead><tr><th>#</th><th>Excel Row</th><th>Date</th><th>Exclusion Reason</th><th class="num">Debit</th><th class="num">Credit</th><th>Raw Description</th></tr></thead>
+        <tbody>
+            ${exRows.map((r, i) => `<tr>
+                <td class="mono">${i + 1}</td>
+                <td class="mono">${r.row_num}</td>
+                <td class="mono">${esc(r.date)}</td>
+                <td>${esc(r.reason_label)}</td>
+                <td class="num mono">${Number(r.debit || 0).toFixed(3)}</td>
+                <td class="num mono">${Number(r.credit || 0).toFixed(3)}</td>
+                <td class="mono">${esc(r.raw_desc)}</td>
+            </tr>`).join('')}
+        </tbody>
+    </table>
+    <div class="no-print" style="text-align:right;margin-top:14px;">
+        <button onclick="window.print()" style="background:#003d58;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;">🖨️ Print Report</button>
+    </div>
+    <script>window.onload = function(){ setTimeout(function(){ window.print(); }, 250); };<\/script>
+</body></html>`);
+                        win.document.close();
+                        return;
+                    }
+
+                    const groups = {
+                        SO_ALL: { title: 'All Extracted Standing Orders — جميع الاستقطاعات المستخلصة', rows: soRows },
+                        IN_SYS: { title: 'Matched in System — استقطاعات موجودة في النظام', rows: soRows.filter(r => Number(r.sys_found) === 1) },
+                        IN_TXNS: { title: 'Ready to Update (Matched with Monthly Transaction) — جاهزة للتحديث', rows: soRows.filter(r => Number(r.sys_found) === 1 && Number(r.money_trans_found) === 1) },
+                        NOT_IN_SYS: { title: 'Not in System — استقطاعات غير موجودة في النظام', rows: soRows.filter(r => Number(r.sys_found) === 0) },
+                        NO_TXN: { title: 'Matched Without Monthly Transactions — استقطاعات بدون حركات شهرية', rows: soRows.filter(r => Number(r.sys_found) === 1 && Number(r.money_trans_found) === 0) },
+                        DUPLICATE: { title: 'Duplicate Standing Orders (Allowed — For Review) — استقطاعات متكررة في كشف البنك', rows: soRows.filter(r => r.is_duplicate) },
+                        AMT_MISMATCH: { title: 'Bank vs System Amount Differences — فروقات مبالغ بين البنك والنظام', rows: soRows.filter(r => r.amt_mismatch) },
+                        FAWRI: { title: 'Cash / Fawri Direct Transfers — التحصيلات المباشرة (فوري / نقدي)', rows: ready.filter(r => Number(r.cash_deposit) !== 2) }
+                    };
+
+                    const keys = category === 'ALL_ISSUES'
+                        ? ['NOT_IN_SYS', 'NO_TXN', 'DUPLICATE', 'AMT_MISMATCH']
+                        : [category];
+
+                    const reportHeading = category === 'ALL_ISSUES'
+                        ? `Statement Diagnostic Report (Grouped by Status) — ${this.currentBankName} (${this.selectedMonth})`
+                        : `${groups[category] ? groups[category].title.split('—')[0].trim() : 'Analyzer Report'} — ${this.currentBankName} (${this.selectedMonth})`;
+
+                    this._openReconcilePrintWindow(
+                        reportHeading,
+                        `File: ${this.analysis.filename}${this.analysis.meta.selected_sheet ? ' | Sheet: ' + this.analysis.meta.selected_sheet : ''}`,
+                        this.analysis.indicators,
+                        groups,
+                        keys
+                    );
                 },
                 buildExceptionGroups() {
                     const soRows = this.rows.filter(r => Number(r.cash_deposit) === 2);
@@ -396,29 +1182,40 @@
                             rows: soRows.filter(r => Number(r.sys_found) === 1 && Number(r.money_trans_found) === 0)
                         },
                         DUPLICATE: {
-                            title: 'Duplicate Standing Orders in Bank Statement — استقطاعات متكررة في كشف البنك',
+                            title: 'Duplicate Standing Orders (Allowed — For Review) — استقطاعات متكررة في كشف البنك',
                             rows: soRows.filter(r => {
                                 const c = String(r.st_order_no || '').trim();
                                 return c && codeCounts[c] > 1;
                             })
                         },
-                        BLOCKED: {
-                            title: 'Blocked / Cannot Update — حركات متعذر تحديثها',
-                            rows: soRows.filter(r => Number(r.money_trans_status) === 0 && (Number(r.sys_found) === 0 || Number(r.money_trans_found) === 0 || (r.sys_amt !== null && r.sys_amt !== undefined && Number(r.bank_stmnt_payamt) !== Number(r.sys_amt))))
+                        CANNOT_UPDATE: {
+                            title: 'Cannot Update (Not in Sys + Without Txns) — حركات يتعذر تحديثها',
+                            rows: soRows.filter(r => Number(r.sys_found) === 0 || Number(r.money_trans_found) === 0)
                         },
                         UNKNOWN: {
                             title: 'Unknown / Unparsed Bank Entries — حركات غير معرّفة',
-                            rows: soRows.filter(r => !String(r.st_order_no || '').trim())
+                            rows: soRows.filter(r => Number(r.sys_found) === 0)
                         }
                     };
                 },
                 printExceptionReport(category = 'ALL') {
                     const groups = this.buildExceptionGroups();
                     const keys = category === 'ALL'
-                        ? ['NOT_IN_SYS', 'NO_TXN', 'DUPLICATE', 'BLOCKED', 'UNKNOWN']
+                        ? ['NOT_IN_SYS', 'NO_TXN', 'DUPLICATE']
                         : [category];
+                    const reportHeading = category === 'ALL'
+                        ? `Reconciliation Report (Grouped by Status) — ${this.currentBankName} (${this.selectedMonth})`
+                        : `${groups[category] ? groups[category].title.split('—')[0].trim() : 'Reconciliation Report'} — ${this.currentBankName} (${this.selectedMonth})`;
+                    this._openReconcilePrintWindow(
+                        reportHeading,
+                        `Loaded Statement Reconciliation`,
+                        this.indicators,
+                        groups,
+                        keys
+                    );
+                },
+                _openReconcilePrintWindow(docTitle, subtitle, ind, groups, keys) {
                     const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
                     let sectionsHtml = '';
                     let totalPrinted = 0;
                     keys.forEach(k => {
@@ -430,7 +1227,7 @@
                             <div class="sec">
                                 <div class="sec-head">
                                     <span>${esc(g.title)}</span>
-                                    <span>${g.rows.length} row(s) • ${sumAmt.toFixed(3)} BHD</span>
+                                    <span>${g.rows.length} row(s) &bull; ${sumAmt.toFixed(3)} BHD</span>
                                 </div>
                                 <table>
                                     <thead>
@@ -440,7 +1237,7 @@
                                             <th>SO Code</th>
                                             <th>Donor #</th>
                                             <th>Donor Name</th>
-                                            <th>Pay Description</th>
+                                            <th>Description</th>
                                             <th class="num">Bank Amt</th>
                                             <th class="num">System Amt</th>
                                             <th>In Sys</th>
@@ -452,10 +1249,10 @@
                                             <tr>
                                                 <td class="mono">${i + 1}</td>
                                                 <td class="mono">${esc(r.bank_stmnt_month || '-')}</td>
-                                                <td class="mono bold">${esc(r.st_order_no || '-')}</td>
+                                                <td class="mono bold">${esc(r.st_order_no || r.bank_stmnt_paydesc || '-')}</td>
                                                 <td class="mono">${esc(r.donor_no || '-')}</td>
                                                 <td>${esc(r.donor_ename || r.donor_name || '-')}</td>
-                                                <td class="mono">${esc(r.bank_stmnt_paydesc || '-')}</td>
+                                                <td class="mono">${esc(r.raw_desc || r.bank_stmnt_paydesc || '-')}</td>
                                                 <td class="num mono bold">${Number(r.bank_stmnt_payamt || 0).toFixed(3)}</td>
                                                 <td class="num mono">${r.sys_amt !== null && r.sys_amt !== undefined ? Number(r.sys_amt).toFixed(3) : '-'}</td>
                                                 <td class="mono">${r.sys_found === 1 ? 'Yes' : 'No'}</td>
@@ -468,17 +1265,17 @@
                     });
 
                     if (totalPrinted === 0) {
-                        alert('No exception rows found for the selected indicator.');
+                        alert('No rows found for the selected indicator.');
                         return;
                     }
 
                     const win = window.open('', '_blank', 'width=1100,height=800');
                     if (!win) {
-                        alert('Please allow pop-ups to print the exceptions report.');
+                        alert('Please allow pop-ups to print the report.');
                         return;
                     }
                     win.document.write(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Bank Reconciliation Exceptions — ${esc(this.currentBankName)} (${esc(this.selectedMonth)})</title>
+<html lang="en"><head><meta charset="UTF-8"><title>${esc(docTitle)}</title>
 <style>
     body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 20px; font-size: 12px; }
     .hdr { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #003d58; padding-bottom: 12px; margin-bottom: 16px; }
@@ -504,8 +1301,8 @@
         <div class="hdr-left">
             <img src="${window.location.origin}/static/logo.webp" alt="Discover Islam Society">
             <div>
-                <h1>Bank Reconciliation Exceptions Report</h1>
-                <p>Bank: <strong>${esc(this.currentBankName)}</strong> &nbsp;|&nbsp; Statement Month: <strong>${esc(this.selectedMonth)}</strong></p>
+                <h1>${esc(docTitle)}</h1>
+                <p>Bank: <strong>${esc(this.currentBankName)}</strong> &nbsp;|&nbsp; Month: <strong>${esc(this.selectedMonth)}</strong> &nbsp;|&nbsp; ${esc(subtitle)}</p>
             </div>
         </div>
         <div class="meta">
@@ -514,11 +1311,13 @@
         </div>
     </div>
     <div class="kpi-bar">
-        <div class="kpi">Not in Sys:<strong>${this.indicators.not_in_sys}</strong></div>
-        <div class="kpi">No Txn:<strong>${this.indicators.matched_no_trans}</strong></div>
-        <div class="kpi">Duplicate:<strong>${this.indicators.duplicated_in_bank}</strong></div>
-        <div class="kpi">Blocked:<strong>${this.indicators.cannot_update}</strong></div>
-        <div class="kpi">Unknown:<strong>${this.indicators.unknown_count}</strong></div>
+        <div class="kpi">In Bank:<strong>${ind.so_in_bank || 0}</strong></div>
+        <div class="kpi">In Sys:<strong>${ind.so_in_sys || 0}</strong></div>
+        <div class="kpi">In Txns:<strong>${ind.in_money_trans || 0}</strong></div>
+        <div class="kpi">Not in Sys:<strong>${ind.not_in_sys || 0}</strong></div>
+        <div class="kpi">No Txn:<strong>${ind.matched_no_trans || 0}</strong></div>
+        <div class="kpi">Duplicate:<strong>${ind.duplicated_in_bank || 0}</strong></div>
+        <div class="kpi">Amt Diff:<strong>${ind.amt_mismatch_count || 0}</strong></div>
     </div>
     ${sectionsHtml}
     <div class="no-print" style="text-align:right;margin-top:14px;">
@@ -528,13 +1327,241 @@
 </body></html>`);
                     win.document.close();
                 },
-                get filteredRows() {
-                    if (this.viewFilter === 'NO_TRANS') {
-                        return this.rows.filter(r => r.cash_deposit === 2 && r.money_trans_found === 0);
-                    }
-                    return this.rows;
+                get hasActiveColFilters() {
+                    const f = this.colFilters;
+                    return !!(f.deposit_date || f.pay_desc || f.bank_amt || f.sys_amt || f.so_code || f.txn_month ||
+                        f.entry_type !== 'ALL' || f.in_sys !== 'ALL' || f.has_txn !== 'ALL' || f.updated !== 'ALL');
                 },
-                async loadStatementData() {
+                clearColFilters() {
+                    this.colFilters = {
+                        deposit_date: '', pay_desc: '', bank_amt: '', sys_amt: '',
+                        entry_type: 'ALL', in_sys: 'ALL', so_code: '',
+                        has_txn: 'ALL', updated: 'ALL', txn_month: ''
+                    };
+                },
+                get filteredRows() {
+                    let list = this.rows || [];
+                    if (this.viewFilter === 'NO_TRANS') {
+                        list = list.filter(r => r.cash_deposit === 2 && r.money_trans_found === 0);
+                    }
+                    const f = this.colFilters;
+                    if (f.deposit_date) {
+                        const q = f.deposit_date.trim().toLowerCase();
+                        list = list.filter(r => String(r.bank_stmnt_month || '').toLowerCase().includes(q));
+                    }
+                    if (f.pay_desc) {
+                        const q = f.pay_desc.trim().toLowerCase();
+                        list = list.filter(r => String(r.bank_stmnt_paydesc || '').toLowerCase().includes(q));
+                    }
+                    if (f.bank_amt) {
+                        const q = f.bank_amt.trim();
+                        list = list.filter(r => Number(r.bank_stmnt_payamt || 0).toFixed(3).includes(q) || String(r.bank_stmnt_payamt || '').includes(q));
+                    }
+                    if (f.sys_amt) {
+                        const q = f.sys_amt.trim();
+                        list = list.filter(r => r.sys_amt !== null && r.sys_amt !== undefined && (Number(r.sys_amt).toFixed(3).includes(q) || String(r.sys_amt).includes(q)));
+                    }
+                    if (f.entry_type === 'SO') {
+                        list = list.filter(r => Number(r.cash_deposit) === 2);
+                    } else if (f.entry_type === 'FAWRI') {
+                        list = list.filter(r => Number(r.cash_deposit) !== 2);
+                    }
+                    if (f.in_sys === 'YES') {
+                        list = list.filter(r => Number(r.sys_found) === 1);
+                    } else if (f.in_sys === 'NO') {
+                        list = list.filter(r => Number(r.sys_found) !== 1);
+                    }
+                    if (f.so_code) {
+                        const q = f.so_code.trim().toLowerCase();
+                        list = list.filter(r => String(r.st_order_no || '').toLowerCase().includes(q));
+                    }
+                    if (f.has_txn === 'YES') {
+                        list = list.filter(r => Number(r.money_trans_found) === 1);
+                    } else if (f.has_txn === 'NO') {
+                        list = list.filter(r => Number(r.money_trans_found) !== 1);
+                    }
+                    if (f.updated === 'YES') {
+                        list = list.filter(r => Number(r.money_trans_status) === 1);
+                    } else if (f.updated === 'NO') {
+                        list = list.filter(r => Number(r.money_trans_status) !== 1);
+                    }
+                    if (f.txn_month) {
+                        const q = f.txn_month.trim().toLowerCase();
+                        list = list.filter(r => String(r.money_trans_month || '').toLowerCase().includes(q));
+                    }
+                    return list;
+                },
+                printCollectionReport() {
+                    if (!this.rows || this.rows.length === 0) return;
+                    const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    const soRows = this.rows.filter(r => Number(r.cash_deposit) === 2);
+                    const directRows = this.rows.filter(r => Number(r.cash_deposit) !== 2);
+
+                    const soTotal = soRows.reduce((s, r) => s + Number(r.bank_stmnt_payamt || 0), 0);
+                    const soUpdatedCnt = soRows.filter(r => Number(r.money_trans_status) === 1).length;
+                    const directTotal = directRows.reduce((s, r) => s + Number(r.bank_stmnt_payamt || 0), 0);
+                    const grandTotal = soTotal + directTotal;
+
+                    const win = window.open('', '_blank', 'width=1150,height=820');
+                    if (!win) {
+                        alert('Please allow pop-ups to print the collection report.');
+                        return;
+                    }
+                    win.document.write(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Monthly Bank Collection Report — ${esc(this.currentBankName)} (${esc(this.selectedMonth)})</title>
+<style>
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 20px; font-size: 12px; }
+    .hdr { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #003d58; padding-bottom: 12px; margin-bottom: 16px; }
+    .hdr-left { display: flex; align-items: center; gap: 12px; }
+    .hdr img { height: 50px; }
+    .hdr h1 { margin: 0; font-size: 17px; color: #003d58; }
+    .hdr p { margin: 3px 0 0; font-size: 11px; color: #64748b; }
+    .meta { text-align: right; font-size: 11px; color: #334155; font-family: monospace; }
+    .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+    .s-card { border-radius: 8px; padding: 10px 14px; border: 1px solid #cbd5e1; }
+    .s-card.so { background: #eff6ff; border-color: #93c5fd; }
+    .s-card.direct { background: #fffbeb; border-color: #fcd34d; }
+    .s-card.grand { background: #003d58; border-color: #002435; color: #fff; }
+    .s-card .lbl { font-size: 11px; font-weight: 700; opacity: 0.85; }
+    .s-card .val { font-size: 18px; font-weight: 800; font-family: monospace; margin-top: 3px; }
+    .s-card.grand .val { color: #f3c677; }
+    .s-card .sub { font-size: 10px; margin-top: 2px; opacity: 0.8; }
+    .sec { margin-bottom: 20px; }
+    .sec-head { background: #003d58; color: #fff; padding: 7px 12px; font-weight: 700; font-size: 12px; display: flex; justify-content: space-between; border-radius: 6px 6px 0 0; }
+    .sec-head.direct { background: #b45309; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th, td { border: 1px solid #d7d3cb; padding: 4px 7px; text-align: left; }
+    th { background: #f8fafc; color: #003d58; font-weight: 700; white-space: nowrap; }
+    tfoot td { background: #f1f5f9; font-weight: 800; color: #003d58; font-size: 12px; }
+    .num { text-align: right; } .ctr { text-align: center; } .mono { font-family: monospace; white-space: nowrap; } .bold { font-weight: 700; }
+    .yes { color: #047857; font-weight: 800; } .no { color: #be123c; font-weight: 800; }
+    .grand-box { margin-top: 16px; background: #003d58; color: #fff; padding: 12px 16px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .grand-box .amt { font-size: 20px; font-weight: 800; font-family: monospace; color: #f3c677; }
+    @media print { .no-print { display: none; } body { margin: 10px; } }
+</style></head><body>
+    <div class="hdr">
+        <div class="hdr-left">
+            <img src="${window.location.origin}/static/logo.webp" alt="Discover Islam Society">
+            <div>
+                <h1>Monthly Bank Collection Report — تقرير التحصيل الشهري للبنك</h1>
+                <p>Bank: <strong>${esc(this.currentBankName)}</strong> &nbsp;|&nbsp; Statement Month: <strong>${esc(this.selectedMonth)}</strong></p>
+            </div>
+        </div>
+        <div class="meta">
+            <div>Discover Islam Society — ERP</div>
+            <div>Printed: ${esc(new Date().toLocaleString())}</div>
+        </div>
+    </div>
+
+    <div class="summary-grid">
+        <div class="s-card so">
+            <div class="lbl">1. Standing Orders (الاستقطاعات)</div>
+            <div class="val">${soTotal.toFixed(3)} BHD</div>
+            <div class="sub">${soRows.length} row(s) &bull; Updated in System: ${soUpdatedCnt}</div>
+        </div>
+        <div class="s-card direct">
+            <div class="lbl">2. Direct Transfers — Fawri / Cash (التحصيلات المباشرة)</div>
+            <div class="val">${directTotal.toFixed(3)} BHD</div>
+            <div class="sub">${directRows.length} row(s)</div>
+        </div>
+        <div class="s-card grand">
+            <div class="lbl">Grand Total Collection (الإجمالي العام للتحصيل)</div>
+            <div class="val">${grandTotal.toFixed(3)} BHD</div>
+            <div class="sub">${this.rows.length} total collected row(s)</div>
+        </div>
+    </div>
+
+    <div class="sec">
+        <div class="sec-head">
+            <span>1. Standing Orders Collected — حركات الاستقطاعات المحصلة</span>
+            <span>${soRows.length} row(s) &bull; Subtotal: ${soTotal.toFixed(3)} BHD</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Deposit Date</th>
+                    <th>SO Code</th>
+                    <th>Donor #</th>
+                    <th>Donor Name</th>
+                    <th class="num">Bank Amt (BHD)</th>
+                    <th class="num">System Amt</th>
+                    <th class="ctr">In Sys</th>
+                    <th class="ctr">Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${soRows.map((r, i) => `<tr>
+                    <td class="mono">${i + 1}</td>
+                    <td class="mono">${esc(r.bank_stmnt_month || '-')}</td>
+                    <td class="mono bold">${esc(r.st_order_no || r.bank_stmnt_paydesc || '-')}</td>
+                    <td class="mono">${esc(r.donor_no || '-')}</td>
+                    <td>${esc(r.donor_ename || r.donor_name || '-')}</td>
+                    <td class="num mono bold">${Number(r.bank_stmnt_payamt || 0).toFixed(3)}</td>
+                    <td class="num mono">${r.sys_amt !== null && r.sys_amt !== undefined ? Number(r.sys_amt).toFixed(3) : '-'}</td>
+                    <td class="ctr mono ${r.sys_found === 1 ? 'yes' : 'no'}">${r.sys_found === 1 ? 'YES' : 'NO'}</td>
+                    <td class="ctr mono ${r.money_trans_status === 1 ? 'yes' : 'no'}">${r.money_trans_status === 1 ? 'YES' : 'NO'}</td>
+                </tr>`).join('')}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="5">Subtotal — Standing Orders (${soRows.length} rows)</td>
+                    <td class="num mono">${soTotal.toFixed(3)}</td>
+                    <td colspan="3"></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+
+    <div class="sec">
+        <div class="sec-head direct">
+            <span>2. Direct Transfers (Fawri / Cash / Other) — التحصيلات المباشرة (فوري وغيرها)</span>
+            <span>${directRows.length} row(s) &bull; Subtotal: ${directTotal.toFixed(3)} BHD</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Deposit Date</th>
+                    <th>Pay Description</th>
+                    <th class="num">Amount (BHD)</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${directRows.length > 0 ? directRows.map((r, i) => `<tr>
+                    <td class="mono">${i + 1}</td>
+                    <td class="mono">${esc(r.bank_stmnt_month || '-')}</td>
+                    <td class="mono">${esc(r.bank_stmnt_paydesc || '-')}</td>
+                    <td class="num mono bold">${Number(r.bank_stmnt_payamt || 0).toFixed(3)}</td>
+                </tr>`).join('') : '<tr><td colspan="4" class="ctr">No direct transfers in this statement.</td></tr>'}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="3">Subtotal — Direct Transfers / Fawri (${directRows.length} rows)</td>
+                    <td class="num mono">${directTotal.toFixed(3)}</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+
+    <div class="grand-box">
+        <div>
+            <div style="font-size:13px;font-weight:800;">GRAND TOTAL COLLECTION — الإجمالي العام للتحصيل (${this.rows.length} rows)</div>
+            <div style="font-size:11px;opacity:0.85;margin-top:2px;">
+                Standing Orders: ${soTotal.toFixed(3)} BHD (${soRows.length}) &nbsp;+&nbsp; Direct Transfers: ${directTotal.toFixed(3)} BHD (${directRows.length})
+            </div>
+        </div>
+        <div class="amt">${grandTotal.toFixed(3)} BHD</div>
+    </div>
+
+    <div class="no-print" style="text-align:right;margin-top:14px;">
+        <button onclick="window.print()" style="background:#003d58;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;">🖨️ Print Collection Report</button>
+    </div>
+    <script>window.onload = function(){ setTimeout(function(){ window.print(); }, 250); };<\/script>
+</body></html>`);
+                    win.document.close();
+                },
+                async loadStatementData(autoSwitchStep = false) {
                     const res = await fetch(`/api/bank-reconcile/data?bank_cd=${this.selectedBank}&month_str=${this.selectedMonth}`);
                     if (res.ok) {
                         const data = await res.json();
@@ -543,45 +1570,16 @@
                         this.rows = data.rows || [];
                         this.indicators = data.indicators || this.indicators;
                         this.selectedRow = this.rows[0] || null;
-                    }
-                },
-                async uploadCsvFile(event) {
-                    const file = event.target.files[0];
-                    if (!file) return;
-                    const formData = new FormData();
-                    formData.append('bank_cd', this.selectedBank);
-                    formData.append('month_str', this.selectedMonth);
-                    formData.append('file', file);
-
-                    const res = await fetch('/api/bank-reconcile/upload-csv', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    event.target.value = '';
-                    if (res.ok) {
-                        await this.loadStatementData();
-                        alert('Bank CSV file uploaded and reconciled successfully!');
-                    } else {
-                        const err = await res.text();
-                        alert('Error uploading CSV file: ' + err);
-                    }
-                },
-                async loadSampleCsvForTesting() {
-                    const res = await fetch('/api/bank-reconcile/load-sample', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bank_cd: Number(this.selectedBank), month_str: this.selectedMonth })
-                    });
-                    if (res.ok) {
-                        await this.loadStatementData();
-                        alert('Sample bank statement generated and loaded for testing!');
-                    } else {
-                        const err = await res.text();
-                        alert('Notice: ' + err);
+                        if (autoSwitchStep) {
+                            this.activeStep = this.rows.length > 0 ? 'reconcile' : 'analyzer';
+                        }
                     }
                 },
                 async confirmUpdateTransactions() {
-                    if (!confirm('Are you sure you want to mark matched transactions as Paid in MONEY_TRANS?')) return;
+                    const ok = window.erpConfirm
+                        ? await window.erpConfirm('Are you sure you want to mark matched transactions as Paid in MONEY_TRANS?', 'Update Payments')
+                        : confirm('Are you sure you want to mark matched transactions as Paid in MONEY_TRANS?');
+                    if (!ok) return;
                     const res = await fetch('/api/bank-reconcile/confirm-update', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -589,34 +1587,54 @@
                     });
                     if (res.ok) {
                         const result = await res.json();
-                        await this.loadStatementData();
-                        alert(`Updated ${result.updated_count} transaction(s) to Paid in MONEY_TRANS successfully!`);
+                        await this.loadStatementData(false);
+                        const extra = result.amt_updated_so_count > 0
+                            ? ` (and synced ${result.amt_updated_so_count} Standing Order amount(s) in donor_item)`
+                            : '';
+                        await (window.erpAlert
+                            ? window.erpAlert(`Updated ${result.updated_count} transaction(s) to Paid in MONEY_TRANS successfully${extra}!`, 'success', 'Payments Updated')
+                            : alert(`Updated ${result.updated_count} transaction(s) to Paid in MONEY_TRANS successfully${extra}!`));
                     }
                 },
                 async deleteBankStatement() {
-                    if (!confirm('Warning: This will delete the loaded bank statement for this month and roll back updated transactions to Unpaid. Continue?')) return;
+                    const ok = window.erpConfirm
+                        ? await window.erpConfirm('Warning: This will delete the loaded bank statement for this month and roll back updated transactions to Unpaid. Continue?', 'Delete Bank Statement')
+                        : confirm('Warning: This will delete the loaded bank statement for this month and roll back updated transactions to Unpaid. Continue?');
+                    if (!ok) return;
                     const res = await fetch('/api/bank-reconcile/delete-statement', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ bank_cd: Number(this.selectedBank), month_str: this.selectedMonth })
                     });
                     if (res.ok) {
-                        await this.loadStatementData();
-                        alert('Bank statement deleted and transactions rolled back successfully!');
+                        await this.loadStatementData(false);
+                        if (this.analysis) {
+                            this.analysis.already_loaded_count = 0;
+                            this.analysis.warnings = (this.analysis.warnings || []).filter(w => !String(w.text || '').includes('already'));
+                        }
+                        await (window.erpAlert
+                            ? window.erpAlert('Bank statement deleted and transactions rolled back to Unpaid successfully!', 'success', 'Statement Deleted')
+                            : alert('Bank statement deleted and transactions rolled back successfully!'));
                     }
                 },
                 async toggleMonthLock(closeMonth) {
                     const msg = closeMonth
                         ? 'Close this month for the selected bank? Further loads or updates will be locked until reopened.'
                         : 'Reopen this month for the selected bank to allow edits?';
-                    if (!confirm(msg)) return;
+                    const ok = window.erpConfirm
+                        ? await window.erpConfirm(msg, closeMonth ? 'Close Month' : 'Reopen Month')
+                        : confirm(msg);
+                    if (!ok) return;
                     const res = await fetch('/api/bank-reconcile/toggle-lock', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ bank_cd: Number(this.selectedBank), month_str: this.selectedMonth, close_month: closeMonth })
                     });
                     if (res.ok) {
-                        await this.loadStatementData();
+                        await this.loadStatementData(false);
+                        if (this.analysis) {
+                            this.analysis.is_closed = this.isMonthClosed;
+                        }
                     }
                 }
             }

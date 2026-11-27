@@ -961,9 +961,13 @@ async def generate_monthly_payments_proc(payload: GenerateMonthlySchema, db: Asy
 
     return {"status": "success", "generated_count": res.rowcount}
 
-# ----------------- المرحلة 4: تحميل قوائم البنوك CSV والمطابقة والتحديث وإغلاق الشهر -----------------
+# ----------------- المرحلة 4: تحميل قوائم البنوك (Excel / CSV) والتحليل الذكي والمطابقة والتحديث وإغلاق الشهر -----------------
 import csv
 import io
+import re
+import zipfile
+import xml.etree.ElementTree as ET
+from datetime import timedelta as _timedelta
 from fastapi import UploadFile, File, Form
 
 class ReconcileActionSchema(BaseModel):
@@ -971,24 +975,311 @@ class ReconcileActionSchema(BaseModel):
     month_str: str
     close_month: Optional[bool] = True
 
-@app.get("/bank-reconcile", response_class=HTMLResponse)
-async def bank_reconcile_screen(request: Request):
-    return templates.TemplateResponse("bank_statement_reconcile.html", {"request": request})
+class ApproveLoadRowSchema(BaseModel):
+    date: str
+    desc: str
+    amt: float
 
-async def _process_and_insert_statement_rows(db: AsyncSession, bank_cd: int, month_date: date, raw_rows: list[dict], user_nm: str = "TAREK"):
-    """ينفذ منطق التريجر MANIPULATE_DATA بدقة: يميز النقدي/فوري عن الاستقطاع ويطابق بالكود الأصلي أو البديل"""
-    bank_res = await db.execute(
-        text("SELECT auto_so_based_code, COALESCE(fawri_keywords, 'FAWRI,CASH,BENEFIT') FROM lkp_banks WHERE bank_cd = :b"),
-        {"b": bank_cd}
-    )
-    b_row = bank_res.first()
-    based_code = b_row[0] if b_row else 1
-    keywords = [k.strip().upper() for k in (b_row[1] if b_row else "FAWRI,CASH").split(",") if k.strip()]
+class ApproveLoadSchema(BaseModel):
+    bank_cd: int
+    month_str: str
+    rows: list[ApproveLoadRowSchema]
 
-    for r in raw_rows:
-        pay_date_str = str(r.get("date", month_date.strftime("%d/%m/%Y"))).strip()
+def _excel_serial_to_str(val: str) -> str:
+    """Convert Excel numeric date serial (e.g. 46316) to dd/mm/YYYY if plausible."""
+    try:
+        num = float(val)
+        if 30000 <= num <= 70000:
+            d = date(1899, 12, 30) + _timedelta(days=int(num))
+            return d.strftime("%d/%m/%Y")
+    except Exception:
+        pass
+    return str(val).strip()
+
+def _read_xlsx_workbook(file_bytes: bytes, target_sheet: Optional[str] = None, bank_cd: int = 1):
+    """Pure-Python .xlsx reader (zero external deps). Returns (sheet_names, selected_sheet, rows)."""
+    ns = {
+        "s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    }
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+        wb = ET.fromstring(z.read("xl/workbook.xml"))
+        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+        rmap = {r.attrib["Id"]: r.attrib["Target"] for r in rels}
+
+        shared_strings = []
+        if "xl/sharedStrings.xml" in z.namelist():
+            sst = ET.fromstring(z.read("xl/sharedStrings.xml"))
+            for si in sst.findall("s:si", ns):
+                shared_strings.append("".join(t.text or "" for t in si.findall(".//s:t", ns)))
+
+        sheets = []
+        for sh in wb.findall(".//s:sheet", ns):
+            name = sh.attrib["name"]
+            rid = sh.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
+            sheets.append((name, rmap[rid]))
+
+        sheet_names = [s[0] for s in sheets]
+        if not sheet_names:
+            raise ValueError("Excel workbook contains no worksheets.")
+
+        # Choose sheet
+        chosen_name = None
+        if target_sheet and target_sheet in sheet_names:
+            chosen_name = target_sheet
+        else:
+            if bank_cd == 1:
+                for nm in sheet_names:
+                    low = nm.lower()
+                    if "bisb" in low or "islamic" in low:
+                        chosen_name = nm
+                        break
+            if not chosen_name:
+                chosen_name = sheet_names[0]
+
+        chosen_target = dict(sheets)[chosen_name]
+        if not chosen_target.startswith("xl/"):
+            chosen_target = "xl/" + chosen_target.lstrip("/")
+
+        root = ET.fromstring(z.read(chosen_target))
+        parsed_rows = []
+        for row in root.findall(".//s:sheetData/s:row", ns):
+            rnum = int(row.attrib.get("r", 0))
+            vals = {}
+            for c in row.findall("s:c", ns):
+                ref = c.attrib.get("r", "")
+                mcol = re.match(r"([A-Z]+)", ref)
+                if not mcol:
+                    continue
+                col = mcol.group(1)
+                ctype = c.attrib.get("t")
+                v = c.find("s:v", ns)
+                if v is not None and v.text is not None:
+                    vals[col] = shared_strings[int(v.text)] if ctype == "s" else v.text
+                else:
+                    is_el = c.find("s:is", ns)
+                    if is_el is not None:
+                        vals[col] = "".join(x.text or "" for x in is_el.findall(".//s:t", ns))
+            if vals:
+                parsed_rows.append((rnum, vals))
+
+        return sheet_names, chosen_name, parsed_rows
+
+def _to_float(val) -> float:
+    if val is None:
+        return 0.0
+    s = str(val).replace(",", "").strip()
+    if not s or s == "-":
+        return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+def _parse_statement_file(filename: str, file_bytes: bytes, bank_cd: int, month_date: date, keywords: list[str], sheet_name: Optional[str] = None):
+    """Parse raw Excel (.xlsx) or CSV bank statement into (ready_rows, excluded_rows, meta)."""
+    ext = (filename or "").lower().rsplit(".", 1)[-1] if "." in (filename or "") else ""
+    ready_rows = []
+    excluded_rows = []
+    sheet_names = []
+    selected_sheet = None
+    parser_profile = "Generic 3-Column CSV"
+    raw_total_rows = 0
+
+    if ext == "xlsx":
+        sheet_names, selected_sheet, xrows = _read_xlsx_workbook(file_bytes, target_sheet=sheet_name, bank_cd=bank_cd)
+
+        if bank_cd == 1:
+            parser_profile = "Bahrain Islamic Bank (BISB) Smart Excel Reader"
+            for rnum, vals in xrows:
+                raw_date = str(vals.get("A", "")).strip()
+                desc = str(vals.get("B", "")).strip()
+                debit_raw = vals.get("C", "")
+                credit_raw = vals.get("D", "")
+
+                if not raw_date and not desc:
+                    continue
+                # Skip header row
+                if "DATE" in raw_date.upper() or "تاريخ" in raw_date or desc.upper() in ("DESCRIPTION", "NARRATION", "PARTICULARS", "DETAILS"):
+                    continue
+
+                raw_total_rows += 1
+                p_date = _excel_serial_to_str(raw_date)
+                debit = _to_float(debit_raw)
+                credit = _to_float(credit_raw)
+                upper_desc = desc.upper()
+
+                # 1. Exclude Debit / Outgoing / Zero Credit rows (e.g. S/O To: ... with Debit > 0, Credit = 0)
+                if credit <= 0:
+                    excluded_rows.append({
+                        "row_num": rnum,
+                        "date": p_date,
+                        "raw_desc": desc,
+                        "debit": round(debit, 3),
+                        "credit": round(credit, 3),
+                        "reason_code": "DEBIT_OR_ZERO",
+                        "reason_label": "Debit / Outgoing / Zero Credit"
+                    })
+                    continue
+
+                # 2. Exclude Fawateer payments
+                if "FAWATEER" in upper_desc:
+                    excluded_rows.append({
+                        "row_num": rnum,
+                        "date": p_date,
+                        "raw_desc": desc,
+                        "debit": round(debit, 3),
+                        "credit": round(credit, 3),
+                        "reason_code": "FAWATEER",
+                        "reason_label": "Fawateer Payment (Excluded)"
+                    })
+                    continue
+
+                # 3. Standing Order: TFR:0000000005-Recurring - ...
+                m_tfr = re.match(r"^TFR:0*(\d+)-", desc, re.IGNORECASE)
+                if m_tfr:
+                    so_code = m_tfr.group(1) or "0"
+                    ready_rows.append({
+                        "row_num": rnum,
+                        "date": p_date,
+                        "desc": so_code,
+                        "raw_desc": desc,
+                        "amt": round(credit, 3),
+                        "source_type": "SO"
+                    })
+                    continue
+
+                # 4. Fawri / Benefit Direct Transfers
+                if "FAWRI" in upper_desc or "BENEFIT" in upper_desc:
+                    ready_rows.append({
+                        "row_num": rnum,
+                        "date": p_date,
+                        "desc": "Fawri",
+                        "raw_desc": desc,
+                        "amt": round(credit, 3),
+                        "source_type": "FAWRI"
+                    })
+                    continue
+
+                # 5. Exclude other non-SO credit rows (CASH DEPOSIT, CHEQUE, etc.)
+                excluded_rows.append({
+                    "row_num": rnum,
+                    "date": p_date,
+                    "raw_desc": desc,
+                    "debit": round(debit, 3),
+                    "credit": round(credit, 3),
+                    "reason_code": "NON_SO",
+                    "reason_label": "Cash Deposit / Cheque / Other"
+                })
+        else:
+            parser_profile = "Generic 3-Column Excel Reader"
+            for rnum, vals in xrows:
+                raw_date = str(vals.get("A", "")).strip()
+                desc = str(vals.get("B", "")).strip()
+                amt_raw = vals.get("C", "")
+                if not raw_date and not desc:
+                    continue
+                if "DATE" in raw_date.upper() or "تاريخ" in raw_date or "DESC" in desc.upper():
+                    continue
+                raw_total_rows += 1
+                p_date = _excel_serial_to_str(raw_date)
+                amt = _to_float(amt_raw)
+                if amt <= 0:
+                    excluded_rows.append({
+                        "row_num": rnum, "date": p_date, "raw_desc": desc,
+                        "debit": 0.0, "credit": round(amt, 3),
+                        "reason_code": "DEBIT_OR_ZERO", "reason_label": "Zero / Invalid Amount"
+                    })
+                    continue
+                ready_rows.append({
+                    "row_num": rnum, "date": p_date, "desc": desc, "raw_desc": desc,
+                    "amt": round(amt, 3), "source_type": "GENERIC"
+                })
+
+    elif ext == "csv":
+        content = file_bytes.decode("utf-8-sig", errors="ignore")
+        reader = csv.reader(io.StringIO(content))
+        for idx, line in enumerate(reader, start=1):
+            if not line or len(line) < 2:
+                continue
+            if "DATE" in line[0].upper() or "تاريخ" in line[0] or "DESC" in line[1].upper():
+                continue
+            raw_total_rows += 1
+            if len(line) >= 3:
+                p_date, desc, amt_str = line[0].strip(), line[1].strip(), line[2].strip()
+            else:
+                p_date, desc, amt_str = month_date.strftime("17/%m/%Y"), line[0].strip(), line[1].strip()
+            amt = _to_float(amt_str)
+            if amt <= 0:
+                excluded_rows.append({
+                    "row_num": idx, "date": p_date, "raw_desc": desc,
+                    "debit": 0.0, "credit": round(amt, 3),
+                    "reason_code": "DEBIT_OR_ZERO", "reason_label": "Zero / Invalid Amount"
+                })
+                continue
+            ready_rows.append({
+                "row_num": idx, "date": p_date, "desc": desc, "raw_desc": desc,
+                "amt": round(amt, 3), "source_type": "CSV"
+            })
+    else:
+        raise ValueError("Unsupported file format. Please upload an Excel (.xlsx) or CSV (.csv) file.")
+
+    return ready_rows, excluded_rows, {
+        "file_type": ext.upper(),
+        "sheet_names": sheet_names,
+        "selected_sheet": selected_sheet,
+        "parser_profile": parser_profile,
+        "raw_total_rows": raw_total_rows,
+    }
+
+async def _evaluate_statement_rows_dry_run(db: AsyncSession, bank_cd: int, month_date: date, ready_rows: list[dict], keywords: list[str], based_code: int):
+    """Fast in-memory dry-run matching against donor_item and money_trans (zero DB writes)."""
+    so_res = await db.execute(text("""
+        SELECT di.donor_no, di.item_no, di.donation_start_date, di.monthly_pay, di.so_id,
+               di.sort_field, di.alt_so_code,
+               COALESCE(NULLIF(TRIM(dm.donor_ename), ''), dm.donor_name) AS donor_name
+        FROM donor_item di
+        LEFT JOIN donor_master dm ON dm.donor_no = di.donor_no
+        WHERE di.bank2_cd = :bank_cd AND di.status_no = 1
+    """), {"bank_cd": bank_cd})
+
+    so_map: dict[str, list[dict]] = {}
+    for r in so_res:
+        m = r._mapping
+        key_raw = m["sort_field"] if based_code == 1 else m["alt_so_code"]
+        if key_raw is None:
+            continue
+        k = str(key_raw).strip().upper()
+        if not k:
+            continue
+        so_map.setdefault(k, []).append({
+            "donor_no": m["donor_no"],
+            "item_no": int(m["item_no"]) if str(m["item_no"]).isdigit() else 1,
+            "donation_start_date": m["donation_start_date"].strftime("%Y-%m-%d") if m["donation_start_date"] else "",
+            "monthly_pay": float(m["monthly_pay"] or 0),
+            "so_id": m["so_id"],
+            "donor_name": m["donor_name"] or "",
+        })
+
+    mt_res = await db.execute(text("""
+        SELECT so_id, st_order_no, alt_st_no
+        FROM money_trans
+        WHERE bank_cd = :bank_cd AND month_year = :m_date
+    """), {"bank_cd": bank_cd, "m_date": month_date})
+    mt_counts: dict[tuple[int, str], int] = {}
+    for r in mt_res:
+        code_val = r[1] if based_code == 1 else r[2]
+        if code_val is not None:
+            k = (int(r[0]), str(code_val).strip().upper())
+            mt_counts[k] = mt_counts.get(k, 0) + 1
+
+    evaluated = []
+    code_counts: dict[str, int] = {}
+    for idx, r in enumerate(ready_rows, start=1):
+        pay_date_str = str(r.get("date", "")).strip()
         desc = str(r.get("desc", "")).strip()
-        amt = float(r.get("amt", 0.0))
+        raw_desc = str(r.get("raw_desc", desc)).strip()
+        amt = round(float(r.get("amt", 0.0)), 3)
         upper_desc = desc.upper()
 
         is_cash = any(kw in upper_desc for kw in keywords)
@@ -998,71 +1289,143 @@ async def _process_and_insert_statement_rows(db: AsyncSession, bank_cd: int, mon
         sys_found = 0
         sys_amt = None
         donor_no = None
+        donor_name = ""
         item_no = None
-        start_date = None
+        start_date = ""
         so_id = None
         money_trans_found = 0
 
         if st_order_no:
-            if based_code == 1:
-                so_q = text("""
-                    SELECT donor_no, item_no, donation_start_date, monthly_pay, so_id
-                    FROM donor_item
-                    WHERE UPPER(TRIM(sort_field)) = UPPER(TRIM(:code))
-                      AND bank2_cd = :bank_cd AND status_no = 1
-                """)
-            else:
-                so_q = text("""
-                    SELECT donor_no, item_no, donation_start_date, monthly_pay, so_id
-                    FROM donor_item
-                    WHERE UPPER(TRIM(alt_so_code)) = UPPER(TRIM(:code))
-                      AND bank2_cd = :bank_cd AND status_no = 1
-                """)
-
-            so_matches = (await db.execute(so_q, {"code": st_order_no, "bank_cd": bank_cd})).fetchall()
-            sys_found = len(so_matches)
-
+            code_key = st_order_no.strip().upper()
+            code_counts[st_order_no] = code_counts.get(st_order_no, 0) + 1
+            matches = so_map.get(code_key, [])
+            sys_found = len(matches)
             if sys_found == 1:
-                m = so_matches[0]
-                donor_no = m[0]
-                item_no = int(m[1]) if str(m[1]).isdigit() else 1
-                start_date = m[2]
-                sys_amt = float(m[3])
-                so_id = m[4]
+                m = matches[0]
+                donor_no = m["donor_no"]
+                donor_name = m["donor_name"]
+                item_no = m["item_no"]
+                start_date = m["donation_start_date"]
+                sys_amt = round(m["monthly_pay"], 3)
+                so_id = m["so_id"]
+                money_trans_found = mt_counts.get((int(so_id), code_key), 0)
 
-                if based_code == 1:
-                    tr_q = text("""
-                        SELECT COUNT(*) FROM money_trans
-                        WHERE so_id = :so_id AND bank_cd = :bank_cd AND month_year = :m_date
-                          AND UPPER(TRIM(st_order_no)) = UPPER(TRIM(:code))
-                    """)
-                else:
-                    tr_q = text("""
-                        SELECT COUNT(*) FROM money_trans
-                        WHERE so_id = :so_id AND bank_cd = :bank_cd AND month_year = :m_date
-                          AND UPPER(TRIM(alt_st_no)) = UPPER(TRIM(:code))
-                    """)
-                money_trans_found = (await db.execute(tr_q, {"so_id": so_id, "bank_cd": bank_cd, "m_date": month_date, "code": st_order_no})).scalar() or 0
+        amt_mismatch = (cash_deposit == 2 and sys_found == 1 and sys_amt is not None and abs(amt - sys_amt) > 0.0005)
+        evaluated.append({
+            "idx": idx,
+            "row_num": r.get("row_num", idx),
+            "bank_stmnt_month": pay_date_str,
+            "bank_stmnt_paydesc": desc,
+            "raw_desc": raw_desc,
+            "bank_stmnt_payamt": amt,
+            "cash_deposit": cash_deposit,
+            "st_order_no": st_order_no,
+            "sys_found": sys_found,
+            "sys_amt": sys_amt,
+            "money_trans_found": money_trans_found,
+            "money_trans_status": 2,
+            "so_id": so_id,
+            "donor_no": donor_no,
+            "donor_name": donor_name,
+            "donor_ename": donor_name,
+            "item_no": item_no,
+            "donation_start_date": start_date,
+            "amt_mismatch": amt_mismatch,
+        })
 
-        ins_q = text("""
-            INSERT INTO bank_statement_load (
-                bank_cd, money_trans_month, bank_stmnt_month, bank_stmnt_paydesc,
-                bank_stmnt_payamt, cash_deposit, st_order_no, sys_found, sys_amt,
-                money_trans_found, money_trans_status, so_id, donor_no, item_no,
-                donation_start_date, user_nm
-            ) VALUES (
-                :bank_cd, :m_date, :p_date, :desc,
-                :amt, :cash_deposit, :st_order_no, :sys_found, :sys_amt,
-                :mt_found, 2, :so_id, :donor_no, :item_no,
-                :start_date, :user_nm
-            )
-        """)
+    # Attach duplicate flag
+    for item in evaluated:
+        c = item["st_order_no"]
+        item["is_duplicate"] = bool(item["cash_deposit"] == 2 and c and code_counts.get(c, 0) > 1)
+
+    so_rows = [r for r in evaluated if r["cash_deposit"] == 2]
+    cash_rows = [r for r in evaluated if r["cash_deposit"] != 2]
+
+    so_in_bank = len(so_rows)
+    so_in_sys = sum(1 for r in so_rows if r["sys_found"] == 1)
+    not_in_sys = sum(1 for r in so_rows if r["sys_found"] == 0)
+    multi_in_sys = sum(1 for r in so_rows if r["sys_found"] > 1)
+    in_money_trans = sum(1 for r in so_rows if r["sys_found"] == 1 and r["money_trans_found"] == 1)
+    matched_no_trans = sum(1 for r in so_rows if r["sys_found"] == 1 and r["money_trans_found"] == 0)
+    duplicated_in_bank = sum(1 for r in so_rows if r["is_duplicate"])
+    amt_mismatch_count = sum(1 for r in so_rows if r["amt_mismatch"])
+    cannot_update = not_in_sys + multi_in_sys + matched_no_trans
+
+    sum_so_amt = round(sum(r["bank_stmnt_payamt"] for r in so_rows), 3)
+    sum_cash_amt = round(sum(r["bank_stmnt_payamt"] for r in cash_rows), 3)
+    sum_dup_amt = round(sum(r["bank_stmnt_payamt"] for r in so_rows if r["is_duplicate"]), 3)
+    total_loaded_amt = round(sum_so_amt + sum_cash_amt, 3)
+    potential_pct = round((in_money_trans / so_in_bank * 100), 1) if so_in_bank > 0 else 0.0
+
+    indicators = {
+        "so_in_bank": so_in_bank,
+        "so_in_sys": so_in_sys,
+        "not_in_sys": not_in_sys,
+        "multi_in_sys": multi_in_sys,
+        "duplicated_in_bank": duplicated_in_bank,
+        "cannot_update": cannot_update,
+        "unknown_count": not_in_sys,
+        "in_money_trans": in_money_trans,
+        "matched_no_trans": matched_no_trans,
+        "amt_mismatch_count": amt_mismatch_count,
+        "fawri_count": len(cash_rows),
+        "sum_so_amt": sum_so_amt,
+        "sum_cash_amt": sum_cash_amt,
+        "sum_dup_amt": sum_dup_amt,
+        "total_loaded_amt": total_loaded_amt,
+        "potential_update_pct": potential_pct,
+        "updated_count": 0,
+    }
+    return evaluated, indicators
+
+@app.get("/bank-reconcile", response_class=HTMLResponse)
+async def bank_reconcile_screen(request: Request):
+    return templates.TemplateResponse("bank_statement_reconcile.html", {"request": request})
+
+async def _process_and_insert_statement_rows(db: AsyncSession, bank_cd: int, month_date: date, raw_rows: list[dict], user_nm: str = "ADMIN"):
+    """ينفذ منطق التريجر MANIPULATE_DATA بدقة: يميز النقدي/فوري عن الاستقطاع ويطابق بالكود الأصلي أو البديل"""
+    bank_res = await db.execute(
+        text("SELECT auto_so_based_code, COALESCE(fawri_keywords, 'FAWRI,CASH,BENEFIT') FROM lkp_banks WHERE bank_cd = :b"),
+        {"b": bank_cd}
+    )
+    b_row = bank_res.first()
+    based_code = b_row[0] if b_row else 1
+    keywords = [k.strip().upper() for k in (b_row[1] if b_row else "FAWRI,CASH").split(",") if k.strip()]
+
+    evaluated, _ = await _evaluate_statement_rows_dry_run(db, bank_cd, month_date, raw_rows, keywords, based_code)
+
+    ins_q = text("""
+        INSERT INTO bank_statement_load (
+            bank_cd, money_trans_month, bank_stmnt_month, bank_stmnt_paydesc,
+            bank_stmnt_payamt, cash_deposit, st_order_no, sys_found, sys_amt,
+            money_trans_found, money_trans_status, so_id, donor_no, item_no,
+            donation_start_date, user_nm
+        ) VALUES (
+            :bank_cd, :m_date, :p_date, :desc,
+            :amt, :cash_deposit, :st_order_no, :sys_found, :sys_amt,
+            :mt_found, 2, :so_id, :donor_no, :item_no,
+            :start_date, :user_nm
+        )
+    """)
+
+    for item in evaluated:
+        start_dt = datetime.strptime(item["donation_start_date"], "%Y-%m-%d").date() if item["donation_start_date"] else None
         await db.execute(ins_q, {
-            "bank_cd": bank_cd, "m_date": month_date, "p_date": pay_date_str, "desc": desc,
-            "amt": amt, "cash_deposit": cash_deposit, "st_order_no": st_order_no,
-            "sys_found": sys_found, "sys_amt": sys_amt, "mt_found": money_trans_found,
-            "so_id": so_id, "donor_no": donor_no, "item_no": item_no,
-            "start_date": start_date, "user_nm": user_nm
+            "bank_cd": bank_cd,
+            "m_date": month_date,
+            "p_date": item["bank_stmnt_month"] or month_date.strftime("%d/%m/%Y"),
+            "desc": item["bank_stmnt_paydesc"],
+            "amt": item["bank_stmnt_payamt"],
+            "cash_deposit": item["cash_deposit"],
+            "st_order_no": item["st_order_no"],
+            "sys_found": item["sys_found"],
+            "sys_amt": item["sys_amt"],
+            "mt_found": item["money_trans_found"],
+            "so_id": item["so_id"],
+            "donor_no": item["donor_no"],
+            "item_no": item["item_no"],
+            "start_date": start_dt,
+            "user_nm": user_nm,
         })
 
     await db.execute(text("DELETE FROM last_bank_statement"))
@@ -1114,7 +1477,7 @@ async def get_bank_reconcile_data(bank_cd: int = 1, month_str: str = "2026-11", 
     in_money_trans = sum(1 for r in so_rows if r["sys_found"] == 1 and r["money_trans_found"] == 1)
     matched_no_trans = sum(1 for r in so_rows if r["sys_found"] == 1 and r["money_trans_found"] == 0)
     duplicated_in_bank = sum(1 for r in so_rows if code_counts.get(r["st_order_no"], 0) > 1)
-    cannot_update = not_in_sys + matched_no_trans + duplicated_in_bank
+    cannot_update = not_in_sys + matched_no_trans
     updated_count = sum(1 for r in so_rows if r["money_trans_status"] == 1)
 
     sum_so_amt = round(sum(r["bank_stmnt_payamt"] for r in so_rows), 3)
@@ -1142,8 +1505,127 @@ async def get_bank_reconcile_data(bank_cd: int = 1, month_str: str = "2026-11", 
 
     return {"banks": banks, "is_closed": is_closed, "rows": rows, "indicators": indicators}
 
+@app.post("/api/bank-reconcile/analyze")
+async def analyze_bank_statement(
+    bank_cd: int = Form(...),
+    month_str: str = Form(...),
+    file: UploadFile = File(...),
+    sheet_name: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """المرحلة 1 (Analyzer): فحص وتحليل ملف البنك الخام (Excel/CSV) ومطابقته تجريبياً بدون أي تعديل في قاعدة البيانات"""
+    month_date = datetime.strptime(f"{month_str}-01", "%Y-%m-%d").date()
+
+    bank_res = await db.execute(
+        text("SELECT bank_e_desc, auto_so_based_code, COALESCE(fawri_keywords, 'FAWRI,CASH,BENEFIT') FROM lkp_banks WHERE bank_cd = :b"),
+        {"b": bank_cd}
+    )
+    b_row = bank_res.first()
+    bank_name = b_row[0] if b_row else f"Bank #{bank_cd}"
+    based_code = b_row[1] if b_row else 1
+    keywords = [k.strip().upper() for k in (b_row[2] if b_row else "FAWRI,CASH").split(",") if k.strip()]
+
+    file_bytes = await file.read()
+    try:
+        ready_rows, excluded_rows, meta = _parse_statement_file(
+            file.filename or "statement.xlsx", file_bytes, bank_cd, month_date, keywords, sheet_name=sheet_name
+        )
+    except Exception as ex:
+        raise HTTPException(status_code=400, detail=f"Failed to parse bank statement file: {ex}")
+
+    evaluated, indicators = await _evaluate_statement_rows_dry_run(db, bank_cd, month_date, ready_rows, keywords, based_code)
+
+    # Check if statement already exists or month is closed
+    existing_cnt = (await db.execute(
+        text("SELECT COUNT(*) FROM bank_statement_load WHERE bank_cd = :b AND money_trans_month = :m"),
+        {"b": bank_cd, "m": month_date}
+    )).scalar() or 0
+    is_closed = (await db.execute(
+        text("SELECT 1 FROM bankmonthly_stmntupd WHERE bank_cd = :b AND month_year = :m"),
+        {"b": bank_cd, "m": month_date}
+    )).first() is not None
+
+    # Breakdown of excluded rows
+    excl_counts = {"DEBIT_OR_ZERO": 0, "FAWATEER": 0, "NON_SO": 0}
+    excl_amt = 0.0
+    for ex_r in excluded_rows:
+        rc = ex_r.get("reason_code", "NON_SO")
+        excl_counts[rc] = excl_counts.get(rc, 0) + 1
+        excl_amt += float(ex_r.get("credit") or 0) + float(ex_r.get("debit") or 0)
+
+    # Smart warnings
+    warnings = []
+    if is_closed:
+        warnings.append({"level": "error", "text": f"Month {month_str} is CLOSED for {bank_name}. Reopen the month before approving."})
+    if existing_cnt > 0:
+        warnings.append({"level": "warning", "text": f"There are already {existing_cnt} row(s) loaded in Reconciliation for {bank_name} ({month_str}). Delete the existing statement first before loading a new one."})
+    if indicators["so_in_bank"] == 0:
+        warnings.append({"level": "error", "text": "No Standing Order rows were detected in the selected sheet/file. Please verify the selected Bank or Worksheet."})
+    if evaluated:
+        # Detect date month mismatch (informational warning)
+        expected_mon_abbr = month_date.strftime("%b").upper()
+        expected_mon_num = month_date.strftime("/%m/")
+        sample_dates = [str(r.get("bank_stmnt_month", "")).upper() for r in evaluated[:30] if r.get("bank_stmnt_month")]
+        if sample_dates and not any(expected_mon_abbr in d or expected_mon_num in d for d in sample_dates):
+            warnings.append({
+                "level": "info",
+                "text": f"Statement dates (e.g. '{sample_dates[0]}') appear to differ from the selected Reconciliation Month ({month_str}). You may still proceed if this is intentional."
+            })
+
+    return {
+        "filename": file.filename,
+        "bank_cd": bank_cd,
+        "bank_name": bank_name,
+        "month_str": month_str,
+        "is_closed": is_closed,
+        "already_loaded_count": existing_cnt,
+        "meta": meta,
+        "warnings": warnings,
+        "excluded_summary": {
+            "total": len(excluded_rows),
+            "fawateer": excl_counts.get("FAWATEER", 0),
+            "debit_or_zero": excl_counts.get("DEBIT_OR_ZERO", 0),
+            "non_so": excl_counts.get("NON_SO", 0),
+            "total_amt": round(excl_amt, 3),
+        },
+        "indicators": indicators,
+        "ready_rows": evaluated,
+        "excluded_rows": excluded_rows,
+    }
+
+@app.post("/api/bank-reconcile/approve-load")
+async def approve_and_load_statement(payload: ApproveLoadSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    """المرحلة 2: اعتماد نتيجة الـ Analyzer وإدراج الصفوف المعتمدة في bank_statement_load للبدء في المطابقة والتحديث"""
+    month_date = datetime.strptime(f"{payload.month_str}-01", "%Y-%m-%d").date()
+
+    is_closed = (await db.execute(
+        text("SELECT 1 FROM bankmonthly_stmntupd WHERE bank_cd = :b AND month_year = :m"),
+        {"b": payload.bank_cd, "m": month_date}
+    )).first() is not None
+    if is_closed:
+        raise HTTPException(status_code=400, detail="This month is closed for the selected bank. Reopen it first.")
+
+    existing_cnt = (await db.execute(
+        text("SELECT COUNT(*) FROM bank_statement_load WHERE bank_cd = :b AND money_trans_month = :m"),
+        {"b": payload.bank_cd, "m": month_date}
+    )).scalar() or 0
+    if existing_cnt > 0:
+        raise HTTPException(status_code=409, detail=f"Statement already loaded ({existing_cnt} rows). Please delete the existing statement in Step 2 first.")
+
+    if not payload.rows:
+        raise HTTPException(status_code=400, detail="No rows to load.")
+
+    user_info = getattr(request.state, "user", None) or {}
+    user_nm = str(user_info.get("username") or "ADMIN")[:30]
+
+    raw_rows = [{"date": r.date, "desc": r.desc, "amt": r.amt} for r in payload.rows]
+    await _process_and_insert_statement_rows(db, payload.bank_cd, month_date, raw_rows, user_nm=user_nm)
+    await db.commit()
+    return {"status": "success", "loaded_count": len(raw_rows)}
+
 @app.post("/api/bank-reconcile/upload-csv")
 async def upload_bank_csv(
+    request: Request,
     bank_cd: int = Form(...),
     month_str: str = Form(...),
     file: UploadFile = File(...),
@@ -1170,7 +1652,9 @@ async def upload_bank_csv(
             continue
         raw_rows.append({"date": p_date, "desc": desc, "amt": amt})
 
-    await _process_and_insert_statement_rows(db, bank_cd, month_date, raw_rows)
+    user_info = getattr(request.state, "user", None) or {}
+    user_nm = str(user_info.get("username") or "ADMIN")[:30]
+    await _process_and_insert_statement_rows(db, bank_cd, month_date, raw_rows, user_nm=user_nm)
     await db.commit()
     return {"status": "success", "loaded_count": len(raw_rows)}
 
@@ -1213,16 +1697,20 @@ async def load_sample_statement_for_testing(payload: ReconcileActionSchema, db: 
     return {"status": "success", "loaded_count": len(raw_rows)}
 
 @app.post("/api/bank-reconcile/confirm-update")
-async def confirm_reconcile_update(payload: ReconcileActionSchema, db: AsyncSession = Depends(get_db)):
-    """يحول حالة الأقساط المطابقة في MONEY_TRANS إلى مسدد (1) ويسجل رقم حركة الكشف والمستخدم"""
+async def confirm_reconcile_update(payload: ReconcileActionSchema, request: Request, db: AsyncSession = Depends(get_db)):
+    """يحول حالة الأقساط المطابقة في MONEY_TRANS إلى مسدد (1) ويحدّث قيمة الاستقطاع في DONOR_ITEM و MONEY_TRANS إذا اختلفت عن قيمة البنك"""
     month_date = datetime.strptime(f"{payload.month_str}-01", "%Y-%m-%d").date()
+    user_info = getattr(request.state, "user", None) or {}
+    user_nm = str(user_info.get("username") or "ADMIN")[:30]
 
+    # 1. Update MONEY_TRANS: mark Paid (1) and sync paid_sum with bank_stmnt_payamt when different
     upd_money_trans = text("""
         UPDATE money_trans m
         SET status_no = 1,
+            paid_sum = CASE WHEN l.bank_stmnt_payamt > 0 THEN l.bank_stmnt_payamt ELSE m.paid_sum END,
             bank_statmnt_transid = l.trans_id,
             bank_statmnt_transdate = CURRENT_TIMESTAMP,
-            bank_statmnt_trnauser = 'TAREK'
+            bank_statmnt_trnauser = :user_nm
         FROM bank_statement_load l
         WHERE l.bank_cd = :b
           AND l.money_trans_month = :m
@@ -1233,17 +1721,39 @@ async def confirm_reconcile_update(payload: ReconcileActionSchema, db: AsyncSess
           AND m.month_year = l.money_trans_month
           AND m.bank_cd = l.bank_cd
     """)
-    res = await db.execute(upd_money_trans, {"b": payload.bank_cd, "m": month_date})
+    res = await db.execute(upd_money_trans, {"b": payload.bank_cd, "m": month_date, "user_nm": user_nm})
 
+    # 2. Update DONOR_ITEM (جدول الاستقطاعات) when bank amount differs from monthly_pay
+    upd_donor_item = text("""
+        UPDATE donor_item di
+        SET monthly_pay = l.bank_stmnt_payamt
+        FROM bank_statement_load l
+        WHERE l.bank_cd = :b
+          AND l.money_trans_month = :m
+          AND l.cash_deposit = 2
+          AND l.sys_found = 1
+          AND l.money_trans_found = 1
+          AND l.bank_stmnt_payamt > 0
+          AND di.so_id = l.so_id
+          AND di.monthly_pay IS DISTINCT FROM l.bank_stmnt_payamt
+    """)
+    res_di = await db.execute(upd_donor_item, {"b": payload.bank_cd, "m": month_date})
+
+    # 3. Mark rows as updated in bank_statement_load (and sync sys_amt)
     await db.execute(text("""
         UPDATE bank_statement_load
-        SET money_trans_status = 1
+        SET money_trans_status = 1,
+            sys_amt = CASE WHEN bank_stmnt_payamt > 0 THEN bank_stmnt_payamt ELSE sys_amt END
         WHERE bank_cd = :b AND money_trans_month = :m
           AND cash_deposit = 2 AND sys_found = 1 AND money_trans_found = 1
     """), {"b": payload.bank_cd, "m": month_date})
 
     await db.commit()
-    return {"status": "success", "updated_count": res.rowcount}
+    return {
+        "status": "success",
+        "updated_count": res.rowcount,
+        "amt_updated_so_count": res_di.rowcount,
+    }
 
 @app.post("/api/bank-reconcile/delete-statement")
 async def delete_loaded_statement(payload: ReconcileActionSchema, db: AsyncSession = Depends(get_db)):
@@ -1257,9 +1767,11 @@ async def delete_loaded_statement(payload: ReconcileActionSchema, db: AsyncSessi
     return {"status": "success"}
 
 @app.post("/api/bank-reconcile/toggle-lock")
-async def toggle_month_lock_status(payload: ReconcileActionSchema, db: AsyncSession = Depends(get_db)):
+async def toggle_month_lock_status(payload: ReconcileActionSchema, request: Request, db: AsyncSession = Depends(get_db)):
     """إغلاق الشهر في جدول BANKMONTHLY_STMNTUPD أو إعادة فتحه"""
     month_date = datetime.strptime(f"{payload.month_str}-01", "%Y-%m-%d").date()
+    user_info = getattr(request.state, "user", None) or {}
+    user_nm = str(user_info.get("username") or "ADMIN")[:30]
     if payload.close_month:
         sum_res = await db.execute(
             text("SELECT COALESCE(SUM(bank_stmnt_payamt), 0) FROM bank_statement_load WHERE bank_cd = :b AND money_trans_month = :m"),
@@ -1268,9 +1780,9 @@ async def toggle_month_lock_status(payload: ReconcileActionSchema, db: AsyncSess
         total_amt = sum_res.scalar() or 0
         await db.execute(text("""
             INSERT INTO bankmonthly_stmntupd (bank_cd, month_year, updated_by, update_date, updated_amt)
-            VALUES (:b, :m, 'TAREK', CURRENT_TIMESTAMP, :amt)
+            VALUES (:b, :m, :user_nm, CURRENT_TIMESTAMP, :amt)
             ON CONFLICT (bank_cd, month_year) DO NOTHING
-        """), {"b": payload.bank_cd, "m": month_date, "amt": total_amt})
+        """), {"b": payload.bank_cd, "m": month_date, "user_nm": user_nm, "amt": total_amt})
     else:
         await db.execute(
             text("DELETE FROM bankmonthly_stmntupd WHERE bank_cd = :b AND month_year = :m"),
